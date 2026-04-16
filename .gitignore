@@ -1,0 +1,112 @@
+# ──────────────────────────────────────────────
+# Secrets & environment files (SECURITY)
+# ──────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+.env.production
+.env.staging
+*.pem
+*.key
+*.p12
+
+# ──────────────────────────────────────────────
+# Dependencies (SIZE)
+# ──────────────────────────────────────────────
+node_modules/
+**/node_modules/
+
+# ──────────────────────────────────────────────
+# Build output
+# ──────────────────────────────────────────────
+dist/
+build/
+*.tsbuildinfo
+
+# ──────────────────────────────────────────────
+# Generated / minified code
+# ──────────────────────────────────────────────
+*.min.js
+*.min.css
+*.map
+
+# ──────────────────────────────────────────────
+# Test coverage
+# ──────────────────────────────────────────────
+coverage/
+
+# ──────────────────────────────────────────────
+# Reference documentation (SIZE — large PDFs, XSDs, docx)
+# ──────────────────────────────────────────────
+Darwin documentation/
+Best Practices for AI Operator.md
+
+# ──────────────────────────────────────────────
+# macOS metadata
+# ──────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# ──────────────────────────────────────────────
+# Windows metadata
+# ──────────────────────────────────────────────
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ──────────────────────────────────────────────
+# IDE / editor files
+# ──────────────────────────────────────────────
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# ──────────────────────────────────────────────
+# Logs
+# ──────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# ──────────────────────────────────────────────
+# Docker volumes & local data
+# ──────────────────────────────────────────────
+pgdata/
+redis-data/
+
+# ──────────────────────────────────────────────
+# Temporary / cache files
+# ──────────────────────────────────────────────
+tmp/
+temp/
+.cache/
+*.tmp
+
+# ──────────────────────────────────────────────
+# VS Code
+# ──────────────────────────────────────────────
+.vscode/
+
+# TypeScript cache (if using incremental builds)
+.tsbuildinfo
+
+# Python cache (if applicable)
+__pycache__/
+*.pyc
+
+# Distribution/packaging
+dist-ssr/
+*.orig
+
+# Database dumps
+*.sql
+*.sqlite
+*.sqlite-journal

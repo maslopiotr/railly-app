@@ -1,0 +1,36 @@
+# # Reference documentation (large PDFs, XSDs, etc.)
+/Darwin documentation
+Best Practices for AI Operator.md
+
+# macOS metadata
+.DS_Store
+
+# Binary / reference file types (dense, rarely needed directly)
+*.pdf
+*.docx
+*.xsd
+*.csv
+
+# Build output (no value for code context)
+dist/
+build/
+
+# Dependencies (huge, no code insight)
+node_modules/
+**/node_modules/
+
+# Lockfiles (thousands of lines, no value)
+pnpm-lock.yaml
+yarn.lock
+package-lock.json
+
+# Generated/minified code
+*.min.js
+*.map
+
+# Test coverage reports
+coverage/
+
+# Secrets (must never leak into context)
+.env
+.env.local
