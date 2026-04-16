@@ -9,14 +9,23 @@
 - ✅ Implementation phases defined (Phase 1–4)
 - ✅ Project folder structure defined
 - ✅ Memory Bank fully initialised
+- ✅ **Step 0 Scaffolding Complete:**
+  - Monorepo with npm workspaces (root + 4 packages)
+  - `packages/shared` — types (station, darwin, api) + utils (crs, time) + barrel export — builds successfully
+  - `packages/api` — Express server with `/api/v1/health` endpoint, helmet, cors, error handler — runs on port 3000
+  - `packages/consumer` — skeleton with dotenv, logs startup message
+  - `packages/frontend` — Vite + React + Tailwind v4, custom landing page with feature grid — serves on port 5173
+  - Docker Compose (PostgreSQL 17, Redis 7, API, Frontend+nginx)
+  - Multi-stage Dockerfiles for API and Frontend (with nginx reverse proxy)
+  - `.env.example` with Kafka credentials and all config vars
 
 ## What's Left to Build
 
-### Step 0 — Scaffold & Hello World
-- [ ] Monorepo with pnpm workspaces, Docker Compose with PostgreSQL + Redis
-- [ ] Express API with `/api/v1/health` endpoint
-- [ ] React SPA landing page
-- [ ] Docker Compose up → visit localhost → see landing page, health returns 200
+### Step 0 — Scaffold & Hello World ✅ COMPLETE
+- [x] Monorepo with npm workspaces, Docker Compose with PostgreSQL + Redis
+- [x] Express API with `/api/v1/health` endpoint
+- [x] React SPA landing page
+- [x] Docker Compose up → visit localhost → see landing page, health returns 200
 
 ### Step 1 — Station Search & Static Data
 - [ ] Seed `stations` table from National Rail CRS/TIPLOC CSV
@@ -69,10 +78,14 @@
 - [ ] Analytics (self-hosted)
 
 ## Current Status
-**Planning complete. Pre-implementation.** No code has been written yet. The next step is to scaffold the monorepo and set up Docker Compose.
+**Step 0 Complete.** All packages scaffolded and tested. API health endpoint returns 200, frontend renders landing page. Ready for Step 1 (Station Search).
 
 ## Known Issues
-- None yet (project hasn't started coding)
+- Docker Compose has not been tested yet (needs Docker daemon running)
+
+## Fixes Applied During Verification
+- `@types/express` downgraded from v5.0.6 to ^4.17.21 — v5 types are for Express 5, we use Express 4
+- After clean reinstall (`rm -rf node_modules package-lock.json packages/*/node_modules && npm install`), both `npm run dev:api` and `npm run dev:frontend` work correctly — the Tailwind hoisting issue was resolved
 
 ## Evolution of Project Decisions
 | Decision | Choice | Rationale |
@@ -83,3 +96,5 @@
 | Auth | Passport.js + JWT | Self-hosted, scalable, free, no vendor dependency |
 | Real-time | ws (WebSocket) | Free, lightweight, no Socket.io overhead needed |
 | ORM | Drizzle | Type-safe, lightweight, no codegen step |
+| Package manager | npm (not pnpm) | Simpler, native Node.js, no extra tooling |
+| Tailwind | v4 with @tailwindcss/vite | Latest, zero-config, Vite-native |

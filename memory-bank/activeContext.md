@@ -1,45 +1,41 @@
-# Railly App — Rail Buddy: Active Context
+# Railly App — Active Context
 
-## Current Focus
-Project specification and planning phase complete. Ready to begin Phase 1 MVP implementation.
+## Current Work Focus
+Step 0 (Scaffold & Hello World) is **complete**. All packages are scaffolded and tested. Ready to begin **Step 1 — Station Search & Static Data**.
 
 ## Recent Changes
-- Refined `Railly App - Rail Buddy.md` into a comprehensive, AI-executable development spec
-- Added tech stack decisions (Vite+React, Express, PostgreSQL, Redis, Docker on Hetzner)
-- Added system architecture with data flow diagram
-- Added feature ↔ data feed mapping table
-- Added database schema overview
-- Added implementation phases with clear milestones
-- Added project folder structure
-- Added environment variables and Docker Compose service outline
-- Added development guidelines (code style, testing, git workflow, API design, WS protocol)
-- Created full Memory Bank (all 6 core files)
+- Created monorepo with npm workspaces (root `package.json` + 4 packages)
+- Built `packages/shared` with types (`station.ts`, `darwin.ts`, `api.ts`) and utils (`crs.ts`, `time.ts`)
+- Built `packages/api` with Express server, `/api/v1/health` endpoint, helmet, cors, error handler
+- Built `packages/consumer` as skeleton (Kafka connection placeholder)
+- Built `packages/frontend` with Vite + React + Tailwind v4, custom landing page
+- Created Docker Compose (PostgreSQL 17, Redis 7, API, Frontend+nginx)
+- Created multi-stage Dockerfiles for API and Frontend
+- Created nginx.conf with API reverse proxy + SPA fallback
+- Tested API: `GET /api/v1/health` returns `{"status":"ok",...}`
+- Tested Frontend: serves HTML on port 5173
 
 ## Next Steps
-1. **Scaffold the monorepo** — pnpm workspace, packages/shared, packages/frontend, packages/api, packages/consumer
-2. **Set up Docker Compose** — PostgreSQL, Redis, Nginx configs
-3. **Create shared types** — Darwin message types, domain models, API types
-4. **Build Kafka Consumer** — connect to Darwin PubSub JSON topic, parse and store messages
-5. **Build Express API** — station search, departure board endpoints, WebSocket server
-6. **Build React SPA** — departure board UI, train tracking view
+1. **Step 1 — Station Search & Static Data:**
+   - Set up Drizzle ORM + PostgreSQL connection in API
+   - Seed `stations` table from National Rail CRS/TIPLOC data
+   - Build `GET /api/v1/stations?q=KGX` endpoint
+   - Build React station search component with autocomplete
 
-## Active Decisions
-- **Vite + React** chosen over Next.js (user preference: no Next.js, cost concerns)
-- **Express.js 4.x** chosen over Fastify (simpler, more than sufficient; 5 is still alpha)
-- **Self-hosted PostgreSQL** on Hetzner (no Supabase, cost control)
-- **Passport.js + JWT** for auth (self-hosted, scalable, free)
-- **Drizzle ORM** for type-safe DB access (lightweight, no codegen)
-- **WebSocket (ws)** for real-time (free, simple, no Socket.io needed initially)
-- **Redis Pub/Sub** for Consumer→API notification (not direct WebSocket from Consumer)
-- **Hybrid data strategy** — real credentials from day one, with record-and-replay for Kafka
+## Active Decisions & Considerations
+- npm workspaces (not pnpm) — simpler, native Node.js tooling
+- Tailwind v4 via `@tailwindcss/vite` plugin — zero-config approach
+- Docker Compose ready but not yet tested (needs Docker daemon)
+- Kafka consumer is skeleton only — real Kafka connection in Step 3
 
 ## Important Patterns & Preferences
-- All original Darwin/National Rail links preserved in spec doc §11
-- No paid SaaS anywhere in the stack
-- Docker-first: everything must run via `docker compose up`
-- TypeScript strict mode across all packages
-- Mobile-first responsive design
-- **Gradual build**: each step produces a runnable, testable app (see §10 in spec)
-- **Real data first**: use real LDB API and real Kafka from start, with record/replay for offline dev
-- Station reference data seeded from National Rail CRS/TIPLOC CSV
-- Security basics: rate limiting, CORS, Helmet, zod validation, HTTPS-only
+- All API routes versioned under `/api/v1/`
+- Shared types in `@railly-app/shared` package
+- ESM modules (`"type": "module"`) across all packages
+- TypeScript strict mode enabled
+
+## Learnings & Project Insights
+- `@types/express` v5 is for Express 5 — must use `@types/express@^4.17.21` for Express 4
+- Clean reinstall (`rm -rf node_modules package-lock.json packages/*/node_modules && npm install`) resolves npm workspace hoisting issues
+- Background process management in terminal can cause port conflicts — always `lsof -ti:PORT | xargs kill -9` before starting servers
+- `npm run dev:api` and `npm run dev:frontend` both work from root after clean install

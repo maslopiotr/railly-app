@@ -1,0 +1,24 @@
+{
+  "name": "railly-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Rail Buddy - A self-hosted, real-time UK train companion for commuters",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev --workspace=packages/api",
+    "dev:frontend": "npm run dev --workspace=packages/frontend",
+    "dev:consumer": "npm run dev --workspace=packages/consumer",
+    "build": "npm run build --workspaces",
+    "build:shared": "npm run build --workspace=packages/shared",
+    "build:api": "npm run build --workspace=packages/api",
+    "build:frontend": "npm run build --workspace=packages/frontend",
+    "build:consumer": "npm run build --workspace=packages/consumer",
+    "lint": "npm run lint --workspaces",
+    "test": "npm run test --workspaces"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

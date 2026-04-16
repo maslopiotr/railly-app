@@ -81,6 +81,38 @@ Kafka → Consumer → Redis (write) + Redis Pub/Sub (notify) → API → WebSoc
 - Kafka consumer: failed messages logged, consumer auto-restarts on crash
 - Frontend: error boundaries + toast notifications for API failures
 
+## Monorepo Structure (npm Workspaces)
+
+```
+railly-app/
+├── package.json              # Root workspace config + convenience scripts
+├── tsconfig.json             # Base TypeScript config
+├── .env.example              # All env vars documented
+├── docker-compose.yml        # PostgreSQL 17 + Redis 7 + API + Frontend
+├── packages/
+│   ├── shared/               # @railly-app/shared — types + utils (no deps)
+│   │   ├── src/types/        # station.ts, darwin.ts, api.ts
+│   │   └── src/utils/        # crs.ts, time.ts
+│   ├── api/                  # @railly-app/api — Express server
+│   │   ├── src/server.ts     # Entry point (port 3000)
+│   │   ├── src/routes/       # Route handlers
+│   │   ├── src/middleware/    # Error handler, auth (future)
+│   │   └── Dockerfile        # Node.js production image
+│   ├── consumer/             # @railly-app/consumer — Kafka consumer
+│   │   └── src/index.ts      # Skeleton (Kafka in Step 3)
+│   └── frontend/             # @railly-app/frontend — React + Vite
+│       ├── src/App.tsx        # Landing page
+│       ├── vite.config.ts     # Vite + React + Tailwind + API proxy
+│       ├── nginx.conf        # Production: SPA + /api/ reverse proxy
+│       └── Dockerfile        # Multi-stage: build → nginx
+└── memory-bank/              # Project documentation
+```
+
+### Build Order
+1. `packages/shared` must be built first (other packages depend on its types)
+2. `packages/api` and `packages/consumer` can build in parallel after shared
+3. `packages/frontend` builds independently (Vite handles bundling)
+
 ## Critical Implementation Paths
 1. **Kafka Consumer message parsing** — must correctly handle all Darwin message types (TS, OW, etc.)
 2. **Redis ↔ PostgreSQL sync** — real-time data in Redis must be consistent with PostgreSQL

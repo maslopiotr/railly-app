@@ -1,77 +1,80 @@
-# Railly App — Rail Buddy: Tech Context
+# Railly App — Technical Context
 
-## Tech Stack
+## Technologies Used
 
-| Layer | Technology | Notes |
-|-------|-----------|-------|
-| Frontend | Vite 6 + React 19 + TypeScript | SPA, no SSR, no Next.js |
-| Styling | Tailwind CSS v4 + Radix UI | Utility-first + accessible primitives |
-| Backend API | Express.js 4.x + TypeScript | REST + WebSocket server |
-| Kafka Consumer | kafkajs | Darwin PubSub JSON topic |
-| Database | PostgreSQL 17 | Self-hosted, Drizzle ORM |
-| Caching | Redis 7 | Self-hosted, real-time train data |
-| Auth | Passport.js + JWT + bcrypt | Self-hosted, no vendor dependency |
-| WebSocket | ws (server) + native WebSocket API (client) | Real-time push to browser |
-| Notifications | Web Push API + Service Worker | Browser-native, free |
-| Web Server | Nginx | Reverse proxy + static files |
-| Deployment | Docker Compose on Hetzner | All services containerised |
-| Testing | Vitest + Testing Library | Unit + integration |
-| CI/CD | GitHub Actions | Free for repos |
+### Runtime & Language
+- **Node.js** v24.x (LTS)
+- **TypeScript** 5.8+ (shared), 6.x (frontend)
+- **ESM modules** (`"type": "module"`) across all packages
+
+### Package Management
+- **npm** workspaces (not pnpm) — simpler, native Node.js
+- Root `package.json` defines workspaces: `packages/*`
+
+### Backend (packages/api)
+- **Express.js** 4.21 — HTTP API server
+- **Helmet** 8.1 — security headers
+- **CORS** 2.8 — cross-origin support
+- **dotenv** 16.4 — environment variable loading
+- **tsx** 4.19 — TypeScript execution in dev
+
+### Frontend (packages/frontend)
+- **Vite** 8.x — dev server & bundler
+- **React** 19.x — UI framework
+- **Tailwind CSS** 4.x — utility-first CSS (`@tailwindcss/vite` plugin)
+- **ESLint** 9.x — linting
+
+### Consumer (packages/consumer)
+- **dotenv** 16.4 — env loading
+- Kafka client TBD (Step 3)
+
+### Shared (packages/shared)
+- Pure TypeScript types + utility functions
+- No runtime dependencies
+
+### Infrastructure
+- **Docker Compose** — PostgreSQL 17, Redis 7, API, Frontend+nginx
+- **Nginx** — serves frontend SPA + reverse proxy `/api/` → API
+- **PostgreSQL** 17 — primary database
+- **Redis** 7 — caching + pub/sub for real-time updates
+
+### ORM (Planned — Step 1)
+- **Drizzle ORM** — type-safe, lightweight, no codegen
 
 ## Development Setup
 
 ### Prerequisites
-- Node.js 22+ (LTS)
-- Docker & Docker Compose v2
-- pnpm (monorepo package manager)
-- Git
+- Node.js 24+
+- npm 11+
+- Docker (for PostgreSQL + Redis)
 
-### Local Dev Quickstart
+### Quick Start
 ```bash
-# Clone and install
-git clone <repo> && cd railly-app
-pnpm install
-
-# Start infrastructure
-docker compose up postgres redis -d
-
-# Start API (with hot reload)
-pnpm --filter api dev
-
-# Start Kafka consumer
-pnpm --filter consumer dev
-
-# Start frontend (with HMR)
-pnpm --filter frontend dev
+npm install                    # Install all workspace dependencies
+npm run build --workspace=packages/shared  # Build shared package first
+npm run dev:api                # Start API on :3000
+npm run dev:frontend           # Start frontend on :5173
 ```
 
-### Docker Compose Services
-- `postgres` — PostgreSQL 17 (port 5432)
-- `redis` — Redis 7 (port 6379)
-- `consumer` — Kafka consumer service (connects to Darwin PubSub)
-- `api` — Express API + WebSocket (port 3000 internal)
-- `frontend` — Vite build output served by Nginx
-- `nginx` — Reverse proxy (ports 80/443) + static files
+### Environment Variables
+See `.env.example` for full list:
+- `API_PORT`, `POSTGRES_*`, `REDIS_*`
+- `KAFKA_BROKER`, `KAFKA_TOPIC`, `KAFKA_USERNAME`, `KAFKA_PASSWORD`
 
 ## Technical Constraints
-- **No paid SaaS** — all infrastructure self-hosted on Hetzner
-- **No Next.js** — plain Vite + React SPA
-- **No Supabase** — self-hosted PostgreSQL only
-- **TypeScript strict mode** — no `any` types
-- **ESLint + Prettier** — shared config across packages
-- **Docker-first** — every service must be containerised
+- Self-hosted only (no cloud vendor lock-in)
+- No paid external services (except Darwin data feeds)
+- All data sources must be official UK rail data
+- PWA-first, mobile-responsive design
+- Accessible (WCAG 2.1 AA target)
 
-## Key Dependencies
-- **Darwin PubSub** — Kafka topic (JSON) for real-time train data via RDM credentials
-- **Darwin Timetable Files** — daily CIF sync (SFTP/cloud bucket) for schedules
-- **LDB APIs** — REST calls for departure/arrival boards (public + staff versions)
-- **ASSIST API** — disruption and fare data
+## Dependencies
+- Darwin Push Port / PubSub (Network Rail)
+- LDB API (National Rail Enquiries)
+- CIF Timetable feeds (Network Rail)
 
-## Environment Variables
-See `Railly App - Rail Buddy.md` §8 for full env var reference. Key secrets:
-- `KAFKA_KEY` / `KAFKA_SECRET` — from Rail Data Marketplace
-- `LDB_STAFF_KEY` — staff API access (requires RDM accreditation)
-- `LDB_PUBLIC_KEY` — public LDB access
-- `JWT_SECRET` — auth token signing
-- `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` — Web Push
-- `POSTGRES_PASSWORD` — database credentials
+## Tool Usage Patterns
+- `npm run build --workspace=<pkg>` — build a specific package
+- `npx tsx <file>` — run TypeScript directly
+- `npx vite` — run frontend dev server (bypasses hoisting issues)
+- `lsof -ti:PORT | xargs kill -9` — free stuck ports

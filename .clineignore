@@ -19,7 +19,8 @@ build/
 
 # Dependencies (huge, no code insight)
 node_modules/
-**/node_modules/
+*/node_modules/
+PPTimetable/
 
 # Lockfiles (thousands of lines, no value)
 pnpm-lock.yaml
