@@ -1,6 +1,8 @@
 # # Reference documentation (large PDFs, XSDs, etc.)
 /Darwin documentation
 Best Practices for AI Operator.md
+.gitignore
+.markdownlint.json
 
 # macOS metadata
 .DS_Store
