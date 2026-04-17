@@ -81,11 +81,14 @@
 **Step 0 Complete.** All packages scaffolded and tested. API health endpoint returns 200, frontend renders landing page. Ready for Step 1 (Station Search).
 
 ## Known Issues
-- Docker Compose has not been tested yet (needs Docker daemon running)
+- None currently — all Stage 0 items verified including Docker Compose
 
 ## Fixes Applied During Verification
 - `@types/express` downgraded from v5.0.6 to ^4.17.21 — v5 types are for Express 5, we use Express 4
 - After clean reinstall (`rm -rf node_modules package-lock.json packages/*/node_modules && npm install`), both `npm run dev:api` and `npm run dev:frontend` work correctly — the Tailwind hoisting issue was resolved
+- API Dockerfile refactored to multi-stage build — original used `--omit=dev` before build, so `tsc` was unavailable. Now: builder stage installs all deps + builds, runtime stage installs prod deps only + copies dist
+- API Dockerfile missing `COPY tsconfig.json` — shared package extends `../../tsconfig.json`, which wasn't copied into Docker image
+- `.env.example` redacted — real Kafka credentials replaced with placeholder values
 
 ## Evolution of Project Decisions
 | Decision | Choice | Rationale |

@@ -1,7 +1,7 @@
 # Railly App — Active Context
 
 ## Current Work Focus
-Step 0 (Scaffold & Hello World) is **complete**. All packages are scaffolded and tested. Ready to begin **Step 1 — Station Search & Static Data**.
+Step 0 (Scaffold & Hello World) is **complete and fully verified**, including Docker Compose end-to-end. Ready to begin **Step 1 — Station Search & Static Data**.
 
 ## Recent Changes
 - Created monorepo with npm workspaces (root `package.json` + 4 packages)
@@ -14,6 +14,9 @@ Step 0 (Scaffold & Hello World) is **complete**. All packages are scaffolded and
 - Created nginx.conf with API reverse proxy + SPA fallback
 - Tested API: `GET /api/v1/health` returns `{"status":"ok",...}`
 - Tested Frontend: serves HTML on port 5173
+- **Docker Compose verified end-to-end:** `docker compose up --build` → all 4 containers running, `curl http://localhost/` returns frontend, `curl http://localhost/api/v1/health` returns 200
+- **Fixed API Dockerfile:** refactored to multi-stage build (builder + runtime), added missing `COPY tsconfig.json`
+- **Fixed `.env.example`:** redacted real Kafka credentials, replaced with placeholders
 
 ## Next Steps
 1. **Step 1 — Station Search & Static Data:**
@@ -25,7 +28,7 @@ Step 0 (Scaffold & Hello World) is **complete**. All packages are scaffolded and
 ## Active Decisions & Considerations
 - npm workspaces (not pnpm) — simpler, native Node.js tooling
 - Tailwind v4 via `@tailwindcss/vite` plugin — zero-config approach
-- Docker Compose ready but not yet tested (needs Docker daemon)
+- Docker Compose tested and verified end-to-end (OrbStack on macOS)
 - Kafka consumer is skeleton only — real Kafka connection in Step 3
 
 ## Important Patterns & Preferences
