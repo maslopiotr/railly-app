@@ -39,6 +39,9 @@ RUN npm install --omit=dev --workspace=packages/shared --workspace=packages/api
 COPY --from=builder /app/packages/shared/dist packages/shared/dist
 COPY --from=builder /app/packages/api/dist packages/api/dist
 
+# Run as non-root user for security
+USER node
+
 EXPOSE 3000
 
 CMD ["node", "packages/api/dist/server.js"]

@@ -35,5 +35,9 @@ package-lock.json
 coverage/
 
 # Secrets (must never leak into context)
-.env
-.env.local
+.2env
+.2env.local
+
+# Do not ignore files
+!Darwin documentation/Live Departure Arrival board docs/LDBWS Documentation.pdf
+!Darwin documentation/Live Departure Arrival board docs/

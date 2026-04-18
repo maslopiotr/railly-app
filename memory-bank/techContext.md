@@ -17,6 +17,9 @@
 - **CORS** 2.8 — cross-origin support
 - **dotenv** 16.4 — environment variable loading
 - **tsx** 4.19 — TypeScript execution in dev
+- **Drizzle ORM** — type-safe SQL query builder
+- **postgres.js** (postgres) — PostgreSQL driver for Drizzle
+- **drizzle-kit** — schema migrations & introspection
 
 ### Frontend (packages/frontend)
 - **Vite** 8.x — dev server & bundler
@@ -37,9 +40,6 @@
 - **Nginx** — serves frontend SPA + reverse proxy `/api/` → API
 - **PostgreSQL** 17 — primary database
 - **Redis** 7 — caching + pub/sub for real-time updates
-
-### ORM (Planned — Step 1)
-- **Drizzle ORM** — type-safe, lightweight, no codegen
 
 ## Development Setup
 

@@ -80,6 +80,19 @@ Kafka → Consumer → Redis (write) + Redis Pub/Sub (notify) → API → WebSoc
 - API returns standard JSON errors: `{ error: { code: "NOT_FOUND", message: "..." } }`
 - Kafka consumer: failed messages logged, consumer auto-restarts on crash
 - Frontend: error boundaries + toast notifications for API failures
+- **Never leak stack traces or internal details to clients**
+
+### Security Patterns
+- **Input validation**: every endpoint validates type, length, and character whitelist before processing
+- **Parameterized queries only**: Drizzle ORM operators (`eq`, `ilike`) — never raw SQL with user input
+- **LIKE wildcard escaping**: `%`, `_`, `\` in user input are escaped before wrapping in `%...%`
+- **Rate limiting**: `express-rate-limit` on all API routes (100 req/min per IP)
+- **CORS**: explicit origin allowlist via `CORS_ORIGINS` env var; no wildcard in production
+- **Body size limit**: 10kb max on JSON payloads to prevent DoS
+- **Non-root containers**: API as `USER node`, nginx as `USER nginx`
+- **Port binding**: DB/Redis bound to `127.0.0.1` only; never exposed to the internet
+- **Mandatory secrets**: docker-compose uses `${VAR:?error}` — no default passwords
+- **Health endpoint separation**: public returns status only; detail for ops/internal use
 
 ## Monorepo Structure (npm Workspaces)
 

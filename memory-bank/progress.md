@@ -18,6 +18,15 @@
   - Docker Compose (PostgreSQL 17, Redis 7, API, Frontend+nginx)
   - Multi-stage Dockerfiles for API and Frontend (with nginx reverse proxy)
   - `.env.example` with Kafka credentials and all config vars
+- ✅ **Step 1 Station Search Complete:**
+  - Drizzle ORM + PostgreSQL connection in API
+  - `stations` table seeded with 4,112 UK stations from CORPUS data
+  - `GET /api/v1/stations?q=<query>` — name/CRS search with autocomplete
+  - `GET /api/v1/stations?crs=<code>` — exact CRS code lookup
+  - `GET /api/v1/health` — real DB connectivity check
+  - React StationSearch component with debounced autocomplete
+  - Vite dev proxy (`/api` → `:3000`) verified working
+  - Docker Compose API service with port 3000 exposed
 
 ## What's Left to Build
 
@@ -27,10 +36,13 @@
 - [x] React SPA landing page
 - [x] Docker Compose up → visit localhost → see landing page, health returns 200
 
-### Step 1 — Station Search & Static Data
-- [ ] Seed `stations` table from National Rail CRS/TIPLOC CSV
-- [ ] `GET /api/v1/stations?q=KGX` → station search with autocomplete
-- [ ] React station search component
+### Step 1 — Station Search & Static Data ✅ COMPLETE
+- [x] Set up Drizzle ORM + PostgreSQL connection in API
+- [x] Seed `stations` table from National Rail CORPUS JSON (4,112 stations)
+- [x] `GET /api/v1/stations?q=KGX` → station search with autocomplete
+- [x] `GET /api/v1/stations?crs=KGX` → CRS code exact lookup
+- [x] React station search component with debounced autocomplete
+- [x] Health endpoint tests real DB connectivity
 
 ### Step 2 — Live Departure Board (Public LDB)
 - [ ] LDB API client in `packages/api/src/external/ldb-client.ts`
@@ -78,10 +90,24 @@
 - [ ] Analytics (self-hosted)
 
 ## Current Status
-**Step 0 Complete.** All packages scaffolded and tested. API health endpoint returns 200, frontend renders landing page. Ready for Step 1 (Station Search).
+**Steps 0 & 1 Complete + Security Hardened.** Station search fully working: 4,112 stations seeded, API search/lookup verified, frontend autocomplete with Vite proxy working. Full security audit completed. Ready for Step 2 (Live Departure Board / LDB Staff API).
 
 ## Known Issues
-- None currently — all Stage 0 items verified including Docker Compose
+- Background dev server processes get suspended by terminal TTY — use Docker (`docker compose up -d --build api`) or `</dev/null` redirect for Vite
+
+## Security Hardening (Completed)
+- CORS restricted to explicit origins (no wildcard `*`)
+- PostgreSQL & Redis ports bound to `127.0.0.1` only
+- Redis requires authentication (`REDIS_PASSWORD` env var)
+- No default/fallback passwords — docker-compose uses `${VAR:?error}`
+- Docker containers run as non-root (API: `USER node`, nginx: `USER nginx`)
+- nginx security headers: X-Frame-Options DENY, CSP, X-Content-Type-Options, hidden file blocking
+- Health endpoint split: public returns status only; detail endpoint for ops
+- Body size limit 10kb on JSON payloads
+- Rate limiting 100 req/min per IP
+- Input validation with regex whitelist + LIKE wildcard escaping
+- Error handler never leaks stack traces
+- Frontend shows user-friendly errors (no internal details)
 
 ## Fixes Applied During Verification
 - `@types/express` downgraded from v5.0.6 to ^4.17.21 — v5 types are for Express 5, we use Express 4
