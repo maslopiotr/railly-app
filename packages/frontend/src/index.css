@@ -6,6 +6,13 @@
   @apply inline-flex items-center justify-center min-w-[2.5rem] px-2 py-0.5 rounded text-xs font-bold font-mono;
 }
 
+/* Larger platform on mobile for better readability */
+@media (max-width: 639px) {
+  .platform {
+    @apply min-w-[2.75rem] py-1 text-sm;
+  }
+}
+
 .platform-none {
   @apply bg-slate-800 text-slate-500;
 }
@@ -53,11 +60,25 @@
 }
 
 .service-main {
-  @apply flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-slate-800/50;
+  @apply flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-slate-800/50 select-none;
+}
+
+/* Desktop: table-row style layout */
+@media (min-width: 1024px) {
+  .service-main {
+    @apply gap-4;
+  }
+}
+
+/* Minimum touch target for mobile */
+@media (max-width: 639px) {
+  .service-main {
+    @apply min-h-[48px] py-2.5;
+  }
 }
 
 .service-time {
-  @apply flex flex-col items-end min-w-[4rem];
+  @apply flex flex-col items-end min-w-[4.5rem];
 }
 
 .time-scheduled {
@@ -80,6 +101,63 @@
   @apply flex-1 min-w-0;
 }
 
+/* Origin subtext */
+.service-origin {
+  @apply text-xs text-slate-500 truncate;
+}
+
+/* Calling points inline */
+.service-calling {
+  @apply hidden lg:block w-64 shrink-0;
+}
+
+.calling-preview {
+  @apply text-xs text-slate-400 truncate;
+}
+
+.calling-expand-btn {
+  @apply text-xs text-blue-400 hover:text-blue-300 ml-1 whitespace-nowrap;
+}
+
+/* Expanded calling points */
+.calling-expanded {
+  @apply mt-2 p-2 bg-slate-800/50 rounded text-xs;
+}
+
+.calling-stop {
+  @apply inline-flex items-center gap-1 mr-3;
+}
+
+.calling-stop-time {
+  @apply font-mono text-slate-300;
+}
+
+/* Calling point status colors */
+.calling-stop-time.arrived {
+  @apply text-green-400;
+}
+
+.calling-stop-time.late {
+  @apply text-red-400;
+}
+
+.calling-stop-time.on-time {
+  @apply text-green-400;
+}
+
+.calling-stop-name {
+  @apply text-slate-400;
+}
+
+.calling-stop-arrow {
+  @apply text-slate-600 mx-1;
+}
+
+/* Delay indicator */
+.delay-badge {
+  @apply text-[10px] text-red-400 font-mono;
+}
+
 .service-destination {
   @apply text-sm font-medium text-slate-100 truncate;
 }
@@ -88,16 +166,30 @@
   @apply text-xs text-slate-400 flex items-center gap-2;
 }
 
+/* Desktop: operator column */
+@media (min-width: 1024px) {
+  .service-operator {
+    @apply w-40 shrink-0 flex-wrap;
+  }
+}
+
 .service-id {
-  @apply text-[10px] font-mono bg-slate-700 px-1 rounded;
+  @apply text-[11px] font-mono bg-slate-700 px-1 rounded;
 }
 
 .service-length {
-  @apply text-[10px] text-slate-500;
+  @apply text-xs text-slate-500;
 }
 
 .service-status {
   @apply flex items-center gap-1;
+}
+
+/* Desktop: status column */
+@media (min-width: 1024px) {
+  .service-status {
+    @apply w-16 justify-center;
+  }
 }
 
 .realtime-badge {
@@ -121,7 +213,7 @@
 }
 
 .service-ids {
-  @apply flex gap-3 text-[10px] text-slate-600 font-mono pt-2;
+  @apply flex gap-3 text-[11px] text-slate-600 font-mono pt-2;
 }
 
 /* ─── Alerts ──────────────────────────────────────────────────────────── */
@@ -149,11 +241,33 @@
 /* ─── Board ────────────────────────────────────────────────────────────── */
 
 .departure-board {
-  @apply max-w-2xl mx-auto;
+  @apply max-w-6xl mx-auto w-full;
+}
+
+/* Desktop table layout */
+@media (min-width: 1024px) {
+  .departure-board {
+    @apply px-4;
+  }
 }
 
 .board-header {
   @apply flex items-center justify-between px-4 py-3;
+}
+
+/* Stack header on mobile */
+@media (max-width: 639px) {
+  .board-header {
+    @apply flex-col items-start gap-2;
+  }
+
+  .board-header-left {
+    @apply flex items-center gap-2 w-full;
+  }
+
+  .board-header-right {
+    @apply flex items-center justify-between w-full;
+  }
 }
 
 .board-header h2 {
@@ -169,19 +283,62 @@
 }
 
 .tab {
-  @apply px-4 py-1.5 text-sm rounded-t-lg text-slate-400 hover:text-slate-200 transition-colors;
+  @apply px-4 py-2.5 text-sm rounded-t-lg text-slate-400 hover:text-slate-200 transition-colors select-none;
 }
 
 .tab.active {
   @apply bg-slate-700 text-white;
 }
 
+/* Larger tabs on mobile for better touch targets */
+@media (max-width: 639px) {
+  .tab {
+    @apply px-3 py-2.5 text-sm;
+  }
+}
+
 .board-services {
   @apply px-2 max-h-[70vh] overflow-y-auto;
 }
 
+/* Desktop table header - sticky */
+.board-table-header {
+  @apply hidden lg:flex items-center gap-3 px-3 py-2 text-xs font-medium text-slate-400 uppercase tracking-wider border-b border-slate-700 mb-2 bg-slate-800 sticky top-0 z-10;
+}
+
+.col-time {
+  @apply w-24 shrink-0 text-right;
+}
+
+.col-platform {
+  @apply w-20 shrink-0 text-center;
+}
+
+.col-destination {
+  @apply flex-1 min-w-0;
+}
+
+.col-calling {
+  @apply w-64 shrink-0;
+}
+
+.col-operator {
+  @apply w-40 shrink-0;
+}
+
+.col-status {
+  @apply w-16 shrink-0 text-center;
+}
+
 .board-legend {
-  @apply flex gap-4 justify-center text-[10px] text-slate-500 py-2;
+  @apply flex gap-4 justify-center text-xs text-slate-500 py-2;
+}
+
+/* Stack legend on very small screens */
+@media (max-width: 480px) {
+  .board-legend {
+    @apply flex-wrap gap-2;
+  }
 }
 
 .nrcc-messages {
@@ -197,11 +354,25 @@
 }
 
 .btn-back {
-  @apply text-sm text-slate-400 hover:text-white mr-2;
+  @apply text-sm text-slate-400 hover:text-white mr-2 select-none;
+}
+
+/* Larger touch target on mobile */
+@media (max-width: 639px) {
+  .btn-back {
+    @apply py-1 px-2 min-h-[44px] flex items-center;
+  }
 }
 
 .btn-refresh {
-  @apply text-lg text-slate-400 hover:text-white px-2;
+  @apply text-lg text-slate-400 hover:text-white px-2 select-none;
+}
+
+/* Larger touch target on mobile */
+@media (max-width: 639px) {
+  .btn-refresh {
+    @apply py-1 px-2 min-h-[44px] flex items-center;
+  }
 }
 
 .loading {
@@ -214,4 +385,12 @@
 
 .error-message {
   @apply text-center py-4 text-red-400;
+}
+
+/* Safe area support for notched devices */
+@supports (padding: env(safe-area-inset-top)) {
+  body {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
 }

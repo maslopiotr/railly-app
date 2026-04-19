@@ -5,11 +5,15 @@ import type { StationSearchResult } from "@railly-app/shared";
 interface StationSearchProps {
   onSelect: (station: StationSearchResult) => void;
   placeholder?: string;
+  autoFocus?: boolean;
+  size?: "default" | "large";
 }
 
 export function StationSearch({
   onSelect,
   placeholder = "Search for a station...",
+  autoFocus = false,
+  size = "default",
 }: StationSearchProps) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<StationSearchResult[]>([]);
@@ -19,6 +23,7 @@ export function StationSearch({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const search = useCallback(async (searchQuery: string) => {
     if (searchQuery.trim().length === 0) {
@@ -38,7 +43,6 @@ export function StationSearch({
       console.error("Station search failed:", err);
       setResults([]);
       setIsDropdownOpen(false);
-      // Show user-friendly error message
       if (err instanceof Response && err.status === 429) {
         setErrorMessage("Too many requests. Please wait a moment.");
       } else {
@@ -63,9 +67,9 @@ export function StationSearch({
     };
   }, [query, search]);
 
-  // Close dropdown on outside click
+  // Close dropdown on outside click/touch
   useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
+    function handleClickOutside(event: MouseEvent | TouchEvent) {
       if (
         containerRef.current &&
         !containerRef.current.contains(event.target as Node)
@@ -74,8 +78,19 @@ export function StationSearch({
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("touchstart", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+    };
   }, []);
+
+  // Auto-focus on mount
+  useEffect(() => {
+    if (autoFocus && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [autoFocus]);
 
   function handleSelect(station: StationSearchResult) {
     setQuery(station.name);
@@ -104,10 +119,23 @@ export function StationSearch({
     }
   }
 
+  function handleClear() {
+    setQuery("");
+    setResults([]);
+    setIsDropdownOpen(false);
+    setErrorMessage(null);
+    if (inputRef.current) {
+      inputRef.current.focus();
+    }
+  }
+
+  const isLarge = size === "large";
+
   return (
     <div ref={containerRef} className="relative w-full max-w-md">
       <div className="relative">
         <input
+          ref={inputRef}
           type="text"
           value={query}
           onChange={(e) => { setQuery(e.target.value); setErrorMessage(null); }}
@@ -116,18 +144,25 @@ export function StationSearch({
             if (results.length > 0) setIsDropdownOpen(true);
           }}
           placeholder={placeholder}
-          className="w-full px-4 py-3 pl-10 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          className={`w-full bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+            isLarge
+              ? "px-5 py-4 pl-12 text-lg rounded-xl"
+              : "px-4 py-3 pl-10"
+          }`}
           aria-label="Search for a station"
           aria-expanded={isDropdownOpen}
           aria-autocomplete="list"
           role="combobox"
+          inputMode="search"
         />
-        <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+        <div className={`absolute inset-y-0 left-0 flex items-center pointer-events-none ${
+          isLarge ? "pl-4" : "pl-3"
+        }`}>
           {isLoading ? (
-            <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+            <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
           ) : (
             <svg
-              className="w-4 h-4 text-slate-400"
+              className={`text-slate-400 ${isLarge ? "w-5 h-5" : "w-4 h-4"}`}
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -141,6 +176,20 @@ export function StationSearch({
             </svg>
           )}
         </div>
+        {query.length > 0 && (
+          <button
+            type="button"
+            onClick={handleClear}
+            className={`absolute inset-y-0 right-0 flex items-center text-slate-400 hover:text-white transition-colors ${
+              isLarge ? "pr-4" : "pr-3"
+            }`}
+            aria-label="Clear search"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        )}
       </div>
 
       {isDropdownOpen && results.length > 0 && (
@@ -152,7 +201,7 @@ export function StationSearch({
             <li
               key={station.crsCode}
               onClick={() => handleSelect(station)}
-              className={`px-4 py-2 cursor-pointer flex items-center justify-between ${
+              className={`px-4 py-3 cursor-pointer flex items-center justify-between select-none ${
                 index === selectedIndex
                   ? "bg-blue-600 text-white"
                   : "text-slate-200 hover:bg-slate-700"

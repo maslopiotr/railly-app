@@ -25,8 +25,10 @@ function classifyService(service: HybridBoardService): {
 } {
   // Has scheduled departure time → it's a departure
   const isDeparture = service.std !== null;
-  // Has scheduled arrival time but no departure → it's a terminating service
-  const isArrival = service.sta !== null && !isDeparture;
+  // Has scheduled arrival time → it's an arrival
+  // Through services (both sta + std) appear on BOTH tabs —
+  // matching real UK station boards where arrivals includes through services
+  const isArrival = service.sta !== null;
 
   return { isDeparture, isArrival };
 }
@@ -142,6 +144,16 @@ export function DepartureBoard({ station, onBack }: DepartureBoardProps) {
         </button>
       </div>
 
+      {/* Table header (desktop only) - sticky */}
+      <div className="board-table-header">
+        <div className="col-time">Time</div>
+        <div className="col-platform">Plat</div>
+        <div className="col-destination">Destination</div>
+        <div className="col-calling">Calling at</div>
+        <div className="col-operator">Operator</div>
+        <div className="col-status">Status</div>
+      </div>
+
       {/* Service list */}
       <div className="board-services" ref={listRef}>
         {isLoading && !board && (
@@ -154,7 +166,7 @@ export function DepartureBoard({ station, onBack }: DepartureBoardProps) {
           <div className="no-services">No services found in this time window</div>
         )}
         {displayServices.map((service) => (
-          <ServiceRow key={service.rid} service={service} isArrival={activeTab === "arrivals"} />
+          <ServiceRow key={service.rid} service={service} isArrival={activeTab === "arrivals"} stationCrs={station.crsCode} />
         ))}
       </div>
 

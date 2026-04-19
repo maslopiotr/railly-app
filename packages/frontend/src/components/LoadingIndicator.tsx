@@ -77,7 +77,7 @@ export function LoadingIndicator({ formation, compact = false }: LoadingIndicato
 
       {/* Coach loading bars */}
       {formation.coaches && formation.coaches.length > 0 && (
-        <div className="flex gap-0.5 mt-1">
+        <div className="flex gap-0.5 mt-1 overflow-x-auto pb-1">
           {formation.coaches.map((coach) => {
             const loading = coach.loading ?? 0;
             const barColor =
@@ -89,16 +89,16 @@ export function LoadingIndicator({ formation, compact = false }: LoadingIndicato
             return (
               <div
                 key={coach.number}
-                className="flex flex-col items-center"
+                className="flex flex-col items-center shrink-0"
                 title={`Coach ${coach.number}: ${loading}% full${coach.coachClass === "First" ? " (First Class)" : ""}${coach.toilet?.status === "InService" ? " — 🚻 Toilet available" : ""}`}
               >
-                <div className="w-6 bg-slate-700 rounded-t overflow-hidden" style={{ height: "24px" }}>
+                <div className="w-6 sm:w-6 bg-slate-700 rounded-t overflow-hidden" style={{ height: "24px" }}>
                   <div
                     className={`${barColor} rounded-t w-full transition-all`}
                     style={{ height: `${Math.max(loading, 5)}%`, marginTop: `${100 - Math.max(loading, 5)}%` }}
                   />
                 </div>
-                <span className="text-[9px] text-slate-500 mt-0.5">
+                <span className="text-[10px] text-slate-500 mt-0.5">
                   {coach.coachClass === "First" ? "★" : coach.number}
                 </span>
               </div>

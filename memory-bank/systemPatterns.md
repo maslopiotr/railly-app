@@ -88,7 +88,7 @@ Register → bcrypt → PostgreSQL; Login → validate → JWT; Protected routes
 | ORM | Drizzle | Type-safe, lightweight, no codegen step |
 | LDBWS auth | x-apikey header | raildata.org.uk uses simple API key, no OAuth2 needed |
 | LDBWS endpoints | Only 1 board + 1 service detail | Subscription includes GetArrDepBoardWithDetails (returns both arrivals & departures) + GetServiceDetails. Separate GetDepartureBoard/GetArrivalBoard endpoints return HTTP 500 with our subscription |
-| Arrivals/Departures split | Client-side from combined endpoint | `GetArrDepBoardWithDetails` returns both; services with `sta` are arrivals, services with `std` are departures. Cleaner than separate subscriptions (fewer API calls, consistent data) |
+| Arrivals/Departures split | Client-side from combined endpoint | Board endpoint returns all services; `classifyService()` splits: services with `std` → departures, services with `sta` → arrivals. **Through services (both `sta` + `std`) appear on BOTH tabs** — matching real UK station boards. Terminating services (sta only) appear on arrivals only |
 
 ## Critical Implementation Paths
 1. **Kafka Consumer message parsing** — must correctly handle all Darwin message types (TS, OW, etc.)

@@ -43,9 +43,11 @@ The departure/arrival board is now **timetable-first** with LDBWS overlay:
 
 ## What's Left to Build
 
-### Step 2 — Live Departure Board (LDBWS) — UI Polish
-- [ ] Responsive design improvements
-- [ ] Error handling & loading states refinement
+ ### Step 2 — Live Departure Board (LDBWS) — UI Polish
+ - [x] Responsive design improvements (laptop + mobile layouts, touch targets, text sizes)
+ - [x] Calling points visual system (time-based dots, Kafka-ready)
+ - [x] Bug fixes: midnight crossover, arrivals label, current station override, arrivals through services
+ - [ ] Error handling & loading states refinement
 
 ### Step 3 — PPTimetable Integration — Remaining
 - [ ] Docker Compose: mount PPTimetable data volume for import
@@ -54,7 +56,7 @@ The departure/arrival board is now **timetable-first** with LDBWS overlay:
 ### Step 4 — Hybrid Board — Remaining
 - [ ] Docker rebuild and end-to-end test
 - [ ] Verify RSID matching works with real data
-- [ ] Handle midnight boundary (services that span two days)
+- [x] Handle midnight boundary (services that span two days) — fixed with `normalizeCallingPointTimes()`
 
 ### Step 5 — Kafka Consumer (Real-Time) — Darwin Push Port
 - [ ] Consumer service connecting to Darwin PubSub JSON topic
@@ -62,4 +64,19 @@ The departure/arrival board is now **timetable-first** with LDBWS overlay:
 - [ ] Consumer notifies API via Redis PUB/SUB
 - [ ] API subscribes to Redis PUB/SUB → pushes to WebSocket clients
 
-### Step 6–7 — Future phases (see project brief)
+ ### Step 6 — Favourite Stations & Connections (Planned)
+ - [ ] Create `useFavourites` hook — localStorage for favourite stations + favourite connections
+ - [ ] Add ⭐ favourite button to DepartureBoard header (toggle station as favourite)
+ - [ ] Show favourite stations on landing page (above Popular, with ⭐ icon)
+ - [ ] Add "Favourite this route" button on ServiceRow when viewing departures from A calling at B
+ - [ ] Favourite connection card on landing page: shows "EUS → MKC" with next 3 departing trains
+ - [ ] API: lightweight endpoint or reuse `/board` with `destination` filter for quick next-trains lookup
+ - [ ] Auto-refresh favourite connection cards (every 30s like board)
+
+### Step 7 — Kafka Consumer (Real-Time) — Darwin Push Port
+- [ ] Consumer service connecting to Darwin PubSub JSON topic
+- [ ] Parse TS messages → extract booked platform, write to Redis + PostgreSQL
+- [ ] Consumer notifies API via Redis PUB/SUB
+- [ ] API subscribes to Redis PUB/SUB → pushes to WebSocket clients
+
+### Step 8–9 — Future phases (see project brief)

@@ -59,13 +59,13 @@
 2. `packages/api` and `packages/consumer` can build in parallel after shared
 3. `packages/frontend` builds independently (Vite handles bundling)
 
-### Quick Start
-```bash
-npm install                    # Install all workspace dependencies
-npm run build --workspace=packages/shared  # Build shared package first
-npm run dev:api                # Start API on :3000
-npm run dev:frontend           # Start frontend on :5173
-```
+ ### Quick Start
+ ```bash
+ npm install                    # Install all workspace dependencies
+ npm run build --workspace=packages/shared  # Build shared package first
+ npm run dev:api                # Start API on :3000
+ npm run dev:frontend           # Start frontend on :5173 (Docker: :8080)
+ ```
 
 ### Environment Variables
 See `.env.example` for full list:
@@ -93,3 +93,14 @@ See `.env.example` for full list:
 - `npx tsx <file>` — run TypeScript directly
 - `npx vite` — run frontend dev server (bypasses hoisting issues)
 - `lsof -ti:PORT | xargs kill -9` — free stuck ports
+
+### Docker Rebuild After Changes
+- **CRITICAL**: After completing ANY code changes, always rebuild Docker containers
+- Full rebuild: `npm run docker:rebuild` — rebuilds all services
+- Targeted rebuild: `npm run docker:rebuild:api` or `npm run docker:rebuild:frontend`
+- Which services to rebuild:
+  - `packages/shared/*` → rebuild ALL services (shared types affect everything)
+  - `packages/frontend/*` → rebuild `frontend`
+  - `packages/api/*` → rebuild `api`
+  - `packages/consumer/*` → rebuild `consumer` (when added to docker-compose)
+- This ensures changes are always visible in the running application
