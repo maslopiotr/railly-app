@@ -1,5 +1,5 @@
 # # Reference documentation (large PDFs, XSDs, etc.)
-/Darwin documentation
+/XDarwin documentation
 Best Practices for AI Operator.md
 .gitignore
 .markdownlint.json
@@ -39,5 +39,3 @@ coverage/
 .env.local
 
 # Do not ignore files
-!Darwin documentation/Live Departure Arrival board docs/LDBWS Documentation.pdf
-!Darwin documentation/Live Departure Arrival board docs/

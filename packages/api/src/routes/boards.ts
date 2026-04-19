@@ -1,25 +1,19 @@
 /**
- * Board routes — timetable-first hybrid board with LDBWS real-time overlay
+ * Board routes — timetable-only board
  *
  * Strategy:
  * 1. Query PPTimetable for ALL passenger services at this CRS today
  *    (filtered to time window: past 10min + next 2hr)
- * 2. Query LDBWS GetArrDepBoardWithDetails for real-time updates
- * 3. Match by RSID → merge LDBWS real-time data onto timetable records
- * 4. Return merged list — every service always has timetable data,
- *    with LDBWS overlay where available
+ * 2. Return timetable data with booked platforms, TOC names, calling patterns
+ *
+ * Real-time overlay will be added later via Darwin Real Time Train Information
+ * (https://raildata.org.uk/dataProduct/P-d3bf124c-1058-4040-8a62-87181a877d59/overview)
+ * which uses the same RID identifiers as PPTimetable for matching.
  */
 
 import { Router } from "express";
-import { getArrDepBoardWithDetailsCached } from "../services/ldbws.js";
 import { normalizeCrsCode } from "@railly-app/shared";
-import type {
-  HybridBoardService,
-  HybridCallingPoint,
-  PlatformSource,
-  StationBoardWithDetails,
-  ServiceItemWithCallingPoints,
-} from "@railly-app/shared";
+import type { HybridBoardService, HybridCallingPoint } from "@railly-app/shared";
 import { db } from "../db/connection.js";
 import { journeys, callingPoints, locationRef, tocRef, stations } from "../db/schema.js";
 import { eq, and, sql, inArray, asc } from "drizzle-orm";
@@ -47,27 +41,9 @@ function parseTimeToMinutes(time: string | null | undefined): number | null {
 }
 
 /**
- * Determine platform source and display logic
- */
-function getPlatformSource(
-  bookedPlatform: string | null,
-  livePlatform: string | null,
-  hasRealtime: boolean,
-): PlatformSource {
-  if (!bookedPlatform && !livePlatform) return "scheduled";
-  if (livePlatform && bookedPlatform) {
-    return livePlatform === bookedPlatform ? "confirmed" : "altered";
-  }
-  if (livePlatform && !bookedPlatform) return "confirmed";
-  // Booked platform but no live data
-  return hasRealtime ? "expected" : "scheduled";
-}
-
-/**
  * GET /api/v1/stations/:crs/board
  *
- * Hybrid board: timetable-first with LDBWS real-time overlay.
- * Returns all services within time window (past 10min + next 2hr).
+ * Timetable board: all services within time window (past 10min + next 2hr).
  *
  * Query params:
  *   - timeWindow (optional, minutes forward, default 120, max 480)
@@ -97,8 +73,6 @@ router.get("/:crs/board", async (req, res) => {
     const now = new Date();
     const todayStr = now.toISOString().slice(0, 10);
 
-    // ── Step 1: Query PPTimetable for ALL passenger services at this CRS today ──
-
     // Get station name
     const [station] = await db
       .select({ name: stations.name })
@@ -106,7 +80,29 @@ router.get("/:crs/board", async (req, res) => {
       .where(eq(stations.crs, crs))
       .limit(1);
 
-    // Get calling points at this station for today, excluding passing points
+    // Calculate time window in minutes from midnight
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    const earliest = nowMinutes - pastWindow;
+    const latest = nowMinutes + timeWindow;
+
+    // Determine which schedule days we need to query
+    const crossMidnightBack = earliest < 0;
+    const crossMidnightForward = latest >= 1440;
+
+    const offsetDateStr = (base: string, days: number): string => {
+      const d = new Date(base + "T00:00:00Z");
+      d.setUTCDate(d.getUTCDate() + days);
+      return d.toISOString().slice(0, 10);
+    };
+
+    const yesterdayStr = crossMidnightBack ? offsetDateStr(todayStr, -1) : null;
+    const tomorrowStr = crossMidnightForward ? offsetDateStr(todayStr, 1) : null;
+
+    const ssdValues = [todayStr];
+    if (yesterdayStr) ssdValues.push(yesterdayStr);
+    if (tomorrowStr) ssdValues.push(tomorrowStr);
+
+    // Get calling points at this station for the relevant schedule days, excluding passing points
     const timetablePoints = await db
       .select({
         rid: callingPoints.journeyRid,
@@ -115,49 +111,42 @@ router.get("/:crs/board", async (req, res) => {
         plat: callingPoints.plat,
         stopType: callingPoints.stopType,
         tpl: callingPoints.tpl,
+        ssd: journeys.ssd,
       })
       .from(callingPoints)
       .innerJoin(journeys, eq(callingPoints.journeyRid, journeys.rid))
       .where(
         and(
           eq(callingPoints.crs, crs),
-          eq(journeys.ssd, todayStr),
+          inArray(journeys.ssd, ssdValues),
           eq(journeys.isPassenger, true),
           sql`${callingPoints.stopType} NOT IN ('PP')`,
         ),
       )
       .orderBy(asc(callingPoints.ptd), asc(callingPoints.pta));
 
-    // Filter to time window (past 10min → next 2hr)
-    const nowMinutes = now.getHours() * 60 + now.getMinutes();
-    const earliest = nowMinutes - pastWindow;
-    const latest = nowMinutes + timeWindow;
-
+    // Filter to time window, handling cross-midnight scenarios
     const windowPoints = timetablePoints.filter((p) => {
       const time = parseTimeToMinutes(p.ptd || p.pta);
-      if (time === null) return true; // include if no time (shouldn't happen)
-      return time >= earliest && time <= latest;
+      if (time === null) return true;
+
+      let adjustedTime = time;
+      if (p.ssd === yesterdayStr) {
+        adjustedTime = time - 1440;
+      } else if (p.ssd === tomorrowStr) {
+        adjustedTime = time + 1440;
+      }
+
+      return adjustedTime >= earliest && adjustedTime <= latest;
     });
 
     if (windowPoints.length === 0) {
-      // No services in time window — return empty board with LDBWS NRCC messages
-      let nrccMessages: { Value: string }[] = [];
-      try {
-        const ldbwsBoard = await getArrDepBoardWithDetailsCached(crs, {
-          numRows: 10,
-          timeWindow: Math.min(timeWindow, 120),
-        });
-        nrccMessages = (ldbwsBoard.nrccMessages || []).map((m) => ({ Value: m.Value }));
-      } catch {
-        // LDBWS failure is non-fatal
-      }
-
       return res.json({
         crs,
         stationName: station?.name || null,
         date: todayStr,
         generatedAt: now.toISOString(),
-        nrccMessages,
+        nrccMessages: [],
         services: [],
       });
     }
@@ -228,7 +217,7 @@ router.get("/:crs/board", async (req, res) => {
       }
     }
 
-    // Get full calling patterns for these journeys (for calling points display)
+    // Get full calling patterns for these journeys
     const allCallingPoints = await db
       .select()
       .from(callingPoints)
@@ -256,84 +245,7 @@ router.get("/:crs/board", async (req, res) => {
       : [];
     const allLocMap = new Map(allLocs.map((l) => [l.tpl, l]));
 
-    // ── Step 2: Query LDBWS for real-time overlay ──
-    let ldbwsBoard: StationBoardWithDetails | null = null;
-    let nrccMessages: { Value: string }[] = [];
-
-    try {
-      ldbwsBoard = await getArrDepBoardWithDetailsCached(crs, {
-        numRows: 150,
-        timeWindow: Math.min(timeWindow, 120),
-      });
-      nrccMessages = (ldbwsBoard.nrccMessages || []).map((m) => ({ Value: m.Value }));
-    } catch (err) {
-      console.error("LDBWS fetch failed (non-fatal):", err instanceof Error ? err.message : err);
-      // LDBWS failure is non-fatal — we still return timetable data
-    }
-
-    // Build LDBWS lookup by RSID for merging
-    const ldbwsByRsid = new Map<string, ServiceItemWithCallingPoints>();
-    if (ldbwsBoard) {
-      const allLdbwsServices = [
-        ...(ldbwsBoard.trainServices || []),
-        ...(ldbwsBoard.busServices || []),
-        ...(ldbwsBoard.ferryServices || []),
-      ];
-      for (const svc of allLdbwsServices) {
-        if (svc.rsid) {
-          ldbwsByRsid.set(svc.rsid, svc);
-        }
-      }
-    }
-
-    // ── Step 3: Build LDBWS calling point lookup ──
-    // Map LDBWS calling point CRS → {st, et, at} for overlay
-    const ldbwsCpByRsid = new Map<
-      string,
-      Map<string, { st?: string; et?: string; at?: string; isCancelled?: boolean }>
-    >();
-
-    if (ldbwsBoard) {
-      const allServices = [
-        ...(ldbwsBoard.trainServices || []),
-        ...(ldbwsBoard.busServices || []),
-        ...(ldbwsBoard.ferryServices || []),
-      ];
-      for (const svc of allServices) {
-        if (!svc.rsid) continue;
-        const cpMap = new Map<string, { st?: string; et?: string; at?: string; isCancelled?: boolean }>();
-
-        // Previous calling points
-        for (const arr of svc.previousCallingPoints || []) {
-          for (const cp of arr.callingPoint) {
-            cpMap.set(cp.crs, {
-              st: cp.st,
-              et: cp.et,
-              at: cp.at,
-              isCancelled: cp.isCancelled,
-            });
-          }
-        }
-
-        // Subsequent calling points
-        for (const arr of svc.subsequentCallingPoints || []) {
-          for (const cp of arr.callingPoint) {
-            cpMap.set(cp.crs, {
-              st: cp.st,
-              et: cp.et,
-              at: cp.at,
-              isCancelled: cp.isCancelled,
-            });
-          }
-        }
-
-        if (cpMap.size > 0) {
-          ldbwsCpByRsid.set(svc.rsid, cpMap);
-        }
-      }
-    }
-
-    // ── Step 4: Merge timetable + LDBWS → HybridBoardService ──
+    // ── Build timetable board services ──
 
     const services: HybridBoardService[] = [];
 
@@ -342,16 +254,13 @@ router.get("/:crs/board", async (req, res) => {
       if (!journey) continue;
 
       const endpoints = journeyEndpoints.get(point.rid);
-      const ldbws = ldbwsByRsid.get(point.rid);
-      const ldbwsCps = ldbwsCpByRsid.get(point.rid);
       const cps = cpByRid.get(point.rid) || [];
 
       // Build calling points for this journey
       const hybridCps: HybridCallingPoint[] = cps
-        .filter((cp) => cp.stopType !== "PP") // exclude passing points from display
+        .filter((cp) => cp.stopType !== "PP")
         .map((cp) => {
           const loc = allLocMap.get(cp.tpl);
-          const ldbwsCp = ldbwsCps?.get(cp.crs || "");
 
           return {
             tpl: cp.tpl,
@@ -365,40 +274,28 @@ router.get("/:crs/board", async (req, res) => {
             wtd: cp.wtd,
             wtp: cp.wtp,
             act: cp.act,
-            // LDBWS overlay
-            eta: ldbwsCp?.et || null,
-            etd: ldbwsCp?.et || null,
-            ata: ldbwsCp?.at || null,
-            atd: ldbwsCp?.at || null,
-            platformLive: null, // per-stop platform not available from LDBWS board
-            isCancelled: ldbwsCp?.isCancelled || false,
+            // Real-time overlay fields (null until Darwin RT integration)
+            eta: null,
+            etd: null,
+            ata: null,
+            atd: null,
+            platformLive: null,
+            isCancelled: false,
           };
         });
-
-      // Determine platform
-      const bookedPlatform = point.plat;
-      const livePlatform = ldbws?.platform || null;
-      const platformSource = getPlatformSource(bookedPlatform, livePlatform, !!ldbws);
-
-      // Note: classification as departure/arrival is done on the frontend
-      // based on whether std or sta is present
-
-      // Get estimated times from LDBWS
-      const eta = ldbws?.eta || null;
-      const etd = ldbws?.etd || null;
 
       services.push({
         rid: point.rid,
         uid: journey.uid,
         trainId: journey.trainId,
         toc: journey.toc,
-        tocName: journey.tocName || ldbws?.operator || null,
+        tocName: journey.tocName || null,
         trainCat: journey.trainCat,
 
-        // Timetable (always present)
+        // Timetable data
         sta: point.pta,
         std: point.ptd,
-        platform: bookedPlatform,
+        platform: point.plat,
         origin: {
           crs: endpoints?.originCrs || null,
           name: endpoints?.originName || null,
@@ -408,25 +305,25 @@ router.get("/:crs/board", async (req, res) => {
           name: endpoints?.destName || null,
         },
         callingPoints: hybridCps,
-        serviceType: (ldbws?.serviceType as "train" | "bus" | "ferry") || "train",
+        serviceType: "train",
 
-        // LDBWS overlay
-        hasRealtime: !!ldbws,
-        eta,
-        etd,
-        platformLive: livePlatform,
-        platformSource,
-        isCancelled: ldbws?.isCancelled || false,
-        cancelReason: ldbws?.cancelReason || null,
-        delayReason: ldbws?.delayReason || null,
-        formation: ldbws?.formation || null,
-        adhocAlerts: ldbws?.adhocAlerts || [],
-        serviceId: ldbws?.serviceID || null,
-        length: ldbws?.length || null,
+        // Real-time overlay (populated by Darwin RT in future)
+        hasRealtime: false,
+        eta: null,
+        etd: null,
+        platformLive: null,
+        platformSource: point.plat ? "scheduled" : "scheduled",
+        isCancelled: false,
+        cancelReason: null,
+        delayReason: null,
+        formation: null,
+        adhocAlerts: [],
+        serviceId: null,
+        length: null,
       });
     }
 
-    // Sort: departures by std, arrivals by sta
+    // Sort by scheduled time
     services.sort((a, b) => {
       const aTime = a.std || a.sta || "";
       const bTime = b.std || b.sta || "";
@@ -435,26 +332,14 @@ router.get("/:crs/board", async (req, res) => {
 
     return res.json({
       crs,
-      stationName: station?.name || ldbwsBoard?.locationName || null,
+      stationName: station?.name || null,
       date: todayStr,
       generatedAt: now.toISOString(),
-      nrccMessages,
+      nrccMessages: [],
       services,
     });
   } catch (err) {
-    console.error("Hybrid board fetch error:", err);
-
-    if (err instanceof Error && err.message.includes("LDBWS auth failed")) {
-      return res.status(502).json({
-        error: { code: "UPSTREAM_AUTH_ERROR", message: "Failed to authenticate with the rail data provider" },
-      });
-    }
-
-    if (err instanceof Error && err.message.includes("LDBWS API error")) {
-      return res.status(502).json({
-        error: { code: "UPSTREAM_ERROR", message: "Error from the rail data provider" },
-      });
-    }
+    console.error("Timetable board fetch error:", err);
 
     return res.status(500).json({
       error: { code: "INTERNAL_ERROR", message: "Failed to fetch board data" },
