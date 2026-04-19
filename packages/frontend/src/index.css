@@ -1,1 +1,217 @@
 @import "tailwindcss";
+
+/* ─── Platform source indicators ────────────────────────────────────── */
+
+.platform {
+  @apply inline-flex items-center justify-center min-w-[2.5rem] px-2 py-0.5 rounded text-xs font-bold font-mono;
+}
+
+.platform-none {
+  @apply bg-slate-800 text-slate-500;
+}
+
+.platform-confirmed {
+  @apply bg-blue-600 text-white;
+}
+
+.platform-altered {
+  @apply bg-amber-600 text-white gap-0.5;
+}
+
+.platform-booked {
+  @apply line-through opacity-60;
+}
+
+.platform-arrow {
+  @apply text-[10px] opacity-80;
+}
+
+.platform-live {
+  @apply font-bold;
+}
+
+.platform-expected {
+  @apply bg-slate-700 text-slate-300 border border-dashed border-slate-500;
+}
+
+.platform-scheduled {
+  @apply bg-slate-800 text-slate-400 border border-slate-600;
+}
+
+/* ─── Service row ──────────────────────────────────────────────────────── */
+
+.service-row {
+  @apply border border-slate-700 rounded-lg mb-2 transition-colors;
+}
+
+.service-row.cancelled {
+  @apply opacity-60;
+}
+
+.service-row.expanded {
+  @apply border-slate-500;
+}
+
+.service-main {
+  @apply flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-slate-800/50;
+}
+
+.service-time {
+  @apply flex flex-col items-end min-w-[4rem];
+}
+
+.time-scheduled {
+  @apply text-sm font-mono text-slate-200;
+}
+
+.time-estimated {
+  @apply text-sm font-mono text-yellow-400;
+}
+
+.time-on-time {
+  @apply text-xs text-green-400 font-medium;
+}
+
+.time-cancelled {
+  @apply text-xs text-red-400 font-bold;
+}
+
+.service-info {
+  @apply flex-1 min-w-0;
+}
+
+.service-destination {
+  @apply text-sm font-medium text-slate-100 truncate;
+}
+
+.service-operator {
+  @apply text-xs text-slate-400 flex items-center gap-2;
+}
+
+.service-id {
+  @apply text-[10px] font-mono bg-slate-700 px-1 rounded;
+}
+
+.service-length {
+  @apply text-[10px] text-slate-500;
+}
+
+.service-status {
+  @apply flex items-center gap-1;
+}
+
+.realtime-badge {
+  @apply text-green-400 text-xs;
+}
+
+.scheduled-badge {
+  @apply text-slate-500 text-xs;
+}
+
+.service-chevron {
+  @apply text-slate-500 transition-transform;
+}
+
+.service-chevron.open {
+  @apply rotate-180;
+}
+
+.service-details {
+  @apply px-3 py-2 border-t border-slate-700;
+}
+
+.service-ids {
+  @apply flex gap-3 text-[10px] text-slate-600 font-mono pt-2;
+}
+
+/* ─── Alerts ──────────────────────────────────────────────────────────── */
+
+.alert {
+  @apply text-xs px-2 py-1 rounded mb-1;
+}
+
+.alert-cancel {
+  @apply bg-red-900/50 text-red-300;
+}
+
+.alert-delay {
+  @apply bg-yellow-900/50 text-yellow-300;
+}
+
+.alert-adhoc {
+  @apply bg-blue-900/50 text-blue-300;
+}
+
+.alert-platform {
+  @apply bg-amber-900/50 text-amber-300;
+}
+
+/* ─── Board ────────────────────────────────────────────────────────────── */
+
+.departure-board {
+  @apply max-w-2xl mx-auto;
+}
+
+.board-header {
+  @apply flex items-center justify-between px-4 py-3;
+}
+
+.board-header h2 {
+  @apply text-lg font-bold text-slate-100 flex items-center gap-2;
+}
+
+.crs-badge {
+  @apply text-xs font-mono bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded;
+}
+
+.board-tabs {
+  @apply flex gap-1 px-4 mb-3;
+}
+
+.tab {
+  @apply px-4 py-1.5 text-sm rounded-t-lg text-slate-400 hover:text-slate-200 transition-colors;
+}
+
+.tab.active {
+  @apply bg-slate-700 text-white;
+}
+
+.board-services {
+  @apply px-2 max-h-[70vh] overflow-y-auto;
+}
+
+.board-legend {
+  @apply flex gap-4 justify-center text-[10px] text-slate-500 py-2;
+}
+
+.nrcc-messages {
+  @apply px-4 mb-2;
+}
+
+.nrcc-message {
+  @apply text-xs bg-amber-900/30 text-amber-300 px-2 py-1 rounded mb-1;
+}
+
+.last-updated {
+  @apply text-xs text-slate-500;
+}
+
+.btn-back {
+  @apply text-sm text-slate-400 hover:text-white mr-2;
+}
+
+.btn-refresh {
+  @apply text-lg text-slate-400 hover:text-white px-2;
+}
+
+.loading {
+  @apply text-center py-8 text-slate-500;
+}
+
+.no-services {
+  @apply text-center py-8 text-slate-500;
+}
+
+.error-message {
+  @apply text-center py-4 text-red-400;
+}

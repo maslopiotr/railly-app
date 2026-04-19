@@ -5,12 +5,18 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { healthRouter } from "./routes/health.js";
 import { stationsRouter } from "./routes/stations.js";
+import { boardsRouter } from "./routes/boards.js";
+import { servicesRouter } from "./routes/services.js";
+import { timetableRouter } from "./routes/timetable.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
 const PORT = process.env.API_PORT || 3000;
 const isDev = process.env.NODE_ENV !== "production";
 
 const app = express();
+
+// Trust the nginx proxy (running in frontend container) so rate limiting works correctly
+app.set("trust proxy", 1);
 
 // Security & parsing middleware
 app.use(helmet());
@@ -53,6 +59,10 @@ app.use(limiter);
 // API routes
 app.use("/api/v1", healthRouter);
 app.use("/api/v1/stations", stationsRouter);
+app.use("/api/v1/stations", boardsRouter);
+app.use("/api/v1/stations", timetableRouter);
+app.use("/api/v1/services", servicesRouter);
+app.use("/api/v1/journeys", timetableRouter);
 
 // Health check at root too for convenience
 app.get("/api/health", (_req, res) => {

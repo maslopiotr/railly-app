@@ -50,31 +50,14 @@ LDB Staff API → Express API Server → WebSocket → React SPA
 - **Redis keys by station CRS**: `departures:{crs}` → departure board cache (TTL: 60s)
 - **PostgreSQL**: All service records, user data, timetable data (persistent)
 
-### Consumer → API Notification Pattern
-The Kafka Consumer cannot push directly to WebSocket clients. It uses Redis Pub/Sub:
-1. Consumer writes train data to **Redis** (cache)
-2. Consumer writes train data to **PostgreSQL** (persistence)
-3. Consumer publishes update event to **Redis Pub/Sub** channel `train_updates`
-4. Express API subscribes to `train_updates` Redis Pub/Sub
-5. Express API receives event → looks up WebSocket clients subscribed to that train/station
-6. Express API pushes update to relevant WebSocket clients
+### Consumer → API Notification Pattern *(not yet implemented — Step 3)*
+Consumer writes to Redis (cache) + PostgreSQL (persist), publishes to Redis Pub/Sub channel `train_updates`. API subscribes → pushes to WebSocket clients subscribed to that train/station. Flow: `Kafka → Consumer → Redis (write) + Redis Pub/Sub (notify) → API → WebSocket → Client`
 
-```
-Kafka → Consumer → Redis (write) + Redis Pub/Sub (notify) → API → WebSocket → Client
-```
+### WebSocket Subscription Pattern *(not yet implemented — Step 3)*
+Client connects to `/ws`, sends `{ type: "subscribe", station: "KGX" }` or `{ type: "subscribe", trainUid: "G12345" }`. Server adds to room. Updates pushed via Redis Pub/Sub. Unsubscribe via `{ type: "unsubscribe" }`.
 
-### WebSocket Subscription Pattern
-- Client connects to `/ws` endpoint
-- Client sends `{ type: "subscribe", station: "KGX" }` or `{ type: "subscribe", trainUid: "G12345" }`
-- Server adds client to subscription room
-- When Redis Pub/Sub delivers relevant update → API pushes to subscribed WebSocket clients
-- Client sends `{ type: "unsubscribe" }` to leave rooms
-
-### Auth Pattern
-- Registration: POST `/api/v1/auth/register` → bcrypt hash → PostgreSQL
-- Login: POST `/api/v1/auth/login` → validate password → return JWT
-- Protected routes: `Authorization: Bearer <token>` header → JWT middleware validates
-- No refresh tokens initially (JWT expiry = 7 days, re-login on expiry)
+### Auth Pattern *(not yet implemented — future step)*
+Register → bcrypt → PostgreSQL; Login → validate → JWT; Protected routes → Bearer token middleware; 7-day expiry, no refresh tokens.
 
 ### Error Handling
 - API returns standard JSON errors: `{ error: { code: "NOT_FOUND", message: "..." } }`
@@ -94,37 +77,18 @@ Kafka → Consumer → Redis (write) + Redis Pub/Sub (notify) → API → WebSoc
 - **Mandatory secrets**: docker-compose uses `${VAR:?error}` — no default passwords
 - **Health endpoint separation**: public returns status only; detail for ops/internal use
 
-## Monorepo Structure (npm Workspaces)
-
-```
-railly-app/
-├── package.json              # Root workspace config + convenience scripts
-├── tsconfig.json             # Base TypeScript config
-├── .env.example              # All env vars documented
-├── docker-compose.yml        # PostgreSQL 17 + Redis 7 + API + Frontend
-├── packages/
-│   ├── shared/               # @railly-app/shared — types + utils (no deps)
-│   │   ├── src/types/        # station.ts, darwin.ts, api.ts
-│   │   └── src/utils/        # crs.ts, time.ts
-│   ├── api/                  # @railly-app/api — Express server
-│   │   ├── src/server.ts     # Entry point (port 3000)
-│   │   ├── src/routes/       # Route handlers
-│   │   ├── src/middleware/    # Error handler, auth (future)
-│   │   └── Dockerfile        # Node.js production image
-│   ├── consumer/             # @railly-app/consumer — Kafka consumer
-│   │   └── src/index.ts      # Skeleton (Kafka in Step 3)
-│   └── frontend/             # @railly-app/frontend — React + Vite
-│       ├── src/App.tsx        # Landing page
-│       ├── vite.config.ts     # Vite + React + Tailwind + API proxy
-│       ├── nginx.conf        # Production: SPA + /api/ reverse proxy
-│       └── Dockerfile        # Multi-stage: build → nginx
-└── memory-bank/              # Project documentation
-```
-
-### Build Order
-1. `packages/shared` must be built first (other packages depend on its types)
-2. `packages/api` and `packages/consumer` can build in parallel after shared
-3. `packages/frontend` builds independently (Vite handles bundling)
+## Evolution of Project Decisions
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Frontend framework | Vite + React | User rejected Next.js due to cost and DX concerns |
+| API framework | Express.js | Simpler than Fastify, sufficient for the use case |
+| Database hosting | Self-hosted PostgreSQL on Hetzner | No Supabase, cost control |
+| Auth | Passport.js + JWT | Self-hosted, scalable, free, no vendor dependency |
+| Real-time | ws (WebSocket) | Free, lightweight, no Socket.io overhead needed |
+| ORM | Drizzle | Type-safe, lightweight, no codegen step |
+| LDBWS auth | x-apikey header | raildata.org.uk uses simple API key, no OAuth2 needed |
+| LDBWS endpoints | Only 1 board + 1 service detail | Subscription includes GetArrDepBoardWithDetails (returns both arrivals & departures) + GetServiceDetails. Separate GetDepartureBoard/GetArrivalBoard endpoints return HTTP 500 with our subscription |
+| Arrivals/Departures split | Client-side from combined endpoint | `GetArrDepBoardWithDetails` returns both; services with `sta` are arrivals, services with `std` are departures. Cleaner than separate subscriptions (fewer API calls, consistent data) |
 
 ## Critical Implementation Paths
 1. **Kafka Consumer message parsing** — must correctly handle all Darwin message types (TS, OW, etc.)

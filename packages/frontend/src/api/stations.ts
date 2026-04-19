@@ -11,7 +11,7 @@ export async function searchStations(
   if (!res.ok) {
     throw new Error(`Station search failed: ${res.statusText}`);
   }
-  return res.json();
+  return res.json() as Promise<StationSearchResponse>;
 }
 
 export async function lookupStation(
@@ -21,5 +21,5 @@ export async function lookupStation(
   if (!res.ok) {
     throw new Error(`Station lookup failed: ${res.statusText}`);
   }
-  return res.json();
+  return res.json() as Promise<StationSearchResponse>;
 }

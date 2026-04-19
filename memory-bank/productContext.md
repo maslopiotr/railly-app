@@ -24,7 +24,3 @@ UK rail commuters lack a single, free tool that combines live train tracking, di
 - **Mobile-first** — commuters check on the go
 - **Offline graceful degradation** — cached last-known data if connectivity drops
 
-## Design Inspiration
-- **RealTimeTrains** for data richness (train progress, location, running times)
-- **Trainline** for clean, accessible mobile UX
-- **OpenTrainTimes** for signalling and train detail views

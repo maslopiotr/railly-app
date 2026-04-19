@@ -41,12 +41,23 @@
 - **PostgreSQL** 17 — primary database
 - **Redis** 7 — caching + pub/sub for real-time updates
 
+### LDBWS Data Product Subscriptions
+| Data Product | Base URL | Env Var | Endpoints |
+|---|---|---|---|
+| Live Arrival & Departure Boards | `LIVE_ARRIVAL_DEPARTURE_BOARDS_URL` | Key: `LIVE_ARRIVAL_DEPARTURE_BOARDS_CONSUMER_KEY` | `GetArrDepBoardWithDetails/{crs}` |
+| Service Details | `SERVICE_DETAILS_URL` | Key: `SERVICE_DETAILS_CONSUMER_KEY` | `GetServiceDetails/{serviceid}` |
+
 ## Development Setup
 
 ### Prerequisites
 - Node.js 24+
 - npm 11+
 - Docker (for PostgreSQL + Redis)
+
+### Build Order
+1. `packages/shared` must be built first (other packages depend on its types)
+2. `packages/api` and `packages/consumer` can build in parallel after shared
+3. `packages/frontend` builds independently (Vite handles bundling)
 
 ### Quick Start
 ```bash
@@ -62,7 +73,11 @@ See `.env.example` for full list:
 - `KAFKA_BROKER`, `KAFKA_TOPIC`, `KAFKA_USERNAME`, `KAFKA_PASSWORD`
 
 ## Technical Constraints
-- Self-hosted only (no cloud vendor lock-in)
+- **Self-hosted on Hetzner** — Docker Compose, no paid SaaS
+- **Free/open-source tools only** — Vite+React, Express, PostgreSQL, Redis
+- **No Next.js, no Supabase** — plain SPA + self-hosted database
+- **TypeScript everywhere** — shared types between frontend and backend
+- **Darwin data feeds** — Kafka PubSub (JSON topic) for real-time, LDB APIs for on-demand queries
 - No paid external services (except Darwin data feeds)
 - All data sources must be official UK rail data
 - PWA-first, mobile-responsive design

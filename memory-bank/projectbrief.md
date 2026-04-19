@@ -12,11 +12,7 @@ Build a self-hosted, real-time UK train companion app for commuters that provide
 6. **Crowding data** — show train capacity where data is available
 
 ## Key Constraints
-- **Self-hosted on Hetzner** — Docker Compose, no paid SaaS
-- **Free/open-source tools only** — Vite+React, Express, PostgreSQL, Redis
-- **No Next.js, no Supabase** — plain SPA + self-hosted database
-- **TypeScript everywhere** — shared types between frontend and backend
-- **Darwin data feeds** — Kafka PubSub (JSON topic) for real-time, LDB APIs for on-demand queries
+See `techContext.md` → Technical Constraints for full detail. Summary: self-hosted (Hetzner, Docker Compose), free/open-source only, TypeScript everywhere, Darwin data feeds.
 
 ## Target Users
 - Daily UK rail commuters
