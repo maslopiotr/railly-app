@@ -139,19 +139,22 @@ router.get("/:crs/board", async (req, res) => {
       .orderBy(asc(callingPoints.ptd), asc(callingPoints.pta));
 
     // Filter to time window, handling cross-midnight scenarios
-    const windowPoints = timetablePoints.filter((p) => {
-      const time = parseTimeToMinutes(p.ptd || p.pta);
-      if (time === null) return true;
+    const windowPoints = timetablePoints
+      .map((p) => {
+        const time = parseTimeToMinutes(p.ptd || p.pta);
+        if (time === null) return { ...p, adjustedTime: 0 };
 
-      let adjustedTime = time;
-      if (p.ssd === yesterdayStr) {
-        adjustedTime = time - 1440;
-      } else if (p.ssd === tomorrowStr) {
-        adjustedTime = time + 1440;
-      }
+        let adjustedTime = time;
+        if (p.ssd === yesterdayStr) {
+          adjustedTime = time - 1440;
+        } else if (p.ssd === tomorrowStr) {
+          adjustedTime = time + 1440;
+        }
 
-      return adjustedTime >= earliest && adjustedTime <= latest;
-    });
+        return { ...p, adjustedTime };
+      })
+      .filter((p) => p.adjustedTime >= earliest && p.adjustedTime <= latest)
+      .sort((a, b) => a.adjustedTime - b.adjustedTime);
 
     if (windowPoints.length === 0) {
       return res.json({
@@ -337,12 +340,8 @@ router.get("/:crs/board", async (req, res) => {
     }
 
     // Hard limit on results to prevent excessive payload sizes
+    // Services are already in correct chronological order from windowPoints sort
     const MAX_SERVICES = 100;
-    services.sort((a, b) => {
-      const aTime = a.std || a.sta || "";
-      const bTime = b.std || b.sta || "";
-      return aTime.localeCompare(bTime);
-    });
     const limitedServices = services.slice(0, MAX_SERVICES);
 
     return res.json({

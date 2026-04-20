@@ -4,6 +4,7 @@
 **Step 6 — Favourite Stations** (completed)
 
 ## Recent Changes (April 2026)
+- **Cross-midnight sorting bug fix**: Board API now sorts services by `(ssd + time)` adjusted time, not by string `localeCompare`. Trains after midnight (ssd=tomorrow) no longer sort before late-evening trains (ssd=today). Fixed in `packages/api/src/routes/boards.ts`.
 - **Favourite stations feature**: `useFavourites` hook (localStorage), ⭐ toggle on board header, favourite cards grid on landing page
 - **Landing page UX fixes**: Consistent layout regardless of favourites state (always show clock/tagline/search/popular), 1-click ✕ unfavourite button on cards (always visible), no filtering of favourited stations from Recent, empty favourites hint "⭐ Favourite a station from the board to add it here"
 - Timezone fix: Board API uses UK local time (`Europe/London`) via `Intl.DateTimeFormat`

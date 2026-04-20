@@ -14,6 +14,9 @@
 - LDBWS matching by RSID — services without RSID won't get real-time overlay
 - LDBWS `numRows` limit may miss services at busy stations
 
+## Bug Fixes
+- ✅ Cross-midnight sorting bug (April 2026): Board sorted by time string `localeCompare`, putting 00:15 before 22:30. Fixed by sorting `windowPoints` by `adjustedTime` (ssd-aware) before building services. Removed broken `localeCompare` sort.
+
 ## Remaining Work
 ### Step 4 — Hybrid Board
 - [ ] Docker rebuild + end-to-end test

@@ -19,6 +19,7 @@ LDB API → Express API → React SPA
 2. Return timetable data with booked platforms, TOC names, full calling patterns
 3. LDBWS overlay removed from board — Darwin RT planned as future real-time source
 4. Client-side split: `classifyService()` → departures (has `std`), arrivals (has `sta`), through services on both tabs
+5. **Cross-midnight sorting**: Services sorted by `adjustedTime` (ssd-aware: yesterday=-1440, tomorrow=+1440), NOT by time string. Prevents 00:15 sorting before 22:30.
 
 ## Navigation
 - **History API** (pushState/popstate), NOT React Router
