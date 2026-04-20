@@ -28,8 +28,10 @@
 - [x] `useFavourites` hook (localStorage, max 12)
 - [x] ⭐ favourite toggle on DepartureBoard header (pop animation)
 - [x] Favourite cards grid on landing page (amber accent, 2/3/4 col grid)
-- [x] Landing page redesign: compact clock, hide tagline & popular when favourites exist, filter favourited from Recent
-- [x] LiveClock compact mode
+- [x] Consistent layout: always show clock/tagline/search/popular regardless of favourites
+- [x] 1-click ✕ unfavourite button on cards (always visible, not hover-only)
+- [x] No filtering of favourited stations from Recent — Recent and Favourites coexist
+- [x] Empty favourites hint: "⭐ Favourite a station from the board to add it here"
 
 ### Step 6b — Favourite Connections (deferred)
 - [ ] `useFavouriteConnections` hook (origin→destination pairs in localStorage)

@@ -482,9 +482,14 @@
   @apply text-xs font-mono text-slate-400;
 }
 
-.favourite-card-star {
-  @apply absolute top-2 right-2 text-amber-400 text-sm opacity-0
-    group-hover:opacity-100 transition-opacity duration-150;
+.favourite-card-remove {
+  @apply absolute top-1.5 right-1.5 w-5 h-5 flex items-center justify-center
+    text-xs text-slate-500 hover:text-red-400 rounded-full
+    hover:bg-slate-600 transition-all duration-150;
+}
+
+.favourite-card-remove:active {
+  @apply scale-90;
 }
 
 /* ─── Favourite Toggle (Board Header Star) ──────────────────────────────── */
