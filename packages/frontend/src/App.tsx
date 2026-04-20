@@ -1,8 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { StationSearch } from "./components/StationSearch";
 import { DepartureBoard } from "./components/DepartureBoard";
+import { ServiceDetail } from "./components/ServiceDetail";
 import { useRecentStations } from "./hooks/useRecentStations";
-import type { StationSearchResult } from "@railly-app/shared";
+import { fetchBoard } from "./api/boards";
+import type { StationSearchResult, HybridBoardService } from "@railly-app/shared";
 
 // Popular UK stations for quick access
 const POPULAR_STATIONS: StationSearchResult[] = [
@@ -16,13 +18,40 @@ const POPULAR_STATIONS: StationSearchResult[] = [
   { name: "Reading", crsCode: "RDG", tiploc: "RDNG" },
 ];
 
+/** Build URL for a given navigation state */
+function buildUrl(station: StationSearchResult | null, service: HybridBoardService | null): string {
+  if (!station) return "/";
+  const name = encodeURIComponent(station.name);
+  if (service) {
+    return `/stations/${station.crsCode}/${service.rid}?name=${name}`;
+  }
+  return `/stations/${station.crsCode}?name=${name}`;
+}
+
+/** Parse the current URL to restore navigation state */
+function parseUrl(): { station: StationSearchResult | null; rid: string | null } {
+  const path = window.location.pathname;
+  const params = new URLSearchParams(window.location.search);
+  const name = params.get("name") || "";
+
+  // Match /stations/:crs or /stations/:crs/:rid
+  const match = path.match(/^\/stations\/([A-Z]{3})(?:\/(\d+))?\/?$/i);
+  if (!match) return { station: null, rid: null };
+
+  const crs = match[1].toUpperCase();
+  const rid = match[2] || null;
+
+  return {
+    station: { name, crsCode: crs, tiploc: "" },
+    rid,
+  };
+}
+
 function LiveClock() {
   const [time, setTime] = useState(() => new Date());
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setTime(new Date());
-    }, 1000);
+    const interval = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(interval);
   }, []);
 
@@ -63,7 +92,7 @@ function StationChips({
           <button
             key={station.crsCode}
             onClick={() => onSelect(station)}
-            className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-full text-sm text-slate-300 hover:bg-slate-700 hover:text-white hover:border-slate-600 transition-colors flex items-center gap-1.5"
+            className="chip-hover px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-full text-sm text-slate-300 hover:bg-slate-700 hover:text-white hover:border-slate-600 flex items-center gap-1.5"
           >
             <span>{station.name}</span>
             <span className="text-xs text-slate-500 font-mono">{station.crsCode}</span>
@@ -76,29 +105,201 @@ function StationChips({
 
 function App() {
   const [selectedStation, setSelectedStation] = useState<StationSearchResult | null>(null);
+  const [selectedService, setSelectedService] = useState<HybridBoardService | null>(null);
   const { recentStations, addRecentStation } = useRecentStations();
 
+  // Track which tab the service was selected from (for detail view)
+  const [serviceTab, setServiceTab] = useState<"departures" | "arrivals">("departures");
+
+  // Service refresh state
+  const [isServiceRefreshing, setIsServiceRefreshing] = useState(false);
+  const [lastServiceUpdate, setLastServiceUpdate] = useState<Date | null>(null);
+
+  // Navigate to a URL via pushState (for in-app navigation)
+  const navigateTo = useCallback((station: StationSearchResult | null, service: HybridBoardService | null) => {
+    const url = buildUrl(station, service);
+    window.history.pushState(null, "", url);
+  }, []);
+
+  // Handle station selection
   function handleStationSelect(station: StationSearchResult) {
     addRecentStation(station);
     setSelectedStation(station);
+    setSelectedService(null);
+    navigateTo(station, null);
   }
+
+  // Handle service selection
+  function handleSelectService(service: HybridBoardService) {
+    const isArrival = service.sta !== null && service.std === null;
+    setServiceTab(isArrival ? "arrivals" : "departures");
+    setSelectedService(service);
+    setLastServiceUpdate(new Date());
+    navigateTo(selectedStation, service);
+  }
+
+  // Handle back from service detail
+  function handleBackFromService() {
+    setSelectedService(null);
+    setLastServiceUpdate(null);
+    navigateTo(selectedStation, null);
+  }
+
+  // Handle "Railly" logo click — go to landing page
+  function handleLogoClick() {
+    setSelectedStation(null);
+    setSelectedService(null);
+    setLastServiceUpdate(null);
+    navigateTo(null, null);
+  }
+
+  // Handle back from board
+  function handleBackFromBoard() {
+    setSelectedStation(null);
+    setSelectedService(null);
+    setLastServiceUpdate(null);
+    navigateTo(null, null);
+  }
+
+  // Refresh service data by re-fetching the board
+  async function handleRefreshService() {
+    if (!selectedStation || !selectedService || isServiceRefreshing) return;
+
+    setIsServiceRefreshing(true);
+    try {
+      const data = await fetchBoard(selectedStation.crsCode, {
+        timeWindow: 120,
+        pastWindow: 10,
+      });
+
+      // Find the updated service by RID
+      const updated = data.services.find((s) => s.rid === selectedService.rid);
+      if (updated) {
+        setSelectedService(updated);
+        setLastServiceUpdate(new Date());
+      } else {
+        // Service no longer in the time window — navigate back to board
+        setSelectedService(null);
+        setLastServiceUpdate(null);
+        navigateTo(selectedStation, null);
+      }
+    } catch {
+      // Silently fail — user can try again
+    } finally {
+      setIsServiceRefreshing(false);
+    }
+  }
+
+  // Restore state from URL on mount, and listen for browser back/forward
+  useEffect(() => {
+    function handlePopState() {
+      const { station, rid } = parseUrl();
+      if (station) {
+        setSelectedStation(station);
+        if (rid) {
+          // Need to fetch the board to get the service data
+          fetchBoard(station.crsCode, { timeWindow: 120, pastWindow: 10 })
+            .then((data) => {
+              const service = data.services.find((s) => s.rid === rid);
+              if (service) {
+                setSelectedService(service);
+                setLastServiceUpdate(new Date());
+                const isArrival = service.sta !== null && service.std === null;
+                setServiceTab(isArrival ? "arrivals" : "departures");
+              } else {
+                // Service not found, show board only
+                setSelectedService(null);
+                navigateTo(station, null);
+              }
+            })
+            .catch(() => {
+              // On error, just show the board
+              setSelectedService(null);
+            });
+        } else {
+          setSelectedService(null);
+        }
+      } else {
+        setSelectedStation(null);
+        setSelectedService(null);
+      }
+    }
+
+    // Restore state from URL on initial load
+    const { station, rid } = parseUrl();
+    if (station) {
+      setSelectedStation(station);
+      if (rid) {
+        // Fetch board to get service details
+        fetchBoard(station.crsCode, { timeWindow: 120, pastWindow: 10 })
+          .then((data) => {
+            const service = data.services.find((s) => s.rid === rid);
+            if (service) {
+              setSelectedService(service);
+              setLastServiceUpdate(new Date());
+              const isArrival = service.sta !== null && service.std === null;
+              setServiceTab(isArrival ? "arrivals" : "departures");
+            }
+            // Update station name from API data
+            if (data.stationName) {
+              setSelectedStation({ ...station, name: data.stationName });
+            }
+          })
+          .catch(() => {
+            // On error, show board anyway
+          });
+      } else {
+        // Fetch board just to get station name
+        fetchBoard(station.crsCode, { timeWindow: 120, pastWindow: 10 })
+          .then((data) => {
+            if (data.stationName) {
+              setSelectedStation({ ...station, name: data.stationName });
+            }
+          })
+          .catch(() => {});
+      }
+    }
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-900 to-slate-800 text-white overflow-x-hidden flex flex-col">
       <header className="px-4 sm:px-6 py-4 border-b border-slate-700 flex items-center justify-between">
-        <h1 className="text-lg sm:text-xl font-bold tracking-tight">
+        <button
+          onClick={handleLogoClick}
+          className="logo-btn cursor-pointer"
+          aria-label="Go to home page"
+        >
           Railly
-        </h1>
+        </button>
         <span className="text-xs sm:text-sm text-slate-500">Rail Buddy</span>
       </header>
 
       <main className="flex-1 flex flex-col items-center px-4 sm:px-6 py-6 sm:py-8">
-        {selectedStation ? (
+        {selectedService && selectedStation ? (
+          /* Level 3: Service Detail */
+          <div className="w-full max-w-2xl animate-fade-slide-right">
+            <ServiceDetail
+              service={selectedService}
+              isArrival={serviceTab === "arrivals"}
+              stationCrs={selectedStation.crsCode}
+              onBack={handleBackFromService}
+              onRefresh={handleRefreshService}
+              isRefreshing={isServiceRefreshing}
+              lastUpdated={lastServiceUpdate}
+            />
+          </div>
+        ) : selectedStation ? (
+          /* Level 2: Departure Board */
           <DepartureBoard
             station={selectedStation}
-            onBack={() => setSelectedStation(null)}
+            onBack={handleBackFromBoard}
+            onSelectService={handleSelectService}
           />
         ) : (
+          /* Level 1: Landing */
           <div className="flex-1 flex flex-col items-center justify-center w-full max-w-2xl">
             {/* Clock */}
             <div className="mb-6">

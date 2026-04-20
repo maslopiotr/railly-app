@@ -69,9 +69,25 @@ router.get("/:crs/board", async (req, res) => {
     const pastWindow = Math.min(parseInt(req.query.pastWindow as string) || 10, 60);
     const timeWindow = Math.min(parseInt(req.query.timeWindow as string) || 120, 480);
 
-    // Today's date
+    // Today's date and time in UK timezone
     const now = new Date();
-    const todayStr = now.toISOString().slice(0, 10);
+    const ukTime = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/London',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    }).format(now);
+    
+    // Extract date and time components
+    const dateParts = ukTime.split(', ')[0].split('/');
+    const timePart = ukTime.split(', ')[1];
+    const todayStr = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`; // YYYY-MM-DD
+    const [hours, minutes] = timePart.split(':').map(Number);
+    const nowMinutes = hours * 60 + minutes;
 
     // Get station name
     const [station] = await db
@@ -79,9 +95,6 @@ router.get("/:crs/board", async (req, res) => {
       .from(stations)
       .where(eq(stations.crs, crs))
       .limit(1);
-
-    // Calculate time window in minutes from midnight
-    const nowMinutes = now.getHours() * 60 + now.getMinutes();
     const earliest = nowMinutes - pastWindow;
     const latest = nowMinutes + timeWindow;
 
@@ -323,12 +336,14 @@ router.get("/:crs/board", async (req, res) => {
       });
     }
 
-    // Sort by scheduled time
+    // Hard limit on results to prevent excessive payload sizes
+    const MAX_SERVICES = 100;
     services.sort((a, b) => {
       const aTime = a.std || a.sta || "";
       const bTime = b.std || b.sta || "";
       return aTime.localeCompare(bTime);
     });
+    const limitedServices = services.slice(0, MAX_SERVICES);
 
     return res.json({
       crs,
@@ -336,7 +351,7 @@ router.get("/:crs/board", async (req, res) => {
       date: todayStr,
       generatedAt: now.toISOString(),
       nrccMessages: [],
-      services,
+      services: limitedServices,
     });
   } catch (err) {
     console.error("Timetable board fetch error:", err);

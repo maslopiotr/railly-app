@@ -1,6 +1,6 @@
 # Cline's Memory Bank
 
-I am Cline, an expert software engineer whose memory resets completely between sessions. I rely ENTIRELY on my Memory Bank to understand the project and continue work effectively. I MUST read ALL memory bank files at the start of EVERY task — this is not optional.
+Memory resets between sessions. The Memory Bank is my only link to previous work.
 
 ## Core Files (Required — read ALL at start of every task)
 1. `projectbrief.md` — Mission, core requirements, goals. Source of truth for scope.
@@ -10,10 +10,15 @@ I am Cline, an expert software engineer whose memory resets completely between s
 5. `techContext.md` — Tech stack, dev setup, constraints, dependencies, tool usage.
 6. `progress.md` — What works, what's left, current status, known issues, decision evolution.
 
-### Additional Context
-Create additional files/folders within memory-bank/ when they help organize (integration specs, API docs, testing strategies, deployment procedures).
+## File Responsibilities (no duplication)
+- `activeContext.md` — What's happening NOW (focus, recent changes, key files, next steps)
+- `progress.md` — What's done and what's left
+- `systemPatterns.md` — Architecture, data flow, patterns, key decisions
+- `techContext.md` — Stack, build commands, constraints, Docker rules
+- `productContext.md` — Why this exists, user problems, UX goals
+- `projectbrief.md` — Mission, requirements, success metrics
 
-## Documentation Updates
-Memory Bank updates occur when: discovering new patterns, after significant changes, on **update memory bank** request (MUST review ALL files), or when context needs clarification.
+## Updates
+Update memory bank when: discovering new patterns, after significant changes, on **update memory bank** request, or when context needs clarification. Keep files concise — delete outdated info, don't accumulate history.
 
 REMEMBER: After every memory reset, I begin completely fresh. The Memory Bank is my only link to previous work. It must be maintained with precision and clarity — my effectiveness depends entirely on its accuracy.

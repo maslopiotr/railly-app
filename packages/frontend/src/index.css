@@ -1,5 +1,99 @@
 @import "tailwindcss";
 
+/* ─── View & micro-interaction animations ─────────────────────────────── */
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeSlideRight {
+  from { opacity: 0; transform: translateX(-12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes pulseSubtle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 200ms ease-out both;
+}
+
+.animate-fade-slide-up {
+  animation: fadeSlideUp 250ms ease-out both;
+}
+
+.animate-fade-slide-right {
+  animation: fadeSlideRight 200ms ease-out both;
+}
+
+/* Staggered service rows — nth-child delays */
+.animate-stagger > :nth-child(1) { animation-delay: 0ms; }
+.animate-stagger > :nth-child(2) { animation-delay: 25ms; }
+.animate-stagger > :nth-child(3) { animation-delay: 50ms; }
+.animate-stagger > :nth-child(4) { animation-delay: 75ms; }
+.animate-stagger > :nth-child(5) { animation-delay: 100ms; }
+.animate-stagger > :nth-child(6) { animation-delay: 125ms; }
+.animate-stagger > :nth-child(7) { animation-delay: 150ms; }
+.animate-stagger > :nth-child(8) { animation-delay: 175ms; }
+.animate-stagger > :nth-child(9) { animation-delay: 200ms; }
+.animate-stagger > :nth-child(10) { animation-delay: 225ms; }
+.animate-stagger > :nth-child(n+11) { animation-delay: 250ms; }
+
+.animate-stagger > * {
+  animation: fadeSlideUp 200ms ease-out both;
+}
+
+/* Loading skeleton pulse */
+.animate-pulse-subtle {
+  animation: pulseSubtle 1.5s ease-in-out infinite;
+}
+
+/* Logo hover */
+.logo-btn {
+  @apply text-lg sm:text-xl font-bold tracking-tight text-white transition-opacity duration-150;
+}
+.logo-btn:hover {
+  opacity: 0.8;
+}
+.logo-btn:active {
+  opacity: 0.6;
+}
+
+/* Press feedback on interactive elements */
+.press-feedback {
+  @apply transition-transform duration-100;
+}
+.press-feedback:active {
+  transform: scale(0.97);
+}
+
+/* Chip hover micro-animation */
+.chip-hover {
+  @apply transition-all duration-150;
+}
+.chip-hover:hover {
+  transform: scale(1.03);
+}
+.chip-hover:active {
+  transform: scale(0.97);
+}
+
+/* Refresh button press */
+.refresh-press {
+  @apply transition-all duration-150;
+}
+.refresh-press:active:not(:disabled) {
+  transform: scale(0.9);
+}
+
 /* ─── Platform source indicators ────────────────────────────────────── */
 
 .platform {
@@ -53,10 +147,6 @@
 
 .service-row.cancelled {
   @apply opacity-60;
-}
-
-.service-row.expanded {
-  @apply border-slate-500;
 }
 
 .service-main {
@@ -113,15 +203,6 @@
 
 .calling-preview {
   @apply text-xs text-slate-400 truncate;
-}
-
-.calling-expand-btn {
-  @apply text-xs text-blue-400 hover:text-blue-300 ml-1 whitespace-nowrap;
-}
-
-/* Expanded calling points */
-.calling-expanded {
-  @apply mt-2 p-2 bg-slate-800/50 rounded text-xs;
 }
 
 .calling-stop {
@@ -201,19 +282,7 @@
 }
 
 .service-chevron {
-  @apply text-slate-500 transition-transform;
-}
-
-.service-chevron.open {
-  @apply rotate-180;
-}
-
-.service-details {
-  @apply px-3 py-2 border-t border-slate-700;
-}
-
-.service-ids {
-  @apply flex gap-3 text-[11px] text-slate-600 font-mono pt-2;
+  @apply text-slate-400 text-lg;
 }
 
 /* ─── Alerts ──────────────────────────────────────────────────────────── */
@@ -385,6 +454,19 @@
 
 .error-message {
   @apply text-center py-4 text-red-400;
+}
+
+/* ─── Service Detail ───────────────────────────────────────────────────── */
+
+.service-detail {
+  @apply bg-slate-800 rounded-xl border border-slate-700 overflow-hidden;
+}
+
+/* ─── Pull-to-refresh ──────────────────────────────────────────────────── */
+
+.pull-to-refresh-indicator {
+  @apply text-center overflow-hidden select-none;
+  touch-action: pan-y;
 }
 
 /* Safe area support for notched devices */

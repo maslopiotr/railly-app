@@ -1,17 +1,14 @@
 /**
  * ServiceRow — A single service row on the hybrid departure/arrival board
  *
- * Shows scheduled time, platform (with source distinction), destination/origin,
- * operator, real-time status, and expandable calling points.
+ * Shows scheduled time, platform, destination/origin, operator, status.
+ * Clicking navigates to a full ServiceDetail view (no inline expansion).
  *
- * Desktop: table-style layout with calling points column
+ * Desktop: table-style layout with next stops preview
  * Mobile: stacked card with origin + next stops
  */
 
-import { useState } from "react";
 import type { HybridBoardService, HybridCallingPoint, PlatformSource } from "@railly-app/shared";
-import { CallingPoints } from "./CallingPoints";
-import { LoadingIndicator } from "./LoadingIndicator";
 
 interface ServiceRowProps {
   service: HybridBoardService;
@@ -19,6 +16,8 @@ interface ServiceRowProps {
   isArrival?: boolean;
   /** CRS code of the current station (for calling point highlighting) */
   stationCrs?: string;
+  /** Callback when user clicks to see full details */
+  onSelect?: (service: HybridBoardService) => void;
 }
 
 /** Format a rail time string (e.g. "0930" → "09:30", "On time" → "On time") */
@@ -29,27 +28,6 @@ function formatTime(time: string | null | undefined): string {
     return `${cleaned.slice(0, 2)}:${cleaned.slice(2)}`;
   }
   return cleaned;
-}
-
-/** Parse time string to minutes since midnight for delay calculation */
-function timeToMinutes(time: string | null | undefined): number | null {
-  if (!time) return null;
-  const formatted = formatTime(time);
-  if (formatted === "--:--") return null;
-  const [h, m] = formatted.split(":").map(Number);
-  return h * 60 + m;
-}
-
-/** Calculate delay in minutes between scheduled and estimated */
-function calculateDelay(scheduled: string | null, estimated: string | null): number | null {
-  if (!scheduled || !estimated) return null;
-  if (estimated === "On time") return 0;
-  
-  const schedMins = timeToMinutes(scheduled);
-  const estMins = timeToMinutes(estimated);
-  
-  if (schedMins === null || estMins === null) return null;
-  return estMins - schedMins;
 }
 
 /** Check if an estimated time represents "On time" */
@@ -74,11 +52,9 @@ function PlatformBadge({ platform, platformLive, platformSource }: {
 
   switch (platformSource) {
     case "confirmed":
-      // Live matches booked — show in blue/bold
       return <span className="platform platform-confirmed">{platformLive || platform}</span>;
 
     case "altered":
-      // Live differs from booked — show "booked→live" in amber
       return (
         <span className="platform platform-altered">
           <span className="platform-booked">{platform}</span>
@@ -88,11 +64,9 @@ function PlatformBadge({ platform, platformLive, platformSource }: {
       );
 
     case "expected":
-      // LDBWS doesn't have platform yet, show booked as "expected" in grey
       return <span className="platform platform-expected">{platform}</span>;
 
     case "scheduled":
-      // No LDBWS data at all, show booked as "scheduled" in muted
       return <span className="platform platform-scheduled">{platform}</span>;
 
     default:
@@ -108,44 +82,19 @@ function getNextCallingPoints(
 ): HybridCallingPoint[] {
   if (!callingPoints || callingPoints.length === 0) return [];
 
-  // Find the current station in the calling pattern
-  let currentIndex = -1;
-  if (currentCrs) {
-    currentIndex = callingPoints.findIndex(cp => cp.crs === currentCrs);
-  }
-
-  // If not found, assume we're at the origin (index 0)
-  if (currentIndex === -1) {
-    currentIndex = 0;
-  }
-
-  // Get the next N stops (skip the current station)
-  return callingPoints
-    .slice(currentIndex + 1)
-    .filter(cp => cp.stopType !== "PP") // Skip passing points
-    .slice(0, count);
-}
-
-/** Get all calling points after the current station */
-function getAllCallingPoints(
-  callingPoints: HybridCallingPoint[],
-  currentCrs: string | null
-): HybridCallingPoint[] {
-  if (!callingPoints || callingPoints.length === 0) return [];
-
   let currentIndex = -1;
   if (currentCrs) {
     currentIndex = callingPoints.findIndex(cp => cp.crs === currentCrs);
   }
   if (currentIndex === -1) currentIndex = 0;
 
-  return callingPoints.slice(currentIndex + 1);
+  return callingPoints
+    .slice(currentIndex + 1)
+    .filter(cp => cp.stopType !== "PP")
+    .slice(0, count);
 }
 
-export function ServiceRow({ service, isArrival, stationCrs }: ServiceRowProps) {
-  const [expanded, setExpanded] = useState(false);
-  const [callingExpanded, setCallingExpanded] = useState(false);
-
+export function ServiceRow({ service, isArrival, stationCrs, onSelect }: ServiceRowProps) {
   const scheduledTime = isArrival ? service.sta : service.std;
   const estimatedTime = isArrival ? service.eta : service.etd;
   const destination = isArrival ? service.origin : service.destination;
@@ -154,16 +103,21 @@ export function ServiceRow({ service, isArrival, stationCrs }: ServiceRowProps) 
   // Determine status display
   const cancelled = service.isCancelled || isCancelled(estimatedTime);
   const onTime = !cancelled && isOnTime(estimatedTime);
-  const delayed = !cancelled && !onTime && estimatedTime && estimatedTime !== scheduledTime;
 
   // Get next calling points (up to 3 for preview)
   const nextStops = getNextCallingPoints(service.callingPoints || [], stationCrs || null, 3);
-  const allStops = getAllCallingPoints(service.callingPoints || [], stationCrs || null);
 
   return (
-    <div className={`service-row ${cancelled ? "cancelled" : ""} ${expanded ? "expanded" : ""}`}>
+    <div
+      className={`service-row press-feedback ${cancelled ? "cancelled" : ""} cursor-pointer hover:bg-slate-700/50 active:bg-slate-600/50 transition-colors`}
+      onClick={() => onSelect?.(service)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onSelect?.(service); }}
+      aria-label={`${formatTime(scheduledTime)} to ${destination?.name || "Unknown"}`}
+    >
       {/* Main row */}
-      <div className="service-main" onClick={() => setExpanded(!expanded)}>
+      <div className="service-main">
         {/* Scheduled time */}
         <div className="service-time">
           <span className="time-scheduled">{formatTime(scheduledTime)}</span>
@@ -186,18 +140,14 @@ export function ServiceRow({ service, isArrival, stationCrs }: ServiceRowProps) 
           <div className="service-destination">
             {destination?.name || destination?.crs || "Unknown"}
           </div>
-          {/* Show origin/destination subtext based on direction */}
-          {/* For arrivals: destination=service.origin, origin=service.destination */}
-          {/* Arrivals subtext: "To {origin}" = where it goes after here */}
-          {/* Departures subtext: "From {origin}" = where it came from */}
           <div className="service-origin lg:hidden">
-            {isArrival 
+            {isArrival
               ? `To ${origin?.name || origin?.crs || "Unknown"}`
               : `From ${origin?.name || origin?.crs || "Unknown"}`
             }
           </div>
           <div className="service-origin hidden lg:block">
-            {isArrival 
+            {isArrival
               ? `To ${origin?.name || origin?.crs || "Unknown"}`
               : `From ${origin?.name || origin?.crs || "Unknown"}`
             }
@@ -210,52 +160,12 @@ export function ServiceRow({ service, isArrival, stationCrs }: ServiceRowProps) 
           )}
         </div>
 
-        {/* Desktop: Calling points column */}
+        {/* Desktop: Next stops preview */}
         {nextStops.length > 0 && (
           <div className="service-calling">
-            {callingExpanded ? (
-              <div className="calling-expanded" onClick={e => e.stopPropagation()}>
-                {allStops.map((stop, i) => {
-                  const scheduledTime = stop.ptd || stop.pta;
-                  const estimatedTime = stop.etd || stop.eta;
-                  const delay = calculateDelay(scheduledTime, estimatedTime);
-                  const isLate = delay !== null && delay > 0;
-                  const isOnTime = estimatedTime === "On time" || delay === 0;
-                  const hasActual = stop.atd || stop.ata;
-                  
-                  return (
-                    <span key={i} className="calling-stop">
-                      <span className={`calling-stop-time ${
-                        hasActual ? "arrived" : isLate ? "late" : isOnTime ? "on-time" : ""
-                      }`}>
-                        {formatTime(estimatedTime && !isOnTime ? estimatedTime : scheduledTime)}
-                        {isLate && !hasActual && <span className="delay-badge">(+{delay})</span>}
-                      </span>
-                      <span className="calling-stop-name">{stop.name || stop.crs}</span>
-                      {i < allStops.length - 1 && <span className="calling-stop-arrow">→</span>}
-                    </span>
-                  );
-                })}
-                <button
-                  className="calling-expand-btn"
-                  onClick={e => { e.stopPropagation(); setCallingExpanded(false); }}
-                >
-                  [− Hide]
-                </button>
-              </div>
-            ) : (
-              <div className="calling-preview">
-                → {nextStops.map(s => s.name || s.crs).join(" → ")}
-                {allStops.length > 3 && (
-                  <button
-                    className="calling-expand-btn"
-                    onClick={e => { e.stopPropagation(); setCallingExpanded(true); }}
-                  >
-                    [+ {allStops.length - 3} more]
-                  </button>
-                )}
-              </div>
-            )}
+            <div className="calling-preview">
+              → {nextStops.map(s => s.name || s.crs).join(" → ")}
+            </div>
           </div>
         )}
 
@@ -266,11 +176,8 @@ export function ServiceRow({ service, isArrival, stationCrs }: ServiceRowProps) 
           {service.length && <span className="service-length hidden lg:inline">· {service.length} coaches</span>}
         </div>
 
-        {/* Status / Formation indicator */}
+        {/* Status indicator */}
         <div className="service-status">
-          {service.formation && service.formation.coaches && (
-            <LoadingIndicator formation={service.formation} compact />
-          )}
           {service.hasRealtime && !cancelled && (
             <span className="realtime-badge" title="Real-time data available">●</span>
           )}
@@ -279,65 +186,11 @@ export function ServiceRow({ service, isArrival, stationCrs }: ServiceRowProps) 
           )}
         </div>
 
-        {/* Expand chevron */}
-        <div className={`service-chevron ${expanded ? "open" : ""}`}>
-          ▾
+        {/* Navigation chevron */}
+        <div className="service-chevron">
+          ›
         </div>
       </div>
-
-      {/* Expanded details */}
-      {expanded && (
-        <div className="service-details">
-          {/* Cancel reason */}
-          {cancelled && service.cancelReason && (
-            <div className="alert alert-cancel">
-              <strong>Cancelled:</strong> {service.cancelReason}
-            </div>
-          )}
-
-          {/* Delay reason */}
-          {delayed && service.delayReason && (
-            <div className="alert alert-delay">
-              <strong>Delayed:</strong> {service.delayReason}
-            </div>
-          )}
-
-          {/* Ad-hoc alerts */}
-          {service.adhocAlerts?.map((alert, i) => (
-            <div key={i} className="alert alert-adhoc">{alert}</div>
-          ))}
-
-          {/* Platform alteration note */}
-          {service.platformSource === "altered" && (
-            <div className="alert alert-platform">
-              Platform altered from {service.platform} to {service.platformLive}
-            </div>
-          )}
-
-          {/* Formation (coach loading) */}
-          {service.formation && service.formation.coaches && (
-            <div className="service-formation">
-              <h4 className="text-xs font-medium text-slate-400 mb-1">Formation</h4>
-              <LoadingIndicator formation={service.formation} />
-            </div>
-          )}
-
-          {/* Calling points (full) */}
-          {service.callingPoints && service.callingPoints.length > 0 && (
-            <CallingPoints
-              points={service.callingPoints}
-              currentCrs={stationCrs || null}
-            />
-          )}
-
-          {/* Service ID info */}
-          <div className="service-ids">
-            <span>RID: {service.rid}</span>
-            {service.uid && <span>UID: {service.uid}</span>}
-            {service.serviceId && <span>LDBWS: {service.serviceId}</span>}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

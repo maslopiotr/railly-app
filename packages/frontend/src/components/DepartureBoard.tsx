@@ -3,7 +3,7 @@
  *
  * Shows all services for a station within a time window (past 10min + next 2hr).
  * Splits into Departures and Arrivals tabs based on std/sta fields.
- * Auto-refreshes every 30 seconds.
+ * Manual refresh only (pull-to-refresh on mobile, button on desktop).
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
@@ -14,6 +14,7 @@ import { ServiceRow } from "./ServiceRow";
 interface DepartureBoardProps {
   station: StationSearchResult;
   onBack?: () => void;
+  onSelectService?: (service: HybridBoardService) => void;
 }
 
 type TabType = "departures" | "arrivals";
@@ -23,22 +24,24 @@ function classifyService(service: HybridBoardService): {
   isDeparture: boolean;
   isArrival: boolean;
 } {
-  // Has scheduled departure time → it's a departure
   const isDeparture = service.std !== null;
-  // Has scheduled arrival time → it's an arrival
-  // Through services (both sta + std) appear on BOTH tabs —
-  // matching real UK station boards where arrivals includes through services
   const isArrival = service.sta !== null;
-
   return { isDeparture, isArrival };
 }
 
-export function DepartureBoard({ station, onBack }: DepartureBoardProps) {
+export function DepartureBoard({ station, onBack, onSelectService }: DepartureBoardProps) {
   const [activeTab, setActiveTab] = useState<TabType>("departures");
   const [board, setBoard] = useState<HybridBoardResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+
+  // Pull-to-refresh state
+  const [pullDistance, setPullDistance] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const touchStartY = useRef(0);
+  const listRef = useRef<HTMLDivElement>(null);
+  const PULL_THRESHOLD = 60;
 
   const loadBoard = useCallback(async () => {
     try {
@@ -54,15 +57,45 @@ export function DepartureBoard({ station, onBack }: DepartureBoardProps) {
       setError(err instanceof Error ? err.message : "Failed to load board");
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   }, [station.crsCode]);
 
-  // Auto-refresh every 30 seconds
+  // Load on mount (no auto-refresh)
   useEffect(() => {
     loadBoard();
-    const interval = setInterval(loadBoard, 30000);
-    return () => clearInterval(interval);
   }, [loadBoard]);
+
+  // Pull-to-refresh handlers (mobile)
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    const container = listRef.current;
+    if (!container) return;
+    // Only enable pull-to-refresh when scrolled to top
+    if (container.scrollTop <= 0) {
+      touchStartY.current = e.touches[0].clientY;
+    } else {
+      touchStartY.current = 0;
+    }
+  }, []);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    if (touchStartY.current === 0 || isRefreshing) return;
+    const diff = e.touches[0].clientY - touchStartY.current;
+    if (diff > 0) {
+      // Pulling down
+      setPullDistance(Math.min(diff, PULL_THRESHOLD * 1.5));
+    }
+  }, [isRefreshing]);
+
+  const handleTouchEnd = useCallback(() => {
+    if (pullDistance >= PULL_THRESHOLD && !isRefreshing) {
+      setIsRefreshing(true);
+      setPullDistance(0);
+      loadBoard();
+    } else {
+      setPullDistance(0);
+    }
+  }, [pullDistance, isRefreshing, loadBoard]);
 
   // Split services into departures and arrivals
   const { departures, arrivals } = useMemo(() => {
@@ -81,19 +114,8 @@ export function DepartureBoard({ station, onBack }: DepartureBoardProps) {
 
   const displayServices = activeTab === "departures" ? departures : arrivals;
 
-  // Scroll to "now" indicator
-  const listRef = useRef<HTMLDivElement>(null);
-  const nowRef = useRef<HTMLDivElement>(null);
-
-  // Scroll to current time on first load
-  useEffect(() => {
-    if (nowRef.current && listRef.current) {
-      nowRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-  }, [board]);
-
   return (
-    <div className="departure-board">
+    <div className="departure-board w-full max-w-6xl mx-auto animate-fade-slide-up">
       {/* Header */}
       <div className="board-header">
         <div className="board-header-left">
@@ -113,7 +135,7 @@ export function DepartureBoard({ station, onBack }: DepartureBoardProps) {
               Updated {lastUpdated.toLocaleTimeString()}
             </span>
           )}
-          <button className="btn-refresh" onClick={loadBoard} disabled={isLoading}>
+          <button className="btn-refresh" onClick={loadBoard} disabled={isLoading} aria-label="Refresh board">
             ↻
           </button>
         </div>
@@ -154,10 +176,43 @@ export function DepartureBoard({ station, onBack }: DepartureBoardProps) {
         <div className="col-status">Status</div>
       </div>
 
+      {/* Pull-to-refresh indicator */}
+      <div
+        className="pull-to-refresh-indicator"
+        style={{
+          height: `${pullDistance}px`,
+          opacity: pullDistance / PULL_THRESHOLD,
+          overflow: "hidden",
+        }}
+      >
+        {isRefreshing ? (
+          <div className="flex items-center justify-center py-2 text-sm text-slate-400">
+            <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mr-2" />
+            Refreshing…
+          </div>
+        ) : (
+          <div className="flex items-center justify-center py-2 text-sm text-slate-400">
+            {pullDistance >= PULL_THRESHOLD ? "Release to refresh" : "Pull to refresh"}
+          </div>
+        )}
+      </div>
+
       {/* Service list */}
-      <div className="board-services" ref={listRef}>
+      <div
+        className="board-services"
+        ref={listRef}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+      >
         {isLoading && !board && (
-          <div className="loading">Loading services...</div>
+          <div className="loading animate-pulse-subtle">
+            <div className="flex flex-col gap-3 px-2">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <div key={i} className="h-14 bg-slate-700/40 rounded-lg" />
+              ))}
+            </div>
+          </div>
         )}
         {error && (
           <div className="error-message">{error}</div>
@@ -165,9 +220,17 @@ export function DepartureBoard({ station, onBack }: DepartureBoardProps) {
         {!isLoading && !error && displayServices.length === 0 && (
           <div className="no-services">No services found in this time window</div>
         )}
-        {displayServices.map((service) => (
-          <ServiceRow key={service.rid} service={service} isArrival={activeTab === "arrivals"} stationCrs={station.crsCode} />
-        ))}
+        <div className="animate-stagger">
+          {displayServices.map((service) => (
+            <ServiceRow
+              key={service.rid}
+              service={service}
+              isArrival={activeTab === "arrivals"}
+              stationCrs={station.crsCode}
+              onSelect={onSelectService}
+            />
+          ))}
+        </div>
       </div>
 
       {/* Legend */}

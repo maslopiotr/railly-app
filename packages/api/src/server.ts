@@ -15,11 +15,32 @@ const isDev = process.env.NODE_ENV !== "production";
 
 const app = express();
 
-// Trust the nginx proxy (running in frontend container) so rate limiting works correctly
-app.set("trust proxy", 1);
+// Trust the nginx proxy so rate limiting uses real client IP
+// Only trust a single proxy layer (nginx in frontend container)
+if (!isDev) {
+  app.set("trust proxy", 1);
+}
 
 // Security & parsing middleware
-app.use(helmet());
+app.use(helmet({
+  frameguard: { action: "deny" },  // X-Frame-Options: DENY (more restrictive than SAMEORIGIN)
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      frameAncestors: ["'none'"],
+    },
+  },
+}));
+
+// Request timeout — abort requests that take too long (prevents slowloris-style attacks)
+app.use((_req, res, next) => {
+  res.setTimeout(30000, () => {
+    if (!res.headersSent) {
+      res.status(504).json({ error: { code: "TIMEOUT", message: "Request timed out" } });
+    }
+  });
+  next();
+});
 
 // CORS — restrict origins in production, open in dev
 const allowedOrigins = process.env.CORS_ORIGINS

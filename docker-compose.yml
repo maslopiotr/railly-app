@@ -1,6 +1,8 @@
 services:
   postgres:
     image: postgres:17
+    networks:
+      - backend
     environment:
       POSTGRES_DB: railly
       POSTGRES_USER: railly
@@ -19,6 +21,8 @@ services:
 
   redis:
     image: redis:7
+    networks:
+      - backend
     # Require authentication
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"]
     # Bind to localhost only — not exposed to the internet
@@ -37,7 +41,10 @@ services:
       context: .
       dockerfile: packages/api/Dockerfile
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
+    networks:
+      - frontend
+      - backend
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://railly:${POSTGRES_PASSWORD}@postgres:5432/railly
@@ -66,9 +73,17 @@ services:
       context: .
       dockerfile: packages/frontend/Dockerfile
     ports:
-      - "80:80"
+      - "127.0.0.1:8080:80"
+    networks:
+      - frontend
     depends_on:
       - api
+
+networks:
+  frontend:
+    # Only api + frontend on this network
+  backend:
+    # Only api + postgres + redis on this network
 
 volumes:
   postgres_data:
