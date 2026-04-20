@@ -13,6 +13,8 @@ import { ServiceRow } from "./ServiceRow";
 
 interface DepartureBoardProps {
   station: StationSearchResult;
+  isFavourite?: boolean;
+  onToggleFavourite?: () => void;
   onBack?: () => void;
   onSelectService?: (service: HybridBoardService) => void;
 }
@@ -29,7 +31,7 @@ function classifyService(service: HybridBoardService): {
   return { isDeparture, isArrival };
 }
 
-export function DepartureBoard({ station, onBack, onSelectService }: DepartureBoardProps) {
+export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack, onSelectService }: DepartureBoardProps) {
   const [activeTab, setActiveTab] = useState<TabType>("departures");
   const [board, setBoard] = useState<HybridBoardResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -127,6 +129,16 @@ export function DepartureBoard({ station, onBack, onSelectService }: DepartureBo
           <h2>
             {board?.stationName || station.name}
             <span className="crs-badge">{station.crsCode}</span>
+            {onToggleFavourite && (
+              <button
+                className={`btn-favourite ${isFavourite ? "is-favourite" : ""}`}
+                onClick={onToggleFavourite}
+                aria-label={isFavourite ? "Remove from favourites" : "Add to favourites"}
+                title={isFavourite ? "Remove from favourites" : "Add to favourites"}
+              >
+                {isFavourite ? "★" : "☆"}
+              </button>
+            )}
           </h2>
         </div>
         <div className="board-header-right">

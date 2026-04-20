@@ -24,11 +24,18 @@
 - [ ] Parse TS messages → extract booked platform, write to Redis + PostgreSQL
 - [ ] Consumer notifies API via Redis PUB/SUB → WebSocket push
 
-### Step 6 — Favourite Stations & Connections
-- [ ] `useFavourites` hook (localStorage)
-- [ ] ⭐ favourite button on DepartureBoard header
-- [ ] Favourite stations on landing page
-- [ ] Favourite connection cards ("EUS → MKC" with next 3 trains)
+### Step 6 — Favourite Stations
+- [x] `useFavourites` hook (localStorage, max 12)
+- [x] ⭐ favourite toggle on DepartureBoard header (pop animation)
+- [x] Favourite cards grid on landing page (amber accent, 2/3/4 col grid)
+- [x] Landing page redesign: compact clock, hide tagline & popular when favourites exist, filter favourited from Recent
+- [x] LiveClock compact mode
+
+### Step 6b — Favourite Connections (deferred)
+- [ ] `useFavouriteConnections` hook (origin→destination pairs in localStorage)
+- [ ] Favourite connection cards on landing page ("EUS → MKC" with next 3 trains)
+- [ ] Add connection from DepartureBoard (e.g. "favourite this route")
+- [ ] API endpoint: next N services from A to B (filtered calling points)
 
 ### Step 7+ — Future
 - Delay Repay screen

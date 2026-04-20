@@ -3,6 +3,7 @@ import { StationSearch } from "./components/StationSearch";
 import { DepartureBoard } from "./components/DepartureBoard";
 import { ServiceDetail } from "./components/ServiceDetail";
 import { useRecentStations } from "./hooks/useRecentStations";
+import { useFavourites } from "./hooks/useFavourites";
 import { fetchBoard } from "./api/boards";
 import type { StationSearchResult, HybridBoardService } from "@railly-app/shared";
 
@@ -47,7 +48,7 @@ function parseUrl(): { station: StationSearchResult | null; rid: string | null }
   };
 }
 
-function LiveClock() {
+function LiveClock({ compact = false }: { compact?: boolean }) {
   const [time, setTime] = useState(() => new Date());
 
   useEffect(() => {
@@ -62,7 +63,7 @@ function LiveClock() {
   });
 
   return (
-    <div className="text-3xl sm:text-4xl font-mono font-bold text-white tracking-tight">
+    <div className={`font-mono font-bold text-white tracking-tight ${compact ? "text-2xl sm:text-3xl" : "text-3xl sm:text-4xl"}`}>
       {formattedTime}
     </div>
   );
@@ -107,6 +108,7 @@ function App() {
   const [selectedStation, setSelectedStation] = useState<StationSearchResult | null>(null);
   const [selectedService, setSelectedService] = useState<HybridBoardService | null>(null);
   const { recentStations, addRecentStation } = useRecentStations();
+  const { favourites, toggleFavourite, isFavourite } = useFavourites();
 
   // Track which tab the service was selected from (for detail view)
   const [serviceTab, setServiceTab] = useState<"departures" | "arrivals">("departures");
@@ -295,24 +297,30 @@ function App() {
           /* Level 2: Departure Board */
           <DepartureBoard
             station={selectedStation}
+            isFavourite={isFavourite(selectedStation.crsCode)}
+            onToggleFavourite={() => toggleFavourite(selectedStation)}
             onBack={handleBackFromBoard}
             onSelectService={handleSelectService}
           />
         ) : (
           /* Level 1: Landing */
-          <div className="flex-1 flex flex-col items-center justify-center w-full max-w-2xl">
-            {/* Clock */}
-            <div className="mb-6">
-              <LiveClock />
+          <div className={`flex-1 flex flex-col items-center w-full max-w-2xl ${favourites.length > 0 ? "justify-start pt-4 sm:pt-8" : "justify-center"}`}>
+            {/* Clock — compact when favourites exist */}
+            <div className={favourites.length > 0 ? "mb-4" : "mb-6"}>
+              <LiveClock compact={favourites.length > 0} />
             </div>
 
-            {/* Tagline */}
-            <h2 className="text-xl sm:text-2xl font-semibold text-center mb-2">
-              Live UK Train Departures
-            </h2>
-            <p className="text-sm sm:text-base text-slate-400 text-center mb-8">
-              Search any station to see departures, arrivals, and platform info
-            </p>
+            {/* Tagline — hidden when favourites exist */}
+            {favourites.length === 0 && (
+              <>
+                <h2 className="text-xl sm:text-2xl font-semibold text-center mb-2">
+                  Live UK Train Departures
+                </h2>
+                <p className="text-sm sm:text-base text-slate-400 text-center mb-8">
+                  Search any station to see departures, arrivals, and platform info
+                </p>
+              </>
+            )}
 
             {/* Search */}
             <div className="w-full flex flex-col items-center mb-6">
@@ -322,16 +330,43 @@ function App() {
                 autoFocus
                 size="large"
               />
-              <p className="text-xs text-slate-500 mt-2">
-                Try 'Euston', 'Manchester', or 'KGX'
-              </p>
+              {favourites.length === 0 && (
+                <p className="text-xs text-slate-500 mt-2">
+                  Try 'Euston', 'Manchester', or 'KGX'
+                </p>
+              )}
             </div>
+
+            {/* Favourite Stations — prominent grid cards */}
+            {favourites.length > 0 && (
+              <div className="w-full mb-6">
+                <h3 className="text-xs uppercase tracking-wider text-amber-400/80 mb-3 flex items-center gap-1.5">
+                  <svg className="w-3.5 h-3.5 text-amber-400" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+                  </svg>
+                  Favourites
+                </h3>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                  {favourites.map((station) => (
+                    <button
+                      key={station.crsCode}
+                      onClick={() => handleStationSelect(station)}
+                      className="favourite-card group"
+                    >
+                      <span className="favourite-card-name">{station.name}</span>
+                      <span className="favourite-card-crs">{station.crsCode}</span>
+                      <span className="favourite-card-star">★</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Recent Stations */}
             {recentStations.length > 0 && (
               <div className="mb-6">
                 <StationChips
-                  stations={recentStations}
+                  stations={recentStations.filter(s => !isFavourite(s.crsCode))}
                   onSelect={handleStationSelect}
                   title="Recent"
                   icon={
@@ -343,17 +378,19 @@ function App() {
               </div>
             )}
 
-            {/* Popular Stations */}
-            <StationChips
-              stations={POPULAR_STATIONS}
-              onSelect={handleStationSelect}
-              title="Popular Stations"
-              icon={
-                <svg className="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
-                </svg>
-              }
-            />
+            {/* Popular Stations — only show when no favourites */}
+            {favourites.length === 0 && (
+              <StationChips
+                stations={POPULAR_STATIONS}
+                onSelect={handleStationSelect}
+                title="Popular Stations"
+                icon={
+                  <svg className="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+                  </svg>
+                }
+              />
+            )}
           </div>
         )}
       </main>
