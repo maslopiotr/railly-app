@@ -1,8 +1,8 @@
 # # Reference documentation (large PDFs, XSDs, etc.)
-/Darwin documentation
 Best Practices for AI Operator.md
 .gitignore
 .markdownlint.json
+Railly App - Rail Buddy.md
 
 # macOS metadata
 .DS_Store
@@ -10,7 +10,6 @@ Best Practices for AI Operator.md
 # Binary / reference file types (dense, rarely needed directly)
 *.pdf
 *.docx
-*.xsd
 *.csv
 
 # Build output (no value for code context)

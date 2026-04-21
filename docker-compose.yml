@@ -23,8 +23,14 @@ services:
     image: redis:7
     networks:
       - backend
-    # Require authentication
-    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"]
+    # Require authentication + AOF persistence for Darwin data durability
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+      --appendonly yes
+      --appendfsync everysec
+      --auto-aof-rewrite-percentage 100
+      --auto-aof-rewrite-min-size 64mb
     # Bind to localhost only — not exposed to the internet
     ports:
       - "127.0.0.1:6379:6379"
@@ -67,6 +73,30 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+  consumer:
+    build:
+      context: .
+      dockerfile: packages/consumer/Dockerfile
+    networks:
+      - backend
+    environment:
+      NODE_ENV: production
+      KAFKA_BROKER: ${KAFKA_BROKER}
+      KAFKA_TOPIC: ${KAFKA_TOPIC:-darwin}
+      KAFKA_GROUP_ID: ${KAFKA_GROUP_ID:-railly-consumer}
+      KAFKA_USERNAME: ${KAFKA_USERNAME}
+      KAFKA_PASSWORD: ${KAFKA_PASSWORD}
+      KAFKA_SESSION_TIMEOUT_MS: ${KAFKA_SESSION_TIMEOUT_MS:-45000}
+      KAFKA_HEARTBEAT_INTERVAL_MS: ${KAFKA_HEARTBEAT_INTERVAL_MS:-3000}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      METRICS_INTERVAL_MS: ${METRICS_INTERVAL_MS:-30000}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
   frontend:
     build:

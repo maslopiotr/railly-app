@@ -13,7 +13,9 @@
   },
   "dependencies": {
     "@railly-app/shared": "*",
-    "dotenv": "^16.4.7"
+    "dotenv": "^16.4.7",
+    "ioredis": "^5.10.1",
+    "kafkajs": "^2.2.4"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",

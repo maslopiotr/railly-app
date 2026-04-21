@@ -1,35 +1,324 @@
 /**
- * Darwin data feed types
+ * Darwin Push Port data feed types
+ *
+ * Based on rttiPPTSchema_v18.xsd — JSON format
+ *
+ * The root envelope is either:
+ * - uR (Update Response) — incremental updates
+ * - sR (Snapshot Response) — full state snapshot
+ *
+ * Both contain a DataResponse with these child elements:
+ *   schedule, deactivated, association, scheduleFormations,
+ *   TS, serviceLoading, formationLoading, OW, trainAlert,
+ *   trainOrder, trackingID, alarm
  */
 
-/** Train Status message from Darwin PubSub */
+// ── Root Envelope ────────────────────────────────────────────────────────────
+
+/** Update Response — incremental changes */
+export interface DarwinUpdateResponse {
+  type: "uR";
+  ts: string; // Local timestamp (Pport.ts attribute)
+  version: string; // Schema version
+  updateOrigin?: string;
+  requestSource?: string;
+  requestID?: string;
+  // DataResponse contents
+  schedule?: DarwinSchedule[];
+  deactivated?: DarwinDeactivated[];
+  association?: DarwinAssociation[];
+  scheduleFormations?: DarwinScheduleFormations[];
+  TS?: DarwinTrainStatus[];
+  serviceLoading?: DarwinServiceLoading[];
+  formationLoading?: DarwinFormationLoading[];
+  OW?: DarwinStationMessage[];
+  trainAlert?: DarwinTrainAlert[];
+  trainOrder?: DarwinTrainOrder[];
+  trackingID?: DarwinTrackingID[];
+  alarm?: DarwinAlarm[];
+}
+
+/** Snapshot Response — full state */
+export interface DarwinSnapshotResponse {
+  type: "sR";
+  ts: string;
+  version: string;
+  // Same DataResponse contents as uR
+  schedule?: DarwinSchedule[];
+  deactivated?: DarwinDeactivated[];
+  association?: DarwinAssociation[];
+  scheduleFormations?: DarwinScheduleFormations[];
+  TS?: DarwinTrainStatus[];
+  serviceLoading?: DarwinServiceLoading[];
+  formationLoading?: DarwinFormationLoading[];
+  OW?: DarwinStationMessage[];
+  trainAlert?: DarwinTrainAlert[];
+  trainOrder?: DarwinTrainOrder[];
+  trackingID?: DarwinTrackingID[];
+  alarm?: DarwinAlarm[];
+}
+
+/** Union type for parsed Darwin messages */
+export type DarwinMessage = DarwinUpdateResponse | DarwinSnapshotResponse;
+
+// ── Schedule (P0) ──────────────────────────────────────────────────────────
+
+/** Full train schedule — equivalent to a PPTimetable Journey */
+export interface DarwinSchedule {
+  rid: string; // RTTI unique Train ID
+  uid: string; // Train UID
+  trainId: string; // Train ID (Headcode)
+  ssd: string; // Scheduled Start Date (YYYY-MM-DD)
+  toc: string; // ATOC Code
+  status?: string; // CIF train status, default "P"
+  trainCat?: string; // Train category, default "OO"
+  isPassengerSvc?: boolean; // Default true
+  deleted?: boolean; // Service has been deleted
+  isCharter?: boolean; // Charter service
+  qtrain?: boolean; // Q Train (runs as required, not yet activated)
+  can?: boolean; // Cancelled
+  cancelReason?: DarwinDisruptionReason;
+  locations: DarwinScheduleLocation[];
+}
+
+/** A location within a schedule (OR, OPOR, IP, OPIP, PP, DT, OPDT) */
+export interface DarwinScheduleLocation {
+  tpl: string; // TIPLOC
+  act?: string; // Activity codes
+  planAct?: string; // Planned activity codes (if different)
+  can?: boolean; // Cancelled at this location
+  plat?: string; // Platform number
+  pta?: string; // Public scheduled arrival (HH:MM)
+  ptd?: string; // Public scheduled departure (HH:MM)
+  wta?: string; // Working scheduled arrival
+  wtd?: string; // Working scheduled departure
+  wtp?: string; // Working scheduled passing
+  rdelay?: number; // Delay implied by route change
+  fd?: string; // False destination TIPLOC
+  // Stop type is inferred from the element name in XML
+  stopType: "OR" | "OPOR" | "IP" | "OPIP" | "PP" | "DT" | "OPDT";
+}
+
+/** Deactivated schedule notification */
+export interface DarwinDeactivated {
+  rid: string;
+}
+
+// ── Train Status (P0) ────────────────────────────────────────────────────────
+
+/** Train Status — real-time forecasts and actuals */
 export interface DarwinTrainStatus {
+  rid: string;
+  uid?: string;
+  ssd?: string;
+  trainId?: string; // May differ from schedule (e.g. VSTP)
+  locations: DarwinTSLocation[];
+}
+
+/** A location within a Train Status message */
+export interface DarwinTSLocation {
+  tpl: string;
+  wta?: string; // Working time arrival
+  wtd?: string; // Working time departure
+  wtp?: string; // Working time passing
+  pta?: string; // Public time arrival
+  ptd?: string; // Public time departure
+  platform?: string; // Platform number
+  platIsSuppressed?: boolean; // Platform suppressed from public display
+  platSourcedFromTIPLOC?: boolean; // Platform sourced from TIPLOC
+  platformIsChanged?: boolean; // Platform has changed from booked
+  ata?: string; // Actual time arrived
+  atd?: string; // Actual time departed
+  et?: string; // Estimated time (arrival or departure)
+  eta?: string; // Estimated time of arrival
+  etd?: string; // Estimated time of departure
+  etMin?: string; // Earliest estimated time
+  etMax?: string; // Latest estimated time
+  uncertainDelay?: boolean; // Delay is uncertain
+  cancelled?: boolean; // This location is cancelled
+  lateReason?: DarwinDisruptionReason; // Late running reason at this location
+  isOrigin?: boolean;
+  isDestination?: boolean;
+  isPass?: boolean; // Passing point (no stop)
+  tplSuppressed?: boolean; // TIPLOC suppressed from public display
+  detachFront?: number; // Coaches to detach from front
+  detachRear?: number; // Coaches to detach from rear
+}
+
+// ── Association (P2) ───────────────────────────────────────────────────────
+
+/** Association between schedules (Join, Split, Link, Next) */
+export interface DarwinAssociation {
+  tiploc: string;
+  category: "JJ" | "VV" | "LK" | "NP"; // Join, Split, Linked, Next-Working
+  isCancelled?: boolean;
+  isDeleted?: boolean;
+  main: DarwinAssocService; // Through/previous/link-to service
+  assoc: DarwinAssocService; // Starting/terminating/subsequent/link-from service
+}
+
+export interface DarwinAssocService {
+  rid: string;
+  wta?: string;
+  wtd?: string;
+  pta?: string;
+  ptd?: string;
+}
+
+// ── Station Message (P1) ──────────────────────────────────────────────────
+
+/** Station-level message/alert */
+export interface DarwinStationMessage {
+  id: string;
+  crs?: string;
+  station?: string; // Station name (if no CRS)
+  message: string;
+  severity?: "0" | "1" | "2" | "3"; // 0=normal, 1=minor, 2=major, 3=severe
+  category?: "Train" | "Station" | "Connections" | "System" | "Misc";
+}
+
+// ── Train Alert (P1) ───────────────────────────────────────────────────────
+
+/** Train-specific alert */
+export interface DarwinTrainAlert {
+  rid: string;
+  alert: string;
+  // Additional fields from schema
+}
+
+// ── Train Order (P3) ─────────────────────────────────────────────────────────
+
+/** Expected departure order from a platform */
+export interface DarwinTrainOrder {
+  tiploc: string;
+  platform: string;
+  // Ordered list of expected trains
+  trains: DarwinTrainOrderEntry[];
+}
+
+export interface DarwinTrainOrderEntry {
+  rid: string;
+  uid?: string;
+  trainId?: string;
+  ssd?: string;
+  order: number; // 1, 2, or 3
+}
+
+// ── Train Formations (P2) ────────────────────────────────────────────────────
+
+/** Schedule-level formation data */
+export interface DarwinScheduleFormations {
+  rid: string;
+  formations: DarwinFormation[];
+}
+
+export interface DarwinFormation {
+  // Coach formation details
+}
+
+// ── Loading Data (P2) ────────────────────────────────────────────────────────
+
+/** Service-level loading */
+export interface DarwinServiceLoading {
+  rid: string;
+  locations: DarwinLoadingLocation[];
+}
+
+export interface DarwinLoadingLocation {
+  tiploc: string;
+  loadingPercentage?: number;
+  loadingCategory?: string;
+}
+
+/** Formation-level (per-coach) loading */
+export interface DarwinFormationLoading {
+  rid: string;
+  locations: DarwinFormationLoadingLocation[];
+}
+
+export interface DarwinFormationLoadingLocation {
+  tiploc: string;
+  coaches: DarwinCoachLoading[];
+}
+
+export interface DarwinCoachLoading {
+  coachNumber: string;
+  loadingPercentage?: number;
+  loadingCategory?: string;
+}
+
+// ── Tracking ID (P3) ────────────────────────────────────────────────────────
+
+/** Corrected headcode for TD berth */
+export interface DarwinTrackingID {
+  rid: string;
+  trainId: string; // Corrected headcode
+}
+
+// ── Alarm (P3) ───────────────────────────────────────────────────────────────
+
+/** Darwin system alarm */
+export interface DarwinAlarm {
+  alarmType: string;
+  description: string;
+  severity?: string;
+}
+
+// ── Common Types ─────────────────────────────────────────────────────────────
+
+/** Disruption reason (cancellation or delay) */
+export interface DarwinDisruptionReason {
+  code?: number;
+  reasontext?: string;
+}
+
+// ── Redis Storage Types ──────────────────────────────────────────────────────
+
+/** Service state stored in Redis Hash */
+export interface DarwinServiceState {
+  rid: string;
+  uid: string;
+  ssd: string;
   trainId: string;
-  trainUid: string;
-  headcode: string;
-  serviceDate: string;
   toc: string;
+  trainCat?: string;
+  status?: string;
+  isPassenger: boolean;
   isCancelled: boolean;
   cancelReason?: string;
   delayReason?: string;
-  locations: DarwinTrainLocation[];
-}
-
-export interface DarwinTrainLocation {
-  tiplocCode: string;
-  scheduledArrival?: string;
-  scheduledDeparture?: string;
-  actualArrival?: string;
-  actualDeparture?: string;
   platform?: string;
-  isOrigin: boolean;
-  isDestination: boolean;
-  isPass: boolean;
+  generatedAt: string;
+  lastUpdated: string;
+  source: "schedule" | "TS" | "deactivated";
 }
 
-/** Operational Warning message */
-export interface DarwinOperationalWarning {
-  trainId: string;
-  warningType: string;
-  description: string;
+/** Calling point with real-time overlay */
+export interface DarwinServiceLocation {
+  tpl: string;
+  crs?: string | null;
+  stopType: string;
+  pta?: string | null;
+  ptd?: string | null;
+  wta?: string | null;
+  wtd?: string | null;
+  wtp?: string | null;
+  act?: string | null;
+  plat?: string | null;
+  eta?: string | null;
+  etd?: string | null;
+  ata?: string | null;
+  atd?: string | null;
+  platformChanged?: boolean;
+  isCancelled?: boolean;
+  isDelayed?: boolean;
+  lateReason?: string | null;
+}
+
+/** Station board member for Redis Sorted Set */
+export interface DarwinBoardMember {
+  rid: string;
+  tpl: string;
+  sequence: number;
+  departureMinutes: number;
 }
