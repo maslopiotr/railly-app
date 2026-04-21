@@ -16,6 +16,15 @@ import { redis, keys, TTL } from "../redis/client.js";
 import type { ChainableCommander } from "ioredis";
 
 /**
+ * Ensure a value is an array (Darwin sometimes sends single objects).
+ */
+function toArray<T>(v: T | T[] | undefined): T[] {
+  if (Array.isArray(v)) return v;
+  if (v !== undefined && v !== null) return [v];
+  return [];
+}
+
+/**
  * Process a schedule message: store full calling pattern in Redis.
  */
 export async function handleSchedule(
@@ -30,6 +39,9 @@ export async function handleSchedule(
   if (stored && new Date(generatedAt) <= new Date(stored)) {
     return; // Older or same message, skip
   }
+
+  // Darwin sometimes sends a single location as an object instead of an array
+  const rawLocations = toArray(schedule.locations);
 
   // Build service state
   const state: DarwinServiceState = {
@@ -50,7 +62,7 @@ export async function handleSchedule(
   };
 
   // Build locations array
-  const locations: DarwinServiceLocation[] = schedule.locations.map(
+  const locations: DarwinServiceLocation[] = rawLocations.map(
     (loc: DarwinScheduleLocation) => ({
       tpl: loc.tpl,
       crs: null, // Will be resolved later if needed

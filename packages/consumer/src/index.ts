@@ -15,7 +15,7 @@ import { parseDarwinMessage } from "./parser.js";
 
 const KAFKA_BROKER = process.env.KAFKA_BROKER || "";
 const KAFKA_TOPIC = process.env.KAFKA_TOPIC || "darwin";
-const KAFKA_GROUP_ID = process.env.KAFKA_GROUP_ID || "railly-consumer";
+const KAFKA_GROUP_ID = process.env.KAFKA_GROUP_ID || "";
 const KAFKA_USERNAME = process.env.KAFKA_USERNAME || "";
 const KAFKA_PASSWORD = process.env.KAFKA_PASSWORD || "";
 

@@ -14,6 +14,15 @@ import { redis, keys, TTL } from "../redis/client.js";
 import type { ChainableCommander } from "ioredis";
 
 /**
+ * Ensure a value is an array (Darwin sometimes sends single objects).
+ */
+function toArray<T>(v: T | T[] | undefined): T[] {
+  if (Array.isArray(v)) return v;
+  if (v !== undefined && v !== null) return [v];
+  return [];
+}
+
+/**
  * Process a Train Status message: update forecasts/actuals/platforms in Redis.
  */
 export async function handleTrainStatus(
@@ -43,20 +52,23 @@ export async function handleTrainStatus(
   pipeline.hset(serviceKey, updates);
   pipeline.expire(serviceKey, TTL.service);
 
+  // Darwin sometimes sends a single location as an object instead of an array
+  const locations = toArray(ts.locations);
+
   // Fetch existing locations
   const locKey = keys.serviceLocations(rid);
   const existingRaw = await redis.get(locKey);
   if (!existingRaw) {
     // No schedule yet — store TS locations as-is
-    const locations = buildLocationsFromTS(ts.locations);
-    pipeline.set(locKey, JSON.stringify(locations));
+    const built = buildLocationsFromTS(locations);
+    pipeline.set(locKey, JSON.stringify(built));
     pipeline.expire(locKey, TTL.locations);
     return;
   }
 
   // Merge TS updates into existing locations
   const existing: DarwinServiceLocation[] = JSON.parse(existingRaw);
-  const updated = mergeTSIntoLocations(existing, ts.locations);
+  const updated = mergeTSIntoLocations(existing, locations);
 
   pipeline.set(locKey, JSON.stringify(updated));
   pipeline.expire(locKey, TTL.locations);
