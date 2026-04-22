@@ -94,5 +94,7 @@ app.get("/api/health", (_req, res) => {
 app.use(errorHandler);
 
 app.listen(PORT, () => {
-  console.log(`🚂 Rail Buddy API running on port ${PORT}`);
+  console.log(
+    `[${new Date().toISOString()}] [PID:${process.pid}] 🚂 Rail Buddy API running on port ${PORT}`,
+  );
 });

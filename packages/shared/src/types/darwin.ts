@@ -170,9 +170,14 @@ export interface DarwinAssocService {
 /** Station-level message/alert */
 export interface DarwinStationMessage {
   id: string;
-  crs?: string;
+  crs?: string; // Single CRS (legacy)
   station?: string; // Station name (if no CRS)
-  message: string;
+  // Darwin sends Station array or cat/sev/Msg fields
+  Station?: { crs?: string }[]; // Array of affected stations
+  cat?: string; // Category (Train, Station, etc.)
+  sev?: string; // Severity (0, 1, 2, 3)
+  Msg?: unknown; // Complex message structure (HTML-like)
+  message?: string; // Normalized text
   severity?: "0" | "1" | "2" | "3"; // 0=normal, 1=minor, 2=major, 3=severe
   category?: "Train" | "Station" | "Connections" | "System" | "Misc";
 }

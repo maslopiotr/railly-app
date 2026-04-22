@@ -23,6 +23,12 @@ const METRICS_INTERVAL_MS = parseInt(process.env.METRICS_INTERVAL_MS || "30000",
 const SESSION_TIMEOUT_MS = parseInt(process.env.KAFKA_SESSION_TIMEOUT_MS || "45000", 10);
 const HEARTBEAT_INTERVAL_MS = parseInt(process.env.KAFKA_HEARTBEAT_INTERVAL_MS || "3000", 10);
 
+// Max concurrent messages to process within a batch
+const CONCURRENCY = parseInt(process.env.CONSUMER_CONCURRENCY || "50", 10);
+
+// Heartbeat every N messages to prevent session timeout during long batches
+const HEARTBEAT_EVERY = parseInt(process.env.CONSUMER_HEARTBEAT_EVERY || "100", 10);
+
 // ── Kafka Client Setup ───────────────────────────────────────────────────────
 
 const kafka = new Kafka({
@@ -49,8 +55,12 @@ const consumer = kafka.consumer({
   groupId: KAFKA_GROUP_ID,
   sessionTimeout: SESSION_TIMEOUT_MS,
   heartbeatInterval: HEARTBEAT_INTERVAL_MS,
-  maxBytes: 5 * 1024 * 1024, // 5 MB max per fetch
-  maxBytesPerPartition: 1 * 1024 * 1024, // 1 MB per partition
+  // Significantly larger fetch sizes to reduce network round-trips
+  // and avoid "losing packets" under high throughput
+  maxBytes: 20 * 1024 * 1024, // 20 MB max per fetch
+  maxBytesPerPartition: 5 * 1024 * 1024, // 5 MB per partition
+  // Don't wait to fill the fetch — get messages immediately
+  maxWaitTimeInMs: 500,
 });
 
 // ── Graceful Shutdown ────────────────────────────────────────────────────────
@@ -121,6 +131,36 @@ async function main(): Promise<void> {
   await consumer.subscribe({ topic: KAFKA_TOPIC, fromBeginning: false });
   console.log(`   ✅ Subscribed to topic: ${KAFKA_TOPIC}`);
 
+  // ── Offset out-of-range recovery ─────────────────────────────────────────────
+  // Darwin's Kafka retention is ~5 min. If the consumer restarts after downtime
+  // longer than retention, the committed offset is gone. Catch the crash and
+  // seek to the latest offset for that partition.
+  consumer.on(consumer.events.CRASH, async ({ payload: { error, restart } }) => {
+    const isOffsetError =
+      error.name === "KafkaJSOffsetOutOfRange" ||
+      (error.message && error.message.includes("Offset out of range"));
+
+    if (isOffsetError) {
+      console.warn("⚠️ Kafka offset out of range — committed offset expired during downtime");
+      // Extract partition info if available
+      const partition = (error as unknown as Record<string, unknown>).partition;
+      console.warn(`   Seeking to latest offset (partition: ${partition ?? "unknown"})`);
+      try {
+        if (typeof partition === "number") {
+          await consumer.seek({ topic: KAFKA_TOPIC, partition, offset: "latest" });
+        }
+      } catch (seekErr) {
+        console.error("   ❌ Seek failed:", seekErr);
+      }
+    }
+
+    if (!restart) {
+      console.error("💥 Kafka consumer crashed and will not restart. Exiting.");
+      process.exit(1);
+    }
+    // KafkaJS will auto-restart when restart === true
+  });
+
   // Start metrics logging
   const metricsInterval = startMetricsLogging();
 
@@ -137,33 +177,67 @@ async function main(): Promise<void> {
       isStale,
     }) => {
       console.log(
-        `📦 Batch received — partition: ${batch.partition}, messages: ${batch.messages.length}`,
+        `📦 Batch — partition: ${batch.partition}, messages: ${batch.messages.length}`,
       );
 
-      for (const message of batch.messages) {
-        if (!isRunning() || isStale()) break;
+      // Process messages concurrently within the batch for throughput.
+      // We must resolve offsets in order, so we track completion per message
+      // and resolve offsets sequentially up to the latest contiguous processed message.
+      const processed = new Set<string>();
+      let lastResolvedOffset = batch.firstOffset() ?? "0";
+
+      const processMessage = async (msg: typeof batch.messages[0]): Promise<void> => {
+        if (!isRunning() || isStale()) return;
 
         // Parse the message
-        const parsed = parseDarwinMessage(message.value);
+        const parsed = parseDarwinMessage(msg.value);
         if (!parsed) {
-          // Commit offset for unparseable messages so we don't reprocess them
-          await resolveOffset(message.offset);
-          continue;
+          processed.add(msg.offset);
+          return;
         }
 
         // Process the message
         try {
           await handleDarwinMessage(parsed);
-          await resolveOffset(message.offset);
+          processed.add(msg.offset);
         } catch (err) {
-          console.error("   ❌ Handler error for offset", message.offset, err);
-          // Continue processing — don't block on one bad message
-          // The offset won't be committed, so Kafka will retry
+          console.error("   ❌ Handler error for offset", msg.offset, err);
+          // Don't mark as processed — offset won't be committed, Kafka will retry
+        }
+      };
+
+      // Process in concurrent chunks to avoid overwhelming the event loop
+      for (let i = 0; i < batch.messages.length; i += CONCURRENCY) {
+        const chunk = batch.messages.slice(i, i + CONCURRENCY);
+        await Promise.all(chunk.map((msg) => processMessage(msg)));
+
+        // Resolve offsets sequentially up to the latest contiguous processed message
+        // Sort offsets numerically to ensure sequential resolution
+        const sortedProcessed = Array.from(processed)
+          .map((o) => BigInt(o))
+          .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+
+        for (const offset of sortedProcessed) {
+          const offsetStr = offset.toString();
+          if (offsetStr <= lastResolvedOffset) continue;
+          // Only resolve if this offset is the next sequential one
+          const lastBig = BigInt(lastResolvedOffset);
+          if (offset === lastBig + BigInt(1)) {
+            await resolveOffset(offsetStr);
+            lastResolvedOffset = offsetStr;
+          } else {
+            break; // Gap in sequence — stop resolving
+          }
         }
 
-        // Heartbeat to keep the session alive during long processing
-        await heartbeat();
+        // Heartbeat periodically during long batches
+        if (i % HEARTBEAT_EVERY === 0) {
+          await heartbeat();
+        }
       }
+
+      // Final heartbeat for this batch
+      await heartbeat();
     },
   });
 

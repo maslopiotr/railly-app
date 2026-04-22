@@ -12,7 +12,7 @@ import type {
   DarwinServiceLocation,
   DarwinServiceState,
 } from "@railly-app/shared";
-import { redis, keys, TTL } from "../redis/client.js";
+import { keys, TTL } from "../redis/client.js";
 import type { ChainableCommander } from "ioredis";
 
 /**
@@ -33,12 +33,6 @@ export async function handleSchedule(
   generatedAt: string,
 ): Promise<void> {
   const { rid } = schedule;
-
-  // Deduplication: skip if we have a newer or equal message
-  const stored = await redis.hget(keys.service(rid), "generatedAt");
-  if (stored && new Date(generatedAt) <= new Date(stored)) {
-    return; // Older or same message, skip
-  }
 
   // Darwin sometimes sends a single location as an object instead of an array
   const rawLocations = toArray(schedule.locations);
@@ -101,8 +95,8 @@ export async function handleSchedule(
   // Build station board indices for each calling point
   for (let i = 0; i < locations.length; i++) {
     const loc = locations[i];
-    const crs = loc.crs;
-    if (!crs) continue;
+    const locationKey = loc.crs || loc.tpl; // Use CRS if available, otherwise TIPLOC
+    if (!locationKey) continue;
 
     const depTime = loc.ptd || loc.pta;
     if (!depTime) continue;
@@ -110,7 +104,7 @@ export async function handleSchedule(
     const minutes = parseTimeToMinutes(depTime);
     if (minutes === null) continue;
 
-    const boardKey = keys.board(crs, state.ssd);
+    const boardKey = keys.board(locationKey, state.ssd);
     const member = `${rid}#${loc.tpl}#${i}`;
 
     pipeline.zadd(boardKey, String(minutes), member);

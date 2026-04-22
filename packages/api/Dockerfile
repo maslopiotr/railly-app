@@ -25,6 +25,9 @@ RUN npm run build --workspace=packages/api
 # Stage 2: Production runtime
 FROM node:22-slim
 
+# Install curl for health checks
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Copy root package files for workspace resolution

@@ -32,12 +32,6 @@ export async function handleTrainStatus(
 ): Promise<void> {
   const { rid } = ts;
 
-  // Deduplication
-  const stored = await redis.hget(keys.service(rid), "generatedAt");
-  if (stored && new Date(generatedAt) <= new Date(stored)) {
-    return;
-  }
-
   // Update service metadata if provided
   const serviceKey = keys.service(rid);
   const updates: Record<string, string> = {
