@@ -85,3 +85,8 @@ METRICS_INTERVAL_MS=30000
 - **Prometheus**: `/metrics` endpoint on consumer (messages/sec, lag, errors)
 - **Grafana**: Dashboard for Kafka lag, Redis memory, consumer health
 - **Health checks**: Consumer exposes `/health` (Kafka connected, Redis connected)
+
+## Development Environment Notes
+- **Docker Desktop I/O**: PostgreSQL checkpoints may take 20s+ during host I/O contention (Time Machine, Spotlight). This is normal for Docker Desktop's virtualization layer and does not indicate production issues. Managed PostgreSQL or bare metal will not exhibit this.
+- **API startup logging**: Server now logs `[ISO timestamp] [PID:xxx]` on startup to distinguish restarts from log aggregation artifacts.
+- **API health checks**: Docker health check added via `curl` to `/api/health` with 30s interval, 5s timeout, 3 retries, 10s start period.

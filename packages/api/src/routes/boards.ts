@@ -1,22 +1,24 @@
 /**
- * Board routes — timetable-only board
+ * Board routes — Darwin Push Port real-time board
  *
  * Strategy:
- * 1. Query PPTimetable for ALL passenger services at this CRS today
- *    (filtered to time window: past 10min + next 2hr)
- * 2. Return timetable data with booked platforms, TOC names, calling patterns
- *
- * Real-time overlay will be added later via Darwin Real Time Train Information
- * (https://raildata.org.uk/dataProduct/P-d3bf124c-1058-4040-8a62-87181a877d59/overview)
- * which uses the same RID identifiers as PPTimetable for matching.
+ * 1. Query Redis board sorted sets for the given CRS (and TIPLOC fallback)
+ *    for today +/- cross-midnight dates.
+ * 2. Fetch service hashes (darwin:service:{rid}) and locations JSON
+ *    (darwin:service:{rid}:locations) from Redis.
+ * 3. Build HybridBoardService objects with real-time overlay already applied.
+ * 4. Query station messages from Redis.
+ * 5. Use PostgreSQL only for station name lookups and TIPLOC→CRS mapping.
  */
 
 import { Router } from "express";
 import { normalizeCrsCode } from "@railly-app/shared";
 import type { HybridBoardService, HybridCallingPoint } from "@railly-app/shared";
+import type { DarwinServiceState, DarwinServiceLocation } from "@railly-app/shared";
 import { db } from "../db/connection.js";
-import { journeys, callingPoints, locationRef, tocRef, stations } from "../db/schema.js";
-import { eq, and, sql, inArray, asc } from "drizzle-orm";
+import { stations, locationRef } from "../db/schema.js";
+import { eq, inArray } from "drizzle-orm";
+import { redis, keys, pingRedis } from "../redis/client.js";
 
 const router = Router();
 
@@ -26,24 +28,112 @@ const MAX_CRS_LENGTH = 3;
 /** Only allow alpha chars in CRS codes */
 const SAFE_CRS_REGEX = /^[A-Z]+$/;
 
+/** Maximum services to return */
+const MAX_SERVICES = 100;
+
+/** Offset a date string by N days */
+function offsetDateStr(base: string, days: number): string {
+  const d = new Date(base + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Get UK-local date and minutes-since-midnight */
+function getUkNow(): { dateStr: string; nowMinutes: number } {
+  const now = new Date();
+  const ukTime = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(now);
+
+  const dateParts = ukTime.split(", ")[0].split("/");
+  const timePart = ukTime.split(", ")[1];
+  const dateStr = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`; // YYYY-MM-DD
+  const [hours, minutes] = timePart.split(":").map(Number);
+  return { dateStr, nowMinutes: hours * 60 + minutes };
+}
+
 /**
- * Format a rail time string for comparison
- * Handles both HH:MM (timetable) and HHmm (LDBWS) formats
+ * Parse a board member string.
+ * Format: {rid}#{tpl}#{sequence}
  */
-function parseTimeToMinutes(time: string | null | undefined): number | null {
-  if (!time) return null;
-  const cleaned = time.replace(":", "").replace("Half", "").trim();
-  if (cleaned.length !== 4) return null;
-  const hours = parseInt(cleaned.slice(0, 2), 10);
-  const mins = parseInt(cleaned.slice(2, 4), 10);
-  if (isNaN(hours) || isNaN(mins)) return null;
-  return hours * 60 + mins;
+function parseBoardMember(member: string): { rid: string; tpl: string; sequence: number } | null {
+  const parts = member.split("#");
+  if (parts.length !== 3) return null;
+  const sequence = parseInt(parts[2], 10);
+  if (isNaN(sequence)) return null;
+  return { rid: parts[0], tpl: parts[1], sequence };
+}
+
+/**
+ * Rehydrate a DarwinServiceState from Redis hash flat string values.
+ */
+function rehydrateServiceState(hash: Record<string, string>): DarwinServiceState {
+  return {
+    rid: hash.rid || "",
+    uid: hash.uid || "",
+    ssd: hash.ssd || "",
+    trainId: hash.trainId || "",
+    toc: hash.toc || "",
+    trainCat: hash.trainCat || undefined,
+    status: hash.status || undefined,
+    isPassenger: hash.isPassenger !== "false",
+    isCancelled: hash.isCancelled === "true",
+    cancelReason: hash.cancelReason || undefined,
+    platform: hash.platform || undefined,
+    generatedAt: hash.generatedAt || "",
+    lastUpdated: hash.lastUpdated || "",
+    source: (hash.source as "schedule" | "TS" | "deactivated") || "schedule",
+  };
+}
+
+/**
+ * Convert a DarwinServiceLocation into a HybridCallingPoint.
+ */
+function buildHybridCallingPoint(loc: DarwinServiceLocation): HybridCallingPoint {
+  return {
+    tpl: loc.tpl,
+    crs: loc.crs ?? null,
+    name: null, // Resolved later if needed, or left as null
+    stopType: loc.stopType,
+    plat: loc.plat ?? null,
+    pta: loc.pta ?? null,
+    ptd: loc.ptd ?? null,
+    wta: loc.wta ?? null,
+    wtd: loc.wtd ?? null,
+    wtp: loc.wtp ?? null,
+    act: loc.act ?? null,
+    eta: loc.eta ?? null,
+    etd: loc.etd ?? null,
+    ata: loc.ata ?? null,
+    atd: loc.atd ?? null,
+    platformLive: loc.platformChanged ? loc.plat ?? null : null,
+    isCancelled: loc.isCancelled === true,
+  };
+}
+
+/**
+ * Determine platform source indicator.
+ */
+function getPlatformSource(
+  loc: DarwinServiceLocation,
+  scheduledPlat: string | null,
+): "confirmed" | "altered" | "expected" | "scheduled" {
+  if (!loc.plat) return scheduledPlat ? "scheduled" : "expected";
+  if (loc.platformChanged) return "altered";
+  return "confirmed";
 }
 
 /**
  * GET /api/v1/stations/:crs/board
  *
- * Timetable board: all services within time window (past 10min + next 2hr).
+ * Real-time board: all services within time window from Redis.
  *
  * Query params:
  *   - timeWindow (optional, minutes forward, default 120, max 480)
@@ -51,7 +141,7 @@ function parseTimeToMinutes(time: string | null | undefined): number | null {
  */
 router.get("/:crs/board", async (req, res) => {
   try {
-    // Validate CRS code
+    // ── Validate CRS code ─────────────────────────────────────────────────
     const rawCrs = req.params.crs?.toUpperCase().trim();
     if (!rawCrs || rawCrs.length > MAX_CRS_LENGTH || !SAFE_CRS_REGEX.test(rawCrs)) {
       return res.status(400).json({
@@ -65,273 +155,270 @@ router.get("/:crs/board", async (req, res) => {
       });
     }
 
-    // Time window parameters
+    // ── Check Redis availability ──────────────────────────────────────────
+    const redisAvailable = await pingRedis();
+    if (!redisAvailable) {
+      return res.status(503).json({
+        error: { code: "REDIS_UNAVAILABLE", message: "Real-time data temporarily unavailable" },
+      });
+    }
+
+    // ── Time window parameters ────────────────────────────────────────────
     const pastWindow = Math.min(parseInt(req.query.pastWindow as string) || 10, 60);
     const timeWindow = Math.min(parseInt(req.query.timeWindow as string) || 120, 480);
 
-    // Today's date and time in UK timezone
-    const now = new Date();
-    const ukTime = new Intl.DateTimeFormat('en-GB', {
-      timeZone: 'Europe/London',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false
-    }).format(now);
-    
-    // Extract date and time components
-    const dateParts = ukTime.split(', ')[0].split('/');
-    const timePart = ukTime.split(', ')[1];
-    const todayStr = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`; // YYYY-MM-DD
-    const [hours, minutes] = timePart.split(':').map(Number);
-    const nowMinutes = hours * 60 + minutes;
+    const { dateStr: todayStr, nowMinutes } = getUkNow();
+    const earliest = nowMinutes - pastWindow;
+    const latest = nowMinutes + timeWindow;
 
-    // Get station name
+    // ── Determine which dates we need ──────────────────────────────────────
+    const crossMidnightBack = earliest < 0;
+    const crossMidnightForward = latest >= 1440;
+
+    const yesterdayStr = crossMidnightBack ? offsetDateStr(todayStr, -1) : null;
+    const tomorrowStr = crossMidnightForward ? offsetDateStr(todayStr, 1) : null;
+
+    const dateStrs = [todayStr];
+    if (yesterdayStr) dateStrs.push(yesterdayStr);
+    if (tomorrowStr) dateStrs.push(tomorrowStr);
+
+    // ── Fetch station name from PostgreSQL ─────────────────────────────────
     const [station] = await db
       .select({ name: stations.name })
       .from(stations)
       .where(eq(stations.crs, crs))
       .limit(1);
-    const earliest = nowMinutes - pastWindow;
-    const latest = nowMinutes + timeWindow;
 
-    // Determine which schedule days we need to query
-    const crossMidnightBack = earliest < 0;
-    const crossMidnightForward = latest >= 1440;
+    // ── Build list of board keys to query ─────────────────────────────────
+    // Primary: CRS key. Fallback: TIPLOC key for stations where CRS is null.
+    const boardKeys: string[] = [];
+    for (const d of dateStrs) {
+      boardKeys.push(keys.board(crs, d));
+    }
 
-    const offsetDateStr = (base: string, days: number): string => {
-      const d = new Date(base + "T00:00:00Z");
-      d.setUTCDate(d.getUTCDate() + days);
-      return d.toISOString().slice(0, 10);
-    };
+    // Look up TIPLOCs for this CRS to add TIPLOC fallback boards
+    const tiplocRows = await db
+      .select({ tpl: locationRef.tpl })
+      .from(locationRef)
+      .where(eq(locationRef.crs, crs));
 
-    const yesterdayStr = crossMidnightBack ? offsetDateStr(todayStr, -1) : null;
-    const tomorrowStr = crossMidnightForward ? offsetDateStr(todayStr, 1) : null;
+    const tiplocs = tiplocRows.map((r) => r.tpl);
+    for (const tpl of tiplocs) {
+      for (const d of dateStrs) {
+        boardKeys.push(keys.board(tpl, d));
+      }
+    }
 
-    const ssdValues = [todayStr];
-    if (yesterdayStr) ssdValues.push(yesterdayStr);
-    if (tomorrowStr) ssdValues.push(tomorrowStr);
+    // ── Fetch board members with scores from Redis sorted sets ───────────
+    // We need scores to handle cross-midnight time adjustments.
+    const scoredPipeline = redis.pipeline();
+    for (const key of boardKeys) {
+      scoredPipeline.zrangebyscore(key, earliest, latest, "WITHSCORES");
+    }
+    const scoredResults = await scoredPipeline.exec();
 
-    // Get calling points at this station for the relevant schedule days, excluding passing points
-    const timetablePoints = await db
-      .select({
-        rid: callingPoints.journeyRid,
-        pta: callingPoints.pta,
-        ptd: callingPoints.ptd,
-        plat: callingPoints.plat,
-        stopType: callingPoints.stopType,
-        tpl: callingPoints.tpl,
-        ssd: journeys.ssd,
-      })
-      .from(callingPoints)
-      .innerJoin(journeys, eq(callingPoints.journeyRid, journeys.rid))
-      .where(
-        and(
-          eq(callingPoints.crs, crs),
-          inArray(journeys.ssd, ssdValues),
-          eq(journeys.isPassenger, true),
-          sql`${callingPoints.stopType} NOT IN ('PP')`,
-        ),
-      )
-      .orderBy(asc(callingPoints.ptd), asc(callingPoints.pta));
+    const boardEntries: Array<{
+      rid: string;
+      tpl: string;
+      sequence: number;
+      departureMinutes: number;
+      keyDate: string;
+    }> = [];
 
-    // Filter to time window, handling cross-midnight scenarios
-    const windowPoints = timetablePoints
-      .map((p) => {
-        const time = parseTimeToMinutes(p.ptd || p.pta);
-        if (time === null) return { ...p, adjustedTime: 0 };
+    if (scoredResults) {
+      for (let i = 0; i < scoredResults.length; i++) {
+        const [err, result] = scoredResults[i] as [Error | null, string[]];
+        if (err || !Array.isArray(result)) continue;
 
-        let adjustedTime = time;
-        if (p.ssd === yesterdayStr) {
-          adjustedTime = time - 1440;
-        } else if (p.ssd === tomorrowStr) {
-          adjustedTime = time + 1440;
+        const keyDate = boardKeys[i].split(":").pop() || todayStr;
+
+        // result is [member1, score1, member2, score2, ...]
+        for (let j = 0; j < result.length; j += 2) {
+          const member = result[j];
+          const scoreStr = result[j + 1];
+          const parsed = parseBoardMember(member);
+          if (!parsed) continue;
+
+          const score = parseInt(scoreStr, 10);
+          if (isNaN(score)) continue;
+
+          // Adjust score for cross-midnight
+          let adjustedMinutes = score;
+          if (keyDate === yesterdayStr) adjustedMinutes = score - 1440;
+          else if (keyDate === tomorrowStr) adjustedMinutes = score + 1440;
+
+          // Deduplicate by rid — same service might appear in both CRS and TIPLOC keys
+          const dedupKey = `${parsed.rid}#${parsed.sequence}`;
+          const existing = boardEntries.find((e) => `${e.rid}#${e.sequence}` === dedupKey);
+          if (existing) {
+            // Keep the one with the more specific key (CRS beats TIPLOC)
+            // The CRS keys come first in boardKeys, so we already have the CRS one.
+            // Skip this TIPLOC duplicate.
+            continue;
+          }
+
+          if (adjustedMinutes >= earliest && adjustedMinutes <= latest) {
+            boardEntries.push({
+              rid: parsed.rid,
+              tpl: parsed.tpl,
+              sequence: parsed.sequence,
+              departureMinutes: adjustedMinutes,
+              keyDate,
+            });
+          }
         }
+      }
+    }
 
-        return { ...p, adjustedTime };
-      })
-      .filter((p) => p.adjustedTime >= earliest && p.adjustedTime <= latest)
-      .sort((a, b) => a.adjustedTime - b.adjustedTime);
+    // Sort by departure time
+    boardEntries.sort((a, b) => a.departureMinutes - b.departureMinutes);
 
-    if (windowPoints.length === 0) {
+    if (boardEntries.length === 0) {
+      const nrccMessages = await fetchStationMessages(crs);
       return res.json({
         crs,
         stationName: station?.name || null,
         date: todayStr,
-        generatedAt: now.toISOString(),
-        nrccMessages: [],
+        generatedAt: new Date().toISOString(),
+        nrccMessages,
         services: [],
       });
     }
 
-    // Get journey details + origin/destination for these RIDs
-    const rids = windowPoints.map((p) => p.rid);
+    // ── Fetch service data from Redis ──────────────────────────────────────
+    const uniqueRids = [...new Set(boardEntries.map((e) => e.rid))];
 
-    const journeyData = await db
-      .select({
-        rid: journeys.rid,
-        uid: journeys.uid,
-        trainId: journeys.trainId,
-        toc: journeys.toc,
-        trainCat: journeys.trainCat,
-        isPassenger: journeys.isPassenger,
-        tocName: tocRef.tocName,
-      })
-      .from(journeys)
-      .leftJoin(tocRef, eq(journeys.toc, tocRef.toc))
-      .where(inArray(journeys.rid, rids));
+    const servicePipeline = redis.pipeline();
+    for (const rid of uniqueRids) {
+      servicePipeline.hgetall(keys.service(rid));
+      servicePipeline.get(keys.serviceLocations(rid));
+    }
+    const serviceResults = await servicePipeline.exec();
 
-    const journeyMap = new Map(journeyData.map((j) => [j.rid, j]));
+    if (!serviceResults) {
+      return res.status(503).json({
+        error: { code: "REDIS_ERROR", message: "Failed to query service data" },
+      });
+    }
 
-    // Get origin/destination for these journeys
-    const endpoints = await db
-      .select({
-        rid: callingPoints.journeyRid,
-        stopType: callingPoints.stopType,
-        crs: callingPoints.crs,
-        tpl: callingPoints.tpl,
-      })
-      .from(callingPoints)
-      .where(
-        and(
-          inArray(callingPoints.journeyRid, rids),
-          inArray(callingPoints.stopType, ["OR", "DT"]),
-        ),
-      );
+    // Build maps
+    const serviceStateMap = new Map<string, DarwinServiceState>();
+    const serviceLocationsMap = new Map<string, DarwinServiceLocation[]>();
 
-    // Get location names for endpoints
-    const endpointTpls = [...new Set(endpoints.map((e) => e.tpl))];
-    const endpointLocs = endpointTpls.length > 0
-      ? await db
-          .select({ tpl: locationRef.tpl, name: locationRef.name, crs: locationRef.crs })
-          .from(locationRef)
-          .where(inArray(locationRef.tpl, endpointTpls))
-      : [];
-    const locNameMap = new Map(endpointLocs.map((l) => [l.tpl, l]));
+    for (let i = 0; i < uniqueRids.length; i++) {
+      const rid = uniqueRids[i];
+      const stateIdx = i * 2;
+      const locIdx = i * 2 + 1;
 
-    const journeyEndpoints = new Map<
-      string,
-      { originCrs: string | null; originName: string | null; destCrs: string | null; destName: string | null }
-    >();
+      const [stateErr, stateHash] = serviceResults[stateIdx] as [Error | null, Record<string, string>];
+      const [locErr, locRaw] = serviceResults[locIdx] as [Error | null, string];
 
-    for (const e of endpoints) {
-      let entry = journeyEndpoints.get(e.rid);
-      if (!entry) {
-        entry = { originCrs: null, originName: null, destCrs: null, destName: null };
-        journeyEndpoints.set(e.rid, entry);
+      if (!stateErr && stateHash && Object.keys(stateHash).length > 0) {
+        serviceStateMap.set(rid, rehydrateServiceState(stateHash));
       }
-      const loc = locNameMap.get(e.tpl);
-      if (e.stopType === "OR") {
-        entry.originCrs = e.crs || loc?.crs || null;
-        entry.originName = loc?.name || e.tpl;
-      } else if (e.stopType === "DT") {
-        entry.destCrs = e.crs || loc?.crs || null;
-        entry.destName = loc?.name || e.tpl;
+
+      if (!locErr && locRaw) {
+        try {
+          const locs = JSON.parse(locRaw) as DarwinServiceLocation[];
+          serviceLocationsMap.set(rid, locs);
+        } catch {
+          console.error(`   Failed to parse locations for ${rid}`);
+        }
       }
     }
 
-    // Get full calling patterns for these journeys
-    const allCallingPoints = await db
-      .select()
-      .from(callingPoints)
-      .where(inArray(callingPoints.journeyRid, rids))
-      .orderBy(asc(callingPoints.sequence));
-
-    // Group calling points by RID
-    const cpByRid = new Map<string, typeof allCallingPoints>();
-    for (const cp of allCallingPoints) {
-      let arr = cpByRid.get(cp.journeyRid);
-      if (!arr) {
-        arr = [];
-        cpByRid.set(cp.journeyRid, arr);
+    // ── Resolve location names for calling points ────────────────────────
+    const allTpls = new Set<string>();
+    for (const locs of serviceLocationsMap.values()) {
+      for (const loc of locs) {
+        if (loc.tpl) allTpls.add(loc.tpl);
       }
-      arr.push(cp);
+    }
+    const allTplsArray = [...allTpls];
+    const locNameMap = new Map<string, { name: string | null; crs: string | null }>();
+    if (allTplsArray.length > 0) {
+      const locRows = await db
+        .select({ tpl: locationRef.tpl, name: locationRef.name, crs: locationRef.crs })
+        .from(locationRef)
+        .where(inArray(locationRef.tpl, allTplsArray));
+      for (const row of locRows) {
+        locNameMap.set(row.tpl, { name: row.name, crs: row.crs });
+      }
     }
 
-    // Get location names for all calling point tiplocs
-    const allTpls = [...new Set(allCallingPoints.map((cp) => cp.tpl))];
-    const allLocs = allTpls.length > 0
-      ? await db
-          .select({ tpl: locationRef.tpl, name: locationRef.name, crs: locationRef.crs })
-          .from(locationRef)
-          .where(inArray(locationRef.tpl, allTpls))
-      : [];
-    const allLocMap = new Map(allLocs.map((l) => [l.tpl, l]));
-
-    // ── Build timetable board services ──
-
+    // ── Build HybridBoardService objects ───────────────────────────────────
     const services: HybridBoardService[] = [];
 
-    for (const point of windowPoints) {
-      const journey = journeyMap.get(point.rid);
-      if (!journey) continue;
+    for (const entry of boardEntries.slice(0, MAX_SERVICES)) {
+      const state = serviceStateMap.get(entry.rid);
+      const locs = serviceLocationsMap.get(entry.rid);
 
-      const endpoints = journeyEndpoints.get(point.rid);
-      const cps = cpByRid.get(point.rid) || [];
+      if (!state || !locs) continue;
 
-      // Build calling points for this journey
-      const hybridCps: HybridCallingPoint[] = cps
-        .filter((cp) => cp.stopType !== "PP")
-        .map((cp) => {
-          const loc = allLocMap.get(cp.tpl);
+      // Find the calling point for this station
+      const stationLoc = locs[entry.sequence];
+      if (!stationLoc) continue;
 
-          return {
-            tpl: cp.tpl,
-            crs: cp.crs || loc?.crs || null,
-            name: loc?.name || cp.tpl,
-            stopType: cp.stopType,
-            plat: cp.plat,
-            pta: cp.pta,
-            ptd: cp.ptd,
-            wta: cp.wta,
-            wtd: cp.wtd,
-            wtp: cp.wtp,
-            act: cp.act,
-            // Real-time overlay fields (null until Darwin RT integration)
-            eta: null,
-            etd: null,
-            ata: null,
-            atd: null,
-            platformLive: null,
-            isCancelled: false,
-          };
+      // Determine origin and destination
+      const origin = locs.find((l) => l.stopType === "OR" || l.stopType === "OPOR");
+      const destination = locs.find((l) => l.stopType === "DT" || l.stopType === "OPDT");
+
+      // Build calling points
+      const callingPoints: HybridCallingPoint[] = locs
+        .filter((l) => l.stopType !== "PP")
+        .map((l) => {
+          const cp = buildHybridCallingPoint(l);
+          const locInfo = locNameMap.get(l.tpl);
+          cp.name = locInfo?.name || l.tpl;
+          cp.crs = l.crs || locInfo?.crs || null;
+          return cp;
         });
 
+      // Determine origin/destination names
+      const originLocInfo = origin ? locNameMap.get(origin.tpl) : undefined;
+      const destLocInfo = destination ? locNameMap.get(destination.tpl) : undefined;
+
+      // Real-time overlay at this station
+      const hasRealtime = stationLoc.eta !== null || stationLoc.etd !== null ||
+        stationLoc.ata !== null || stationLoc.atd !== null ||
+        stationLoc.platformChanged === true ||
+        state.source === "TS";
+
+      const eta = stationLoc.eta || stationLoc.etd || null;
+      const etd = stationLoc.etd || stationLoc.eta || null;
+
       services.push({
-        rid: point.rid,
-        uid: journey.uid,
-        trainId: journey.trainId,
-        toc: journey.toc,
-        tocName: journey.tocName || null,
-        trainCat: journey.trainCat,
+        rid: entry.rid,
+        uid: state.uid,
+        trainId: state.trainId || null,
+        toc: state.toc || null,
+        tocName: null, // Could resolve from DB if needed
+        trainCat: state.trainCat || null,
 
         // Timetable data
-        sta: point.pta,
-        std: point.ptd,
-        platform: point.plat,
+        sta: stationLoc.pta || null,
+        std: stationLoc.ptd || null,
+        platform: stationLoc.plat || null,
         origin: {
-          crs: endpoints?.originCrs || null,
-          name: endpoints?.originName || null,
+          crs: origin?.crs ?? originLocInfo?.crs ?? null,
+          name: originLocInfo?.name ?? origin?.tpl ?? null,
         },
         destination: {
-          crs: endpoints?.destCrs || null,
-          name: endpoints?.destName || null,
+          crs: destination?.crs ?? destLocInfo?.crs ?? null,
+          name: destLocInfo?.name ?? destination?.tpl ?? null,
         },
-        callingPoints: hybridCps,
+        callingPoints,
         serviceType: "train",
 
-        // Real-time overlay (populated by Darwin RT in future)
-        hasRealtime: false,
-        eta: null,
-        etd: null,
-        platformLive: null,
-        platformSource: point.plat ? "scheduled" : "scheduled",
-        isCancelled: false,
-        cancelReason: null,
-        delayReason: null,
+        // Real-time overlay
+        hasRealtime,
+        eta,
+        etd,
+        platformLive: stationLoc.platformChanged ? stationLoc.plat ?? null : null,
+        platformSource: getPlatformSource(stationLoc, stationLoc.plat ?? null),
+        isCancelled: state.isCancelled || stationLoc.isCancelled === true,
+        cancelReason: state.cancelReason || null,
+        delayReason: null, // Could be extracted from location lateReason if present
         formation: null,
         adhocAlerts: [],
         serviceId: null,
@@ -339,26 +426,59 @@ router.get("/:crs/board", async (req, res) => {
       });
     }
 
-    // Hard limit on results to prevent excessive payload sizes
-    // Services are already in correct chronological order from windowPoints sort
-    const MAX_SERVICES = 100;
-    const limitedServices = services.slice(0, MAX_SERVICES);
+    // ── Fetch station messages from Redis ─────────────────────────────────
+    const nrccMessages = await fetchStationMessages(crs);
 
     return res.json({
       crs,
       stationName: station?.name || null,
       date: todayStr,
-      generatedAt: now.toISOString(),
-      nrccMessages: [],
-      services: limitedServices,
+      generatedAt: new Date().toISOString(),
+      nrccMessages,
+      services,
     });
   } catch (err) {
-    console.error("Timetable board fetch error:", err);
-
+    console.error("Board fetch error:", err);
     return res.status(500).json({
       error: { code: "INTERNAL_ERROR", message: "Failed to fetch board data" },
     });
   }
 });
+
+/**
+ * Fetch station messages from Redis for a given CRS.
+ * Also checks the global message key.
+ */
+async function fetchStationMessages(crs: string): Promise<{ Value: string }[]> {
+  try {
+    const [stationMsgs, globalMsgs] = await Promise.all([
+      redis.hgetall(keys.stationMessages(crs)),
+      redis.hgetall(keys.stationMessages("_GLOBAL")),
+    ]);
+
+    const messages: { Value: string }[] = [];
+
+    const processMessages = (hash: Record<string, string>) => {
+      for (const payload of Object.values(hash)) {
+        try {
+          const msg = JSON.parse(payload) as { message?: string };
+          if (msg.message) {
+            messages.push({ Value: msg.message });
+          }
+        } catch {
+          // Skip malformed messages
+        }
+      }
+    };
+
+    if (stationMsgs) processMessages(stationMsgs);
+    if (globalMsgs) processMessages(globalMsgs);
+
+    return messages;
+  } catch (err) {
+    console.error("   Station message fetch error:", (err as Error).message);
+    return [];
+  }
+}
 
 export { router as boardsRouter };

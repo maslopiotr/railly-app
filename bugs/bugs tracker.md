@@ -1,0 +1,1 @@
+for trains that are departing later than scheduled, they should remain visible on the board until 5 minutes after they departed. The board right now has a fixed logic to only filter on specific timeframe. for trains in the future, it should show about 1.5 hours of trains.

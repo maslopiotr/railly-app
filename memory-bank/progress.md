@@ -17,6 +17,7 @@
 - LDBWS matching by RSID — services without RSID won't get real-time overlay
 - LDBWS `numRows` limit may miss services at busy stations
 - PPTimetable is static — requires daily re-seed, no real-time updates
+- **TIPLOC→CRS mapping missing** — board index uses TIPLOC as key when CRS unavailable. Will need reference data for CRS-based queries.
 
 ## Bug Fixes
 - ✅ Cross-midnight sorting bug (April 2026): Board sorted by time string `localeCompare`, putting 00:15 before 22:30. Fixed by sorting `windowPoints` by `adjustedTime` (ssd-aware) before building services. Removed broken `localeCompare` sort.
@@ -33,7 +34,7 @@
 - [x] Add graceful shutdown (SIGINT/SIGTERM)
 - [x] Add in-memory metrics logging
 
-### Phase 2: Redis Real-Time Store ✅ COMPLETE
+### Phase 2: Redis Real-Time Store ✅ COMPLETE (Verified in Docker)
 - [x] Define Redis key schemas (`darwin:service:${rid}`, `darwin:board:${crs}:${date}`, etc.)
 - [x] Implement `schedule` message handler (full calling pattern, board index build)
 - [x] Implement `TS` message handler (forecasts/actuals/platform merge)
@@ -42,6 +43,11 @@
 - [x] Implement station board index builder (sorted sets by departure time)
 - [x] Add deduplication logic (`generatedAt` timestamp comparison)
 - [x] Implement handler router for all 12 message types (P0-P3)
+- [x] Fix Docker Redis connection bug (`=== "redis" ? "localhost"` → `|| "localhost"`)
+- [x] Fix stationMessage handler for Darwin OW `Station[]`/`cat`/`sev`/`Msg` structure
+- [x] Add parser normalizer for OW `Station` single-object→array
+- [x] Fix board indexing (use `tpl` fallback when `crs` is null)
+- [x] Live verification: 8+ minutes, 0 crashes, 6,838 services, 269 boards, 4 station messages
 
 ### Phase 3: PostgreSQL Historical Schema
 - [ ] Add `darwin_service_events` table
@@ -73,6 +79,10 @@
 ### Phase 8: Monitoring
 - [ ] Add Prometheus metrics to consumer
 - [ ] Add Grafana dashboard
+
+## Bug Fixes
+- ✅ Cross-midnight sorting bug (April 2026): Board sorted by time string `localeCompare`, putting 00:15 before 22:30. Fixed by sorting `windowPoints` by `adjustedTime` (ssd-aware) before building services. Removed broken `localeCompare` sort.
+- ✅ **Log audit fixes (April 22 2026)**: Added PID + ISO timestamp to API startup log, added Docker health check to API service, installed `curl` in API Dockerfile for health check support, documented Docker Desktop PostgreSQL checkpoint I/O behavior.
 
 ## Deferred Work
 - Step 6b — Favourite Connections (origin→destination cards)

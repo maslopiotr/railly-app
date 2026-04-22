@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { db } from "../db/connection.js";
 import { sql } from "drizzle-orm";
+import { pingRedis } from "../redis/client.js";
 
 const router = Router();
 
@@ -24,7 +25,7 @@ router.get("/health", async (_req, res) => {
  */
 router.get("/health/detail", async (_req, res) => {
   let database = "disconnected";
-  let redis = "disconnected";
+  let redisStatus = "disconnected";
 
   try {
     const result = await db.execute(sql`SELECT 1`);
@@ -33,16 +34,23 @@ router.get("/health/detail", async (_req, res) => {
     database = "error";
   }
 
-  // TODO: Check Redis when implemented
+  try {
+    const redisOk = await pingRedis();
+    redisStatus = redisOk ? "connected" : "error";
+  } catch {
+    redisStatus = "error";
+  }
 
-  const status = database === "connected" ? "ok" : "degraded";
+  const status = database === "connected" && redisStatus === "connected"
+    ? "ok"
+    : "degraded";
 
   res.json({
     status,
     timestamp: new Date().toISOString(),
     services: {
       database,
-      redis,
+      redis: redisStatus,
     },
   });
 });
