@@ -64,10 +64,6 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       API_PORT: 3000
       CORS_ORIGINS: ${CORS_ORIGINS:-}
-      LIVE_ARRIVAL_DEPARTURE_BOARDS_URL: ${LIVE_ARRIVAL_DEPARTURE_BOARDS_URL:-}
-      LIVE_ARRIVAL_DEPARTURE_BOARDS_CONSUMER_KEY: ${LIVE_ARRIVAL_DEPARTURE_BOARDS_CONSUMER_KEY:-}
-      SERVICE_DETAILS_URL: ${SERVICE_DETAILS_URL:-}
-      SERVICE_DETAILS_CONSUMER_KEY: ${SERVICE_DETAILS_CONSUMER_KEY:-}
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
       interval: 30s
@@ -103,6 +99,27 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+
+  seed:
+    build:
+      context: .
+      dockerfile: packages/api/Dockerfile.seed
+    networks:
+      - backend
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://railly:${POSTGRES_PASSWORD}@postgres:5432/railly
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: railly
+      POSTGRES_USER: railly
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - ./data/PPTimetable:/app/data/PPTimetable:ro
 
   frontend:
     build:

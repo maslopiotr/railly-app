@@ -1,1 +1,46 @@
-for trains that are departing later than scheduled, they should remain visible on the board until 5 minutes after they departed. The board right now has a fixed logic to only filter on specific timeframe. for trains in the future, it should show about 1.5 hours of trains.
+## Fixed
+
+### ✅ Delayed trains disappearing from board
+**Date**: April 22, 2026
+**Root cause**: Board only filtered services within a fixed time window from current time. Delayed trains past their scheduled departure were excluded.
+**Fix**: Added `DELAY_GRACE_MINUTES = 120` to `boards.ts`. Query window starts at `earliest - DELAY_GRACE_MINUTES` so delayed trains remain visible.
+**Files**: `packages/api/src/routes/boards.ts`
+
+### ✅ Missing trains on board (fewer than "real time trains" / other apps)
+**Date**: April 22, 2026
+**Root cause**: Board API queried only Redis Push Port data. Push Port is a real-time feed that only sends activated/updated services — many scheduled services never appear in Redis.
+**Fix**: Rewrote board API to query PostgreSQL `callingPoints` + `journeys` as master timetable (all scheduled services), then merge Redis real-time overlay by RID.
+**Files**: `packages/api/src/routes/boards.ts`
+
+### ✅ Missing platforms on frontend
+**Date**: April 22, 2026
+**Root cause**: Push Port schedule messages don't always include platforms. Board was relying on Redis data which often had null/undefined platforms.
+**Fix**: Platform now sourced from PostgreSQL `callingPoints.plat` (booked platform from PP Timetable). Redis overlay can still override if platform changes.
+**Files**: `packages/api/src/routes/boards.ts`, `packages/api/src/routes/services.ts`
+
+### ✅ LDBWS dependency broken (subscription ended)
+**Date**: April 22, 2026
+**Root cause**: LDBWS (Live Departure & Arrival Boards Web Service) subscription no longer available.
+**Fix**: Removed all LDBWS code (`packages/api/src/services/ldbws.ts` deleted). Replaced with hybrid PostgreSQL (PP Timetable master) + Redis (Darwin Push Port overlay) architecture.
+**Files**: `packages/api/src/services/ldbws.ts` (deleted), `packages/api/src/routes/boards.ts`, `packages/api/src/routes/services.ts`, `docker-compose.yml`
+
+## Active
+
+### ⏳ Daily PP Timetable seed needs monitoring
+**Date**: April 22, 2026
+**Status**: Infrastructure created, needs production verification
+**Details**: New `seed` container runs immediate seed on start + daily cron at 03:00. Need to verify:
+- SFTP-delivered files are in `/app/data/PPTimetable` before cron runs
+- Seed completes without errors on production data volumes
+- Container restart behaviour (doesn't re-seed unnecessarily if data is fresh)
+**Files**: `packages/api/Dockerfile.seed`, `packages/api/seed-entrypoint.sh`
+
+## Deferred
+
+### ⏸️ Historical schema (Phase 3)
+**Status**: Not started
+**Details**: Consumer currently writes only to Redis. PostgreSQL historical tables (`darwin_service_events`, `darwin_location_updates`, `darwin_messages_raw`) not yet implemented. Deferred until needed.
+
+### ⏸️ Prometheus + Grafana monitoring
+**Status**: Not started
+**Details**: Consumer metrics are in-memory only. Prometheus exporter and Grafana dashboard not yet built.

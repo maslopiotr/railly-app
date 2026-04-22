@@ -1,28 +1,35 @@
 # Active Context
 
 ## Current Focus
-Phase 4 complete: Board API now reads from Redis in real-time.
+Hybrid Architecture complete: PostgreSQL (PP Timetable master) + Redis (Darwin Push Port real-time overlay).
 
 ## What Changed
-- `packages/api/src/redis/client.ts` — new Redis client mirroring consumer key schema
-- `packages/api/src/routes/boards.ts` — fully rewritten to query `darwin:board:{crs}:{date}` sorted sets
-- `packages/api/src/routes/health.ts` — now pings Redis, reports connection status
-- `packages/api/src/server.ts` — graceful Redis shutdown on SIGTERM/SIGINT
+- `packages/api/src/routes/boards.ts` — rewritten to query PostgreSQL `callingPoints` + `journeys` as master timetable, then merge Redis real-time overlay by RID
+- `packages/api/src/routes/services.ts` — rewritten to query PostgreSQL for journey + calling pattern, merge Redis real-time overlay
+- `packages/api/src/services/ldbws.ts` — **DELETED** (LDBWS no longer used)
+- `packages/api/Dockerfile.seed` — new cron container for daily PP Timetable seed at 03:00
+- `packages/api/seed-entrypoint.sh` — runs immediate seed on container start, then starts cron daemon
+- `docker-compose.yml` — removed LDBWS env vars, added `seed` service definition
 
-## Key Decisions
-- PostgreSQL retained only for: station names, location_ref TIPLOC→CRS mapping, TOC name lookups
-- Board keys queried: primary CRS, fallback TIPLOC from `location_ref` lookup
-- Cross-midnight: queries yesterday/today/tomorrow keys, adjusts scores ±1440 min
-- Station messages: queried from Redis `darwin:station:{crs}:messages` + `_GLOBAL`
-- Response shape: backward-compatible `HybridBoardResponse` / `HybridBoardService`
+## Architecture Decision
+- **PP Timetable = master record**: All scheduled services with booked platforms, TOC names, calling patterns
+- **Darwin Push Port = overlay**: Real-time updates (delays, cancellations, platform changes) merged on top
+- **Why**: LDBWS subscription ended; PP Timetable provides complete daily schedule including platforms that Push Port schedule messages often omit
+
+## Key Technical Details
+- `DELAY_GRACE_MINUTES = 120` — delayed trains remain visible on the board even past scheduled time
+- UK-local date/time handling for proper cross-midnight service filtering
+- Response shape: backward-compatible `HybridBoardService` / `HybridBoardResponse`
+- Board query: PostgreSQL for ALL services in time window → Redis lookup per RID → merge
+- Service detail: PostgreSQL for journey + calling points → Redis overlay → merge
 
 ## Verification
-- Build: TypeScript clean
-- Health: `{"database":"connected","redis":"connected"}`
-- EUS board: 2 services (1H01 to Manchester Piccadilly)
-- KGX board: 4 services
-- MAN board: 11 services (Liverpool→Doncaster, etc.)
-- Bug found and fixed: undefined `tpl` values from malformed Redis JSON caused postgres `UNDEFINED_VALUE` crash
+- Build: TypeScript clean (both shared + api)
+- Docker: seed image builds successfully
+- Seed container: runs immediate seed on start + daily cron at 03:00
 
 ## Next Steps
-Phase 5: Service Detail API Rewrite (`/api/v1/services/:rid`) — fetch single service from Redis
+1. Deploy and verify boards show complete services (Manchester, Euston, Milton Keynes)
+2. Verify platforms display correctly from `callingPoints.plat`
+3. Verify delayed/cancelled trains show with real-time overlay
+4. Historical schema (Phase 3) — deferred until needed
