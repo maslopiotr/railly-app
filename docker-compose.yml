@@ -84,6 +84,7 @@ services:
       - backend
     environment:
       NODE_ENV: production
+      DATABASE_URL: postgresql://railly:${POSTGRES_PASSWORD}@postgres:5432/railly
       KAFKA_BROKER: ${KAFKA_BROKER}
       KAFKA_TOPIC: ${KAFKA_TOPIC:-darwin}
       KAFKA_GROUP_ID: ${KAFKA_GROUP_ID:-railly-consumer}
@@ -91,9 +92,6 @@ services:
       KAFKA_PASSWORD: ${KAFKA_PASSWORD}
       KAFKA_SESSION_TIMEOUT_MS: ${KAFKA_SESSION_TIMEOUT_MS:-45000}
       KAFKA_HEARTBEAT_INTERVAL_MS: ${KAFKA_HEARTBEAT_INTERVAL_MS:-3000}
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
       METRICS_INTERVAL_MS: ${METRICS_INTERVAL_MS:-30000}
     depends_on:
       redis:

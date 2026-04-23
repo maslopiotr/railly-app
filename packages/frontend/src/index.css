@@ -139,6 +139,14 @@
   @apply bg-slate-800 text-slate-400 border border-slate-600;
 }
 
+.platform-suppressed {
+  @apply bg-slate-700 text-slate-300 border border-dashed border-amber-500/60 relative;
+}
+
+.suppressed-indicator {
+  @apply absolute -top-1.5 -right-1.5 text-[8px] text-amber-400 bg-amber-900/80 rounded-full w-3 h-3 flex items-center justify-center;
+}
+
 /* ─── Service row ──────────────────────────────────────────────────────── */
 
 .service-row {

@@ -21,7 +21,7 @@ import {
   type NewTocRef,
   type NewLocationRef,
 } from "./schema.js";
-import { sql, inArray } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 
 const DATA_DIR = resolve(__dirname, "../../../../data/PPTimetable");
 
@@ -384,17 +384,10 @@ async function seed() {
         });
     }
 
-    // Delete old calling points for these journeys, then insert new ones
-    const rids = [...passengerJourneys.keys()];
-    const DELETE_BATCH = 500;
-    for (let i = 0; i < rids.length; i += DELETE_BATCH) {
-      const batchRids = rids.slice(i, i + DELETE_BATCH);
-      await db
-        .delete(callingPoints)
-        .where(inArray(callingPoints.journeyRid, batchRids));
-    }
-
-    // Build calling point rows with CRS lookup
+    // Upsert calling points with real-time preservation
+    // ON CONFLICT only updates static columns — real-time columns (eta, etd,
+    // ata, atd, live_plat, delay_minutes, plat_is_suppressed, updated_at)
+    // are preserved from Darwin Push Port.
     const pointRows: NewCallingPoint[] = [];
     for (const [rid, data] of passengerJourneys) {
       for (const pt of data.points) {
@@ -413,15 +406,36 @@ async function seed() {
           wtd: pt.wtd || undefined,
           wtp: pt.wtp || undefined,
           act: pt.act || undefined,
+          // Real-time columns are left null/undefined so they keep their
+          // existing values on conflict or get defaults on new insert
         });
       }
     }
 
-    // Insert calling points in batches
     const POINT_BATCH = 1000;
     for (let i = 0; i < pointRows.length; i += POINT_BATCH) {
       const batch = pointRows.slice(i, i + POINT_BATCH);
-      await db.insert(callingPoints).values(batch);
+      await db
+        .insert(callingPoints)
+        .values(batch)
+        .onConflictDoUpdate({
+          target: [callingPoints.journeyRid, callingPoints.sequence],
+          set: {
+            stopType: sql`EXCLUDED.stop_type`,
+            tpl: sql`EXCLUDED.tpl`,
+            crs: sql`EXCLUDED.crs`,
+            plat: sql`EXCLUDED.plat`,
+            pta: sql`EXCLUDED.pta`,
+            ptd: sql`EXCLUDED.ptd`,
+            wta: sql`EXCLUDED.wta`,
+            wtd: sql`EXCLUDED.wtd`,
+            wtp: sql`EXCLUDED.wtp`,
+            act: sql`EXCLUDED.act`,
+            // NOTE: real-time columns (eta, etd, ata, atd, live_plat,
+            // is_cancelled, delay_minutes, plat_is_suppressed, updated_at)
+            // are deliberately NOT in the DO UPDATE SET so they persist.
+          },
+        });
     }
 
     totalJourneys += passengerJourneys.size;

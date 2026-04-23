@@ -1,16 +1,20 @@
 /**
  * Service details route — individual train service details
  *
- * Queries PostgreSQL for timetable data and Redis for real-time overlay.
- * Replaces the previous LDBWS proxy with a hybrid implementation.
+ * Queries PostgreSQL for unified timetable + real-time data.
+ * No Redis needed.
  */
 
 import { Router } from "express";
 import { db } from "../db/connection.js";
-import { journeys, callingPoints, tocRef, locationRef } from "../db/schema.js";
+import {
+  journeys,
+  callingPoints,
+  tocRef,
+  locationRef,
+  serviceRt,
+} from "../db/schema.js";
 import { eq, asc } from "drizzle-orm";
-import { redis, keys } from "../redis/client.js";
-import type { DarwinServiceLocation } from "@railly-app/shared";
 
 const router = Router();
 
@@ -18,7 +22,7 @@ const router = Router();
  * GET /api/v1/services/:serviceId
  *
  * Get full service details by RID (Retail Identifier).
- * Returns complete calling pattern with real-time overlay from Redis.
+ * Returns complete calling pattern with real-time data from calling_points.
  */
 router.get("/:serviceId", async (req, res) => {
   try {
@@ -49,7 +53,7 @@ router.get("/:serviceId", async (req, res) => {
       });
     }
 
-    // ── Query 2: Get calling points from PostgreSQL ─────────────────────
+    // ── Query 2: Get calling points with real-time data ─────────────────
     const points = await db
       .select({
         sequence: callingPoints.sequence,
@@ -64,6 +68,15 @@ router.get("/:serviceId", async (req, res) => {
         wtp: callingPoints.wtp,
         act: callingPoints.act,
         name: locationRef.name,
+        // Real-time columns
+        eta: callingPoints.eta,
+        etd: callingPoints.etd,
+        ata: callingPoints.ata,
+        atd: callingPoints.atd,
+        livePlat: callingPoints.livePlat,
+        isCancelled: callingPoints.isCancelled,
+        platIsSuppressed: callingPoints.platIsSuppressed,
+        delayMinutes: callingPoints.delayMinutes,
       })
       .from(callingPoints)
       .leftJoin(locationRef, eq(callingPoints.tpl, locationRef.tpl))
@@ -81,59 +94,69 @@ router.get("/:serviceId", async (req, res) => {
       tocName = toc?.tocName || null;
     }
 
-    // ── Query 4: Fetch real-time data from Redis ──────────────────────
-    const [stateHash, locRaw] = await Promise.all([
-      redis.hgetall(keys.service(rid)),
-      redis.get(keys.serviceLocations(rid)),
-    ]);
+    // ── Query 4: Get service-level real-time state ─────────────────────
+    const [rtState] = await db
+      .select({
+        isCancelled: serviceRt.isCancelled,
+        cancelReason: serviceRt.cancelReason,
+        delayReason: serviceRt.delayReason,
+        platform: serviceRt.platform,
+        lastUpdated: serviceRt.lastUpdated,
+      })
+      .from(serviceRt)
+      .where(eq(serviceRt.rid, rid))
+      .limit(1);
 
-    const hasRealtime = stateHash && Object.keys(stateHash).length > 0;
-
-    // Parse Redis locations
-    let redisLocs: DarwinServiceLocation[] = [];
-    if (locRaw) {
-      try {
-        redisLocs = JSON.parse(locRaw) as DarwinServiceLocation[];
-      } catch {
-        console.error(`   Failed to parse Redis locations for ${rid}`);
-      }
-    }
+    const hasRealtime = rtState != null || points.some(
+      (p) =>
+        p.eta != null ||
+        p.etd != null ||
+        p.ata != null ||
+        p.atd != null ||
+        p.livePlat != null,
+    );
 
     // ── Build response ────────────────────────────────────────────────
-    const callingPointsResponse = points.map((cp) => {
-      const rtLoc = redisLocs.find((l) => l.tpl === cp.tpl);
-      const platformChanged = rtLoc?.platformChanged === true;
+    const callingPointsResponse = points
+      .filter((cp) => cp.stopType !== "PP")
+      .map((cp) => {
+        const platformChanged =
+          cp.livePlat != null &&
+          cp.plat != null &&
+          cp.livePlat !== cp.plat;
 
-      return {
-        sequence: cp.sequence,
-        stopType: cp.stopType,
-        tpl: cp.tpl,
-        crs: cp.crs ?? null,
-        name: cp.name || cp.tpl,
-        plat: cp.plat ?? null,
-        pta: cp.pta ?? null,
-        ptd: cp.ptd ?? null,
-        wta: cp.wta ?? null,
-        wtd: cp.wtd ?? null,
-        wtp: cp.wtp ?? null,
-        act: cp.act ?? null,
-        // Real-time overlay
-        eta: rtLoc?.eta ?? null,
-        etd: rtLoc?.etd ?? null,
-        ata: rtLoc?.ata ?? null,
-        atd: rtLoc?.atd ?? null,
-        platformLive: platformChanged ? rtLoc.plat ?? null : null,
-        isCancelled: rtLoc?.isCancelled === true,
-        lateReason: rtLoc?.lateReason ?? null,
-      };
-    });
+        return {
+          sequence: cp.sequence,
+          stopType: cp.stopType,
+          tpl: cp.tpl,
+          crs: cp.crs ?? null,
+          name: cp.name || cp.tpl,
+          plat: cp.plat ?? null,
+          pta: cp.pta ?? null,
+          ptd: cp.ptd ?? null,
+          wta: cp.wta ?? null,
+          wtd: cp.wtd ?? null,
+          wtp: cp.wtp ?? null,
+          act: cp.act ?? null,
+          // Real-time overlay from calling_points
+          eta: cp.eta ?? cp.pta ?? null,
+          etd: cp.etd ?? cp.ptd ?? null,
+          ata: cp.ata ?? null,
+          atd: cp.atd ?? null,
+          platformLive: platformChanged ? cp.livePlat : null,
+          isCancelled: cp.isCancelled,
+          lateReason: rtState?.delayReason ?? null,
+        };
+      });
 
     // Determine origin and destination from calling points
     const origin = points.find((p) => p.stopType === "OR" || p.stopType === "OPOR");
     const destination = points.find((p) => p.stopType === "DT" || p.stopType === "OPDT");
 
-    // Determine overall cancellation status
-    const isCancelled = stateHash?.isCancelled === "true" || callingPointsResponse.some((cp) => cp.isCancelled);
+    // Overall cancellation: service_rt or any calling point cancelled
+    const isCancelled =
+      (rtState?.isCancelled ?? false) ||
+      callingPointsResponse.some((cp) => cp.isCancelled);
 
     return res.json({
       rid: journey.rid,
@@ -146,7 +169,7 @@ router.get("/:serviceId", async (req, res) => {
       status: journey.status,
       isPassenger: journey.isPassenger,
       isCancelled,
-      cancelReason: stateHash?.cancelReason || null,
+      cancelReason: rtState?.cancelReason || null,
       hasRealtime,
       origin: origin
         ? {

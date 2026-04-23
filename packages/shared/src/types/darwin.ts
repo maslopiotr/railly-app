@@ -315,6 +315,8 @@ export interface DarwinServiceLocation {
   ata?: string | null;
   atd?: string | null;
   platformChanged?: boolean;
+  platIsSuppressed?: boolean;
+  platSourcedFromTIPLOC?: boolean;
   isCancelled?: boolean;
   isDelayed?: boolean;
   lateReason?: string | null;

@@ -9,7 +9,6 @@ import { boardsRouter } from "./routes/boards.js";
 import { servicesRouter } from "./routes/services.js";
 import { timetableRouter } from "./routes/timetable.js";
 import { errorHandler } from "./middleware/errorHandler.js";
-import { closeRedis } from "./redis/client.js";
 
 const PORT = process.env.API_PORT || 3000;
 const isDev = process.env.NODE_ENV !== "production";
@@ -97,15 +96,7 @@ app.use(errorHandler);
 // Graceful shutdown
 const gracefulShutdown = (signal: string) => {
   console.log(`\n[${signal}] Shutting down gracefully...`);
-  closeRedis()
-    .then(() => {
-      console.log("   Redis connection closed");
-      process.exit(0);
-    })
-    .catch((err) => {
-      console.error("   Error closing Redis:", err);
-      process.exit(1);
-    });
+  process.exit(0);
 };
 
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));

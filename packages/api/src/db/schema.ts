@@ -6,6 +6,7 @@ import {
   integer,
   timestamp,
   index,
+  uniqueIndex,
   boolean,
 } from "drizzle-orm/pg-core";
 
@@ -63,6 +64,11 @@ export const journeys = pgTable(
  * Calling points within a journey — stops, passes, origins, destinations
  * Stop types: OR (origin), DT (destination), IP (intermediate),
  * PP (passing point), OPOR/OPIP/OPDT (operational variants in v8)
+ *
+ * Real-time columns (eta/etd/ata/atd/livePlat/etc.) are updated by the
+ * Darwin Push Port consumer. Static columns (pta/ptd/plat/etc.) are
+ * updated by the daily PP Timetable seed — seed uses ON CONFLICT UPDATE
+ * to preserve real-time columns.
  */
 export const callingPoints = pgTable(
   "calling_points",
@@ -75,6 +81,7 @@ export const callingPoints = pgTable(
     stopType: varchar("stop_type", { length: 5 }).notNull(), // OR, DT, IP, PP, OPOR, OPIP, OPDT
     tpl: varchar("tpl", { length: 10 }).notNull(), // TIPLOC code
     crs: char("crs", { length: 3 }), // CRS code (from location_ref lookup)
+    // -- Static: from PP Timetable (seeded daily) --
     plat: varchar("plat", { length: 5 }), // Booked platform
     pta: char("pta", { length: 5 }), // Public arrival time HH:MM
     ptd: char("ptd", { length: 5 }), // Public departure time HH:MM
@@ -82,11 +89,72 @@ export const callingPoints = pgTable(
     wtd: varchar("wtd", { length: 8 }), // Working departure time
     wtp: varchar("wtp", { length: 8 }), // Working passing time
     act: varchar("act", { length: 10 }), // Activities (TB, TF, T, etc.)
+    // -- Real-time: from Darwin Push Port (updated live) --
+    eta: char("eta", { length: 5 }), // Estimated arrival HH:MM
+    etd: char("etd", { length: 5 }), // Estimated departure HH:MM
+    ata: char("ata", { length: 5 }), // Actual arrival HH:MM
+    atd: char("atd", { length: 5 }), // Actual departure HH:MM
+    livePlat: varchar("live_plat", { length: 5 }), // Live platform from Darwin
+    isCancelled: boolean("is_cancelled").default(false).notNull(),
+    delayMinutes: integer("delay_minutes"), // Computed delay vs scheduled
+    platIsSuppressed: boolean("plat_is_suppressed").default(false).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }), // Last Darwin message
   },
   (table) => [
     index("idx_calling_points_journey_rid").on(table.journeyRid),
     index("idx_calling_points_crs").on(table.crs),
     index("idx_calling_points_tpl").on(table.tpl),
+    uniqueIndex("idx_calling_points_journey_rid_sequence").on(
+      table.journeyRid,
+      table.sequence,
+    ),
+  ],
+);
+
+/**
+ * Service real-time state — current snapshot per RID
+ * Updated by the Darwin Push Port consumer on every TS/schedule message.
+ * This table provides a quick lookup for service-level state without
+ * scanning calling_points.
+ */
+export const serviceRt = pgTable(
+  "service_rt",
+  {
+    rid: varchar("rid", { length: 20 }).primaryKey(),
+    uid: char("uid", { length: 6 }).notNull(),
+    ssd: char("ssd", { length: 10 }).notNull(),
+    trainId: varchar("train_id", { length: 10 }),
+    toc: char("toc", { length: 2 }),
+    isCancelled: boolean("is_cancelled").default(false).notNull(),
+    cancelReason: varchar("cancel_reason", { length: 100 }),
+    delayReason: varchar("delay_reason", { length: 100 }),
+    platform: varchar("platform", { length: 5 }), // Live platform at origin/head
+    generatedAt: timestamp("generated_at", { withTimezone: true }), // Darwin timestamp
+    lastUpdated: timestamp("last_updated", { withTimezone: true }).defaultNow(),
+  },
+  (table) => [index("idx_service_rt_rid").on(table.rid)],
+);
+
+/**
+ * Darwin events — append-only audit log of every Push Port message
+ * Used for delay repay history, debugging, and replay.
+ * Partitioned by day; old partitions dropped after retention period.
+ */
+export const darwinEvents = pgTable(
+  "darwin_events",
+  {
+    id: serial("id").primaryKey(),
+    messageType: varchar("message_type", { length: 20 }).notNull(), // TS, schedule, deactivated, OW, etc.
+    rid: varchar("rid", { length: 20 }).notNull(),
+    rawJson: varchar("raw_json", { length: 20000 }), // Truncated raw message
+    generatedAt: timestamp("generated_at", { withTimezone: true }), // From Darwin message
+    receivedAt: timestamp("received_at", { withTimezone: true }).defaultNow(),
+    processedAt: timestamp("processed_at", { withTimezone: true }), // When consumer finished
+  },
+  (table) => [
+    index("idx_darwin_events_rid").on(table.rid),
+    index("idx_darwin_events_message_type").on(table.messageType),
+    index("idx_darwin_events_received_at").on(table.receivedAt),
   ],
 );
 
@@ -127,3 +195,9 @@ export type NewCallingPoint = typeof callingPoints.$inferInsert;
 export type NewTocRef = typeof tocRef.$inferInsert;
 /** Type for inserting a location reference row */
 export type NewLocationRef = typeof locationRef.$inferInsert;
+/** Type for inserting a service_rt row */
+export type NewServiceRt = typeof serviceRt.$inferInsert;
+/** Type for a service_rt row as read from the DB */
+export type ServiceRtRow = typeof serviceRt.$inferSelect;
+/** Type for inserting a darwin_events row */
+export type NewDarwinEvent = typeof darwinEvents.$inferInsert;

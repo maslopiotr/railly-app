@@ -103,6 +103,40 @@ export function parseDarwinMessage(raw: Buffer | string | null): DarwinMessage |
     return undefined;
   };
 
+  /**
+   * Extract platform string and suppression flags from Darwin's `plat` field.
+   * Darwin sends `plat` as either:
+   *   - a string: "plat": "6"
+   *   - an object: "plat": {"platsup": "true", "platsrc": "A", "conf": "true", "": "2"}
+   */
+  const normalizePlatform = (loc: Record<string, unknown>): void => {
+    const plat = loc.plat;
+    if (plat === undefined) return;
+
+    if (typeof plat === "string") {
+      loc.platform = plat;
+      loc.platIsSuppressed = false;
+    } else if (typeof plat === "object" && plat !== null) {
+      const p = plat as Record<string, unknown>;
+      // Platform value is in the empty-string key or the "conf" field
+      const platValue =
+        p[""] !== undefined
+          ? String(p[""])
+          : p.conf !== undefined && p.platsrc
+            ? String(p.conf)
+            : undefined;
+      if (platValue) {
+        loc.platform = platValue;
+      }
+      loc.platIsSuppressed =
+        p.platsup === "true" || p.cisPlatsup === "true";
+      loc.platSourcedFromTIPLOC = p.platsrc === "A";
+      loc.platformIsChanged = p.conf === "true";
+    }
+
+    delete loc.plat;
+  };
+
   // Normalise nested arrays inside TS and schedule messages
   const normalizeTS = (items: unknown[]): unknown[] => {
     return items.map((item) => {
@@ -110,6 +144,23 @@ export function parseDarwinMessage(raw: Buffer | string | null): DarwinMessage |
       const ts = item as Record<string, unknown>;
       if (ts.Location !== undefined && !Array.isArray(ts.Location)) {
         ts.Location = [ts.Location];
+      }
+      // Rename Location → locations to match our DarwinTS type
+      if (ts.Location !== undefined) {
+        ts.locations = ts.Location;
+        delete ts.Location;
+      }
+      // Normalize platform fields inside each location
+      if (Array.isArray(ts.locations)) {
+        for (const loc of ts.locations) {
+          if (typeof loc === "object" && loc !== null) {
+            const l = loc as Record<string, unknown>;
+            if (!l.tpl) {
+              console.warn("   ⚠️ TS location missing tpl (raw):", JSON.stringify(l).slice(0, 200));
+            }
+            normalizePlatform(l);
+          }
+        }
       }
       return item;
     });
@@ -148,6 +199,18 @@ export function parseDarwinMessage(raw: Buffer | string | null): DarwinMessage |
           locations.push(dt);
         }
         sched.locations = locations;
+      }
+      // Normalize platform fields inside each location
+      if (Array.isArray(sched.locations)) {
+        for (const loc of sched.locations) {
+          if (typeof loc === "object" && loc !== null) {
+            const l = loc as Record<string, unknown>;
+            if (!l.tpl) {
+              console.warn("   ⚠️ Schedule location missing tpl (raw):", JSON.stringify(l).slice(0, 200));
+            }
+            normalizePlatform(l);
+          }
+        }
       }
       return item;
     });

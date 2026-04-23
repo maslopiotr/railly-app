@@ -1,14 +1,11 @@
 import { Router } from "express";
 import { db } from "../db/connection.js";
 import { sql } from "drizzle-orm";
-import { pingRedis } from "../redis/client.js";
 
 const router = Router();
 
 /**
- * Public health check — returns only overall status, no service details.
- * Detailed service status is available at /api/v1/health/detail
- * but only when requested with a valid internal token (future).
+ * Public health check — returns only overall status.
  */
 router.get("/health", async (_req, res) => {
   try {
@@ -25,7 +22,6 @@ router.get("/health", async (_req, res) => {
  */
 router.get("/health/detail", async (_req, res) => {
   let database = "disconnected";
-  let redisStatus = "disconnected";
 
   try {
     const result = await db.execute(sql`SELECT 1`);
@@ -34,23 +30,13 @@ router.get("/health/detail", async (_req, res) => {
     database = "error";
   }
 
-  try {
-    const redisOk = await pingRedis();
-    redisStatus = redisOk ? "connected" : "error";
-  } catch {
-    redisStatus = "error";
-  }
-
-  const status = database === "connected" && redisStatus === "connected"
-    ? "ok"
-    : "degraded";
+  const status = database === "connected" ? "ok" : "degraded";
 
   res.json({
     status,
     timestamp: new Date().toISOString(),
     services: {
       database,
-      redis: redisStatus,
     },
   });
 });

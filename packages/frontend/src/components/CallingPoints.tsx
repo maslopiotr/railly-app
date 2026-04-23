@@ -322,7 +322,11 @@ function CallingPointRow({
 }
 
 export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
-  if (points.length === 0) {
+  // Filter out passing points (PP) — these are operational junctions without
+  // passenger stops and show raw TIPLOC codes like CMDNSTH, WLSDWLJ
+  const displayPoints = points.filter((cp) => cp.stopType !== "PP");
+
+  if (displayPoints.length === 0) {
     return (
       <div className="text-xs text-slate-500 italic py-2">
         No calling point data available
@@ -330,7 +334,7 @@ export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
     );
   }
 
-  const normalizedTimes = normalizeCallingPointTimes(points);
+  const normalizedTimes = normalizeCallingPointTimes(displayPoints);
 
   const now = new Date();
   const rawNowMinutes = now.getHours() * 60 + now.getMinutes();
@@ -338,8 +342,8 @@ export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
 
   // Find first upcoming stop (for yellow dot)
   let firstUpcomingIndex = -1;
-  for (let i = 0; i < points.length; i++) {
-    const cp = points[i];
+  for (let i = 0; i < displayPoints.length; i++) {
+    const cp = displayPoints[i];
     if (cp.stopType === "PP") continue;
     if (cp.ata || cp.atd) continue;
     if (normalizedTimes[i] > nowMinutes) {
@@ -349,7 +353,7 @@ export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
   }
 
   const currentStationIndex = currentCrs
-    ? points.findIndex(cp => cp.crs === currentCrs)
+    ? displayPoints.findIndex(cp => cp.crs === currentCrs)
     : -1;
 
   return (
@@ -357,7 +361,7 @@ export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
       <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2 font-semibold">
         Calling Points
       </div>
-      {points.map((cp, i) => {
+      {displayPoints.map((cp, i) => {
         const isFirstUpcoming = i === firstUpcomingIndex;
 
         const stopState = determineStopState(
@@ -389,7 +393,7 @@ export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
             platformLive={cp.platformLive}
             isCancelled={cp.isCancelled}
             stopState={finalState}
-            isLast={i === points.length - 1}
+            isLast={i === displayPoints.length - 1}
           />
         );
       })}

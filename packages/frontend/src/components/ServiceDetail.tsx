@@ -42,7 +42,9 @@ function parseTimeToMinutes(time: string | null | undefined): number | null {
 /** Compute delay in minutes between scheduled and estimated/actual */
 function computeDelay(scheduled: string | null, estimated: string | null, actual: string | null): number | null {
   const ref = actual || estimated;
-  if (!scheduled || !ref || ref === "On time" || ref === "Cancelled") return null;
+  if (!scheduled || !ref) return null;
+  if (ref === "Cancelled") return null;
+  if (ref === "On time") return 0;
   const s = parseTimeToMinutes(scheduled);
   const e = parseTimeToMinutes(ref);
   if (s === null || e === null) return null;
@@ -210,14 +212,15 @@ export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefres
                   )}
                 </td>
                 <td className="py-1.5">
-                  {computeDelay(service.sta, service.eta, service.actualArrival) !== null ? (
-                    <span className={computeDelay(service.sta, service.eta, service.actualArrival)! > 0 ? "text-red-400" : "text-green-400"}>
-                      {computeDelay(service.sta, service.eta, service.actualArrival)! > 0 ? "+" : ""}
-                      {computeDelay(service.sta, service.eta, service.actualArrival)} min
-                    </span>
-                  ) : (
-                    <span className="text-slate-500">--</span>
-                  )}
+                  {(() => {
+                    const delay = computeDelay(service.sta, service.eta, service.actualArrival);
+                    if (delay === null) return <span className="text-slate-500">--</span>;
+                    return (
+                      <span className={delay > 0 ? "text-red-400" : "text-green-400"}>
+                        {delay > 0 ? "+" : ""}{delay} min
+                      </span>
+                    );
+                  })()}
                 </td>
               </tr>
             )}
@@ -237,14 +240,15 @@ export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefres
                   )}
                 </td>
                 <td className="py-1.5">
-                  {computeDelay(service.std, service.etd, service.actualDeparture) !== null ? (
-                    <span className={computeDelay(service.std, service.etd, service.actualDeparture)! > 0 ? "text-red-400" : "text-green-400"}>
-                      {computeDelay(service.std, service.etd, service.actualDeparture)! > 0 ? "+" : ""}
-                      {computeDelay(service.std, service.etd, service.actualDeparture)} min
-                    </span>
-                  ) : (
-                    <span className="text-slate-500">--</span>
-                  )}
+                  {(() => {
+                    const delay = computeDelay(service.std, service.etd, service.actualDeparture);
+                    if (delay === null) return <span className="text-slate-500">--</span>;
+                    return (
+                      <span className={delay > 0 ? "text-red-400" : "text-green-400"}>
+                        {delay > 0 ? "+" : ""}{delay} min
+                      </span>
+                    );
+                  })()}
                 </td>
               </tr>
             )}

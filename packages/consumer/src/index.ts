@@ -2,12 +2,12 @@
  * Darwin Push Port: Kafka Consumer
  *
  * Connects to Darwin's Kafka feed using KafkaJS, parses JSON messages,
- * and routes them to handlers that store data in Redis.
+ * and routes them to handlers that store data in PostgreSQL.
  */
 
 import "./env.js";
 import { Kafka, logLevel } from "kafkajs";
-import { redis, closeRedis } from "./redis/client.js";
+import { sql, closeDb } from "./db.js";
 import { handleDarwinMessage, metrics } from "./handlers/index.js";
 import { parseDarwinMessage } from "./parser.js";
 
@@ -81,10 +81,10 @@ async function shutdown(signal: string): Promise<void> {
   }
 
   try {
-    await closeRedis();
-    console.log("   ✅ Redis connection closed");
+    await closeDb();
+    console.log("   ✅ PostgreSQL connection closed");
   } catch (err) {
-    console.error("   ❌ Error closing Redis:", err);
+    console.error("   ❌ Error closing PostgreSQL:", err);
   }
 
   console.log("   👋 Consumer stopped");
@@ -120,9 +120,9 @@ async function main(): Promise<void> {
   console.log(`   Kafka topic: ${KAFKA_TOPIC}`);
   console.log(`   Consumer group: ${KAFKA_GROUP_ID}`);
 
-  // Ensure Redis is connected
-  await redis.connect();
-  console.log("   ✅ Redis ready");
+  // Ensure PostgreSQL is connected
+  await sql`SELECT 1`;
+  console.log("   ✅ PostgreSQL ready");
 
   // Connect to Kafka
   await consumer.connect();

@@ -22,14 +22,50 @@
   - UK-local date/time for proper cross-midnight filtering
   - Platforms sourced from PostgreSQL `callingPoints.plat`
   - Daily seed cron container (`Dockerfile.seed`) runs at 03:00
+- ✅ **Step 7 Phase 3b — Platform Suppression Fix (April 23, 2026)**
+  - Parser: `Location` → `locations` rename, `plat` object→string normalization
+  - `platIsSuppressed`, `platSourcedFromTIPLOC`, `platformIsChanged` flags
+  - Frontend: suppressed platform badge (amber dashed border + asterisk)
+- ✅ **Step 7 Phase 3c — Unified PostgreSQL (April 23, 2026)**
+  - Real-time columns added directly to `calling_points` (eta, etd, ata, atd, live_plat, is_cancelled, delay_minutes, plat_is_suppressed, updated_at)
+  - `service_rt` table for service-level state + deduplication
+  - `darwin_events` append-only audit table
+  - Consumer writes directly to PostgreSQL (no Redis)
+  - API queries PostgreSQL only (no Redis)
+  - Seed uses ON CONFLICT preserving real-time columns
+  - Full build clean across all packages
 
 ## Known Issues (Resolved)
 - ✅ ~~LDBWS matching by RSID~~ — Replaced with hybrid PostgreSQL + Redis architecture
 - ✅ ~~LDBWS `numRows` limit may miss services~~ — PostgreSQL returns all scheduled services
 - ✅ ~~PPTimetable is static — requires daily re-seed~~ — Cron container implemented
 - ✅ ~~TIPLOC→CRS mapping missing~~ — Reference data seeded from PP Timetable `_ref` files
+- ✅ ~~Redis N+1 lookups per board~~ — Eliminated: all data in single PostgreSQL query
+- ✅ ~~Seed overwrites real-time data~~ — Fixed: ON CONFLICT only updates static columns
+- ✅ ~~Consumer `TypeError: Cannot read properties of undefined (reading 'trim')`~~ — Fixed: null-safe `loc.tpl?.trim()` guards in schedule.ts + trainStatus.ts
+- ✅ ~~Consumer FK constraint violation `service_rt_rid_journeys_rid_fk`~~ — Fixed: removed FK from `service_rt` (cache table), DB migrated live
 
-## Active Work: Step 7 — Darwin Push Port Real-Time Overlay
+## Architecture Evolution
+
+### v1: LDBWS only (Step 2)
+- API → LDBWS SOAP → client
+
+### v2: PostgreSQL timetable + LDBWS overlay (Steps 3-4)
+- PostgreSQL: static timetable from PP Timetable
+- LDBWS: real-time overlay
+
+### v3: PostgreSQL + Redis hybrid (Phase 3)
+- PostgreSQL: static timetable
+- Redis: Darwin Push Port real-time overlay
+- API merged both sources per request
+
+### v4: Unified PostgreSQL (Phase 3c) — CURRENT
+- PostgreSQL: single source of truth (static + real-time in `calling_points`)
+- Consumer: Kafka → PostgreSQL (raw SQL via postgres.js)
+- API: Drizzle ORM queries joining `calling_points` + `journeys` + `service_rt` + `location_ref`
+- No Redis in data path
+
+## Active Work: Step 7 — Darwin Push Port Real-Time
 
 ### Phase 1: Consumer Infrastructure ✅ COMPLETE
 - [x] Add `kafkajs` + `ioredis` to `packages/consumer`
@@ -41,56 +77,53 @@
 - [x] Add graceful shutdown (SIGINT/SIGTERM)
 - [x] Add in-memory metrics logging
 
-### Phase 2: Redis Real-Time Store ✅ COMPLETE (Verified in Docker)
-- [x] Define Redis key schemas (`darwin:service:${rid}`, `darwin:board:${crs}:${date}`, etc.)
-- [x] Implement `schedule` message handler (full calling pattern, board index build)
-- [x] Implement `TS` message handler (forecasts/actuals/platform merge)
-- [x] Implement `deactivated` handler (cleanup active sets + board indices)
-- [x] Implement `OW` handler (station messages per-CRS)
-- [x] Implement station board index builder (sorted sets by departure time)
-- [x] Add deduplication logic (`generatedAt` timestamp comparison)
-- [x] Implement handler router for all 12 message types (P0-P3)
-- [x] Fix Docker Redis connection bug (`=== "redis" ? "localhost"` → `|| "localhost"`)
-- [x] Fix stationMessage handler for Darwin OW `Station[]`/`cat`/`sev`/`Msg` structure
-- [x] Add parser normalizer for OW `Station` single-object→array
-- [x] Fix board indexing (use `tpl` fallback when `crs` is null)
-- [x] Live verification: 8+ minutes, 0 crashes, 6,838 services, 269 boards, 4 station messages
+### Phase 2: Redis Real-Time Store ✅ COMPLETE (superseded by Phase 3c)
+- [x] Define Redis key schemas
+- [x] Implement all message handlers (P0-P3)
+- [x] Deduplication via `generatedAt`
+- [x] Station board index builder
+- [x] Verified in Docker (8+ min, 0 crashes)
 
-### Phase 3: Hybrid Architecture — Bug Fixes (April 23, 2026)
+### Phase 3: Hybrid Architecture ✅ COMPLETE
+- [x] Merge schedule with existing real-time (not overwrite)
+- [x] Intelligent post-merge filtering
+- [x] Exclude past scheduled-only services
+- [x] Query-param configurable grace minutes
+- [x] Filter PP stops from calling points
+- [x] Trim TIPLOC matching + CRS enrichment
+- [x] Fix `computeDelay`: "On time" → 0
+- [x] Docker rebuild + live verification passed
 
-**Root cause analysis** (see `bugs/audit-report.md` for full detail):
-1. **Real-time fields empty**: `handleSchedule` overwrites Redis `darwin:service:${rid}:locations` with `eta/etd/ata/atd = null`, wiping any real-time data accumulated from prior `TS` messages. Fix: merge schedule base fields with existing real-time fields instead of overwriting.
-2. **Too many trains shown**: Board filter uses only scheduled time (`ptd`/`pta`) and a 120-minute grace period, showing past services that never activated. Fix: apply post-merge intelligent filtering — exclude past services with no real-time data (Darwin never activated them), use `etd`/`eta` when real-time data exists.
+### Phase 3b: Platform Suppression Fix ✅ COMPLETE
+- [x] Parser `Location` → `locations` rename
+- [x] Parser `plat` object→string normalization
+- [x] TS handler stores suppression flags
+- [x] Board API shows suppressed platforms
+- [x] Frontend suppressed badge
 
-**Completed April 23, 2026**:
-- [x] Fix `handleSchedule` to merge with existing Redis data instead of overwriting
-- [x] Add deduplication for schedule messages (skip if `generatedAt` older than stored)
-- [x] Reorder board API: fetch Redis data before filtering
-- [x] Apply intelligent post-merge filter (real-time time > scheduled time)
-- [x] Exclude past scheduled-only services without real-time data
-- [x] Make `DELAY_GRACE_MINUTES` a query parameter (default 60, max 120)
-- [x] Verify service detail real-time merge after fixes
-- [x] Docker rebuild + live Darwin feed verification
+### Phase 3c: Unified PostgreSQL ✅ COMPLETE
+- [x] Schema: real-time columns in `calling_points`
+- [x] Schema: `service_rt` table
+- [x] Schema: `darwin_events` audit table
+- [x] Schema: uniqueIndex on (journey_rid, sequence)
+- [x] Consumer `db.ts`: postgres.js connection
+- [x] Consumer `trainStatus.ts`: writes to PostgreSQL
+- [x] Consumer `schedule.ts`: upserts with dedup, preserves RT columns
+- [x] Consumer `index.ts`: PostgreSQL startup check
+- [x] Consumer `handlers/index.ts`: async, no Redis pipeline
+- [x] API `boards.ts`: single PG query, no Redis
+- [x] API `services.ts`: single PG query, no Redis
+- [x] API `health.ts`: no Redis check
+- [x] API `server.ts`: no Redis import
+- [x] API `seed-timetable.ts`: ON CONFLICT preserving RT columns
+- [x] Full build clean
 
-**Out of scope for this run** (to be revisited in Phase 4+):
-- Batch PostgreSQL sync of real-time data — user suggested populating Redis real-time into PostgreSQL via batches, then discarding stale data. This would eliminate N+1 Redis lookups per board request and enable pure SQL filtering. **Deferred**: requires new table(s), batch processor, TTL cleanup, schema migrations — significant scope increase beyond Phase 3 bug fixes.
-- TIPLOC→CRS resolution for all Redis locations — partially addressed by existing `locationRef` join; full fix requires consumer-side lookup.
-
-### Phase 4: Historical Schema
-- [ ] Add `darwin_service_events` table
-- [ ] Add `darwin_location_updates` table
-- [ ] Add `darwin_messages_raw` table
-- [ ] Add `cancellation_reasons` and `late_running_reasons` tables
-- [ ] Implement async DB worker
-
-### Phase 5: Monitoring
-- [ ] Add Prometheus metrics to consumer
-- [ ] Add Grafana dashboard
-
-## Bug Fixes
-- ✅ Cross-midnight sorting bug (April 2026): Board sorted by time string `localeCompare`, putting 00:15 before 22:30. Fixed by sorting `windowPoints` by `adjustedTime` (ssd-aware) before building services. Removed broken `localeCompare` sort.
-- ✅ **Log audit fixes (April 22 2026)**: Added PID + ISO timestamp to API startup log, added Docker health check to API service, installed `curl` in API Dockerfile for health check support, documented Docker Desktop PostgreSQL checkpoint I/O behavior.
-- ✅ **Missing trains/platforms/delayed trains (April 22, 2026)**: Complete architecture pivot — LDBWS removed, PostgreSQL+Redis hybrid implemented, seed cron container created.
+## Next Steps
+1. Monitor consumer logs for any new error patterns
+2. Verify board and service detail endpoints return real-time data (end-to-end smoke test)
+3. Test seed preserves real-time columns on re-run
+4. Consider removing Redis from docker-compose.yml (optional cleanup)
+5. Phase 4: Historical schema (`darwin_events` partitioning, delay repay tables)
 
 ## Deferred Work
 - Step 6b — Favourite Connections (origin→destination cards)
@@ -100,3 +133,4 @@
 - Crowding data
 - PWA + Service Worker
 - WebSocket real-time push to clients
+- Prometheus metrics + Grafana dashboard

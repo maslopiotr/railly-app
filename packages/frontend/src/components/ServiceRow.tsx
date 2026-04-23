@@ -63,6 +63,14 @@ function PlatformBadge({ platform, platformLive, platformSource }: {
         </span>
       );
 
+    case "suppressed":
+      return (
+        <span className="platform platform-suppressed">
+          {platform}
+          <span className="suppressed-indicator">✱</span>
+        </span>
+      );
+
     case "expected":
       return <span className="platform platform-expected">{platform}</span>;
 

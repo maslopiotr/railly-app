@@ -54,7 +54,7 @@ export interface HybridCallingPoint {
 // ─── Hybrid Board Service ──────────────────────────────────────────────────
 
 /** Platform source indicator */
-export type PlatformSource = "confirmed" | "altered" | "expected" | "scheduled";
+export type PlatformSource = "confirmed" | "altered" | "suppressed" | "expected" | "scheduled";
 
 /** A service on the hybrid board — timetable-first with LDBWS overlay */
 export interface HybridBoardService {
@@ -96,6 +96,8 @@ export interface HybridBoardService {
   etd: string | null;
   /** Live platform from LDBWS (may differ from booked platform) */
   platformLive: string | null;
+  /** Whether the live platform was suppressed by Darwin (but we still show it) */
+  platIsSuppressed: boolean;
   /** Platform source — indicates how confident we are */
   platformSource: PlatformSource;
   /** Is the service cancelled? (LDBWS) */

@@ -16,13 +16,10 @@ import type {
   DarwinFormationLoading,
   DarwinTrackingID,
   DarwinAlarm,
+  DarwinStationMessage,
 } from "@railly-app/shared";
-import { redis } from "../redis/client.js";
-import type { ChainableCommander } from "ioredis";
 import { handleSchedule } from "./schedule.js";
 import { handleTrainStatus } from "./trainStatus.js";
-import { handleDeactivated } from "./deactivated.js";
-import { handleStationMessage } from "./stationMessage.js";
 
 /**
  * Metrics counters (simple in-memory; Prometheus will replace these).
@@ -36,13 +33,29 @@ export const metrics = {
 };
 
 /**
+ * Extract a sample RID from any data array for diagnostic logging.
+ */
+function extractDiagnosticRid(message: DarwinMessage): string | undefined {
+  const first = (
+    message.schedule?.[0] ??
+    message.TS?.[0] ??
+    message.deactivated?.[0] ??
+    message.OW?.[0] ??
+    message.association?.[0] ??
+    message.trainAlert?.[0] ??
+    message.trainOrder?.[0] ??
+    message.trackingID?.[0]
+  ) as { rid?: string } | undefined;
+  return first?.rid;
+}
+
+/**
  * Process a single parsed Darwin message envelope.
  */
 export async function handleDarwinMessage(
   message: DarwinMessage,
 ): Promise<void> {
   const generatedAt = message.ts;
-  const pipeline = redis.pipeline();
 
   metrics.messagesReceived++;
 
@@ -50,21 +63,22 @@ export async function handleDarwinMessage(
     // --- P0: Critical path ---
     if (message.schedule) {
       for (const s of message.schedule) {
-        await handleSchedule(s, pipeline, generatedAt);
+        await handleSchedule(s, generatedAt);
         incrementType("schedule");
       }
     }
 
     if (message.TS) {
       for (const ts of message.TS) {
-        await handleTrainStatus(ts, pipeline, generatedAt);
+        await handleTrainStatus(ts, generatedAt);
         incrementType("TS");
       }
     }
 
     if (message.deactivated) {
       for (const d of message.deactivated) {
-        await handleDeactivated(d.rid, pipeline, generatedAt);
+        // Deactivated: mark service_rt as cancelled, clear calling_points real-time
+        await handleDeactivated(d.rid);
         incrementType("deactivated");
       }
     }
@@ -72,7 +86,7 @@ export async function handleDarwinMessage(
     // --- P1: Station messages ---
     if (message.OW) {
       for (const ow of message.OW) {
-        await handleStationMessage(ow, pipeline, generatedAt);
+        await handleStationMessage(ow, generatedAt);
         incrementType("OW");
       }
     }
@@ -80,28 +94,28 @@ export async function handleDarwinMessage(
     // --- P2: Associations & Formations & Loading ---
     if (message.association) {
       for (const a of message.association) {
-        await handleAssociation(a, pipeline, generatedAt);
+        await handleAssociation(a);
         incrementType("association");
       }
     }
 
     if (message.scheduleFormations) {
       for (const f of message.scheduleFormations) {
-        await handleScheduleFormations(f, pipeline, generatedAt);
+        await handleScheduleFormations(f);
         incrementType("scheduleFormations");
       }
     }
 
     if (message.serviceLoading) {
       for (const l of message.serviceLoading) {
-        await handleServiceLoading(l, pipeline, generatedAt);
+        await handleServiceLoading(l);
         incrementType("serviceLoading");
       }
     }
 
     if (message.formationLoading) {
       for (const l of message.formationLoading) {
-        await handleFormationLoading(l, pipeline, generatedAt);
+        await handleFormationLoading(l);
         incrementType("formationLoading");
       }
     }
@@ -109,38 +123,44 @@ export async function handleDarwinMessage(
     // --- P3: Train order, tracking, alerts, alarms ---
     if (message.trainAlert) {
       for (const t of message.trainAlert) {
-        await handleTrainAlert(t, pipeline, generatedAt);
+        await handleTrainAlert(t);
         incrementType("trainAlert");
       }
     }
 
     if (message.trainOrder) {
       for (const t of message.trainOrder) {
-        await handleTrainOrder(t, pipeline, generatedAt);
+        await handleTrainOrder(t);
         incrementType("trainOrder");
       }
     }
 
     if (message.trackingID) {
       for (const t of message.trackingID) {
-        await handleTrackingID(t, pipeline, generatedAt);
+        await handleTrackingID(t);
         incrementType("trackingID");
       }
     }
 
     if (message.alarm) {
       for (const a of message.alarm) {
-        await handleAlarm(a, pipeline, generatedAt);
+        await handleAlarm(a);
         incrementType("alarm");
       }
     }
 
-    // Execute all Redis commands in one batch
-    await pipeline.exec();
     metrics.messagesProcessed++;
   } catch (err) {
     metrics.messagesErrored++;
-    console.error("   ❌ Error processing Darwin message:", err);
+    const rid = extractDiagnosticRid(message);
+    const error = err instanceof Error ? err : new Error(String(err));
+    console.error(
+      `   ❌ Error processing Darwin message (type: ${message.type}, rid: ${rid ?? "unknown"}):`,
+      error.message,
+    );
+    if (error.stack) {
+      console.error("   📚 Stack:", error.stack.split("\n").slice(0, 4).join("\n"));
+    }
     // Don't throw — we want to continue processing subsequent messages
   }
 }
@@ -149,76 +169,72 @@ function incrementType(type: string): void {
   metrics.byType[type] = (metrics.byType[type] || 0) + 1;
 }
 
-// ── Stubbed P2/P3 Handlers ───────────────────────────────────────────────────
+// ── Deactivated handler ───────────────────────────────────────────────────────
 
-async function handleAssociation(
-  assoc: DarwinAssociation,
-  _pipeline: ChainableCommander,
+import { sql } from "../db.js";
+
+async function handleDeactivated(rid: string): Promise<void> {
+  try {
+    await sql`
+      UPDATE service_rt
+      SET is_cancelled = true, last_updated = NOW()
+      WHERE rid = ${rid}
+    `;
+    console.log(`   🗑️ Deactivated: ${rid}`);
+  } catch (err) {
+    console.error(`   ❌ Deactivated failed for ${rid}:`, (err as Error).message);
+  }
+}
+
+// ── Station Message handler (P1) ──────────────────────────────────────────────
+
+async function handleStationMessage(
+  _ow: DarwinStationMessage,
   _generatedAt: string,
 ): Promise<void> {
+  // TODO: Store station messages in PostgreSQL
+  // For now, log only (P1 — not critical for board/service detail)
+  console.log("   📢 Station message received");
+}
+
+// ── Stubbed P2/P3 Handlers ───────────────────────────────────────────────────
+
+async function handleAssociation(assoc: DarwinAssociation): Promise<void> {
   // TODO: Phase 2 — store association data for service detail joins/splits
   console.log("   📎 Association:", assoc.tiploc, assoc.category);
 }
 
-async function handleScheduleFormations(
-  formations: DarwinScheduleFormations,
-  _pipeline: ChainableCommander,
-  _generatedAt: string,
-): Promise<void> {
+async function handleScheduleFormations(formations: DarwinScheduleFormations): Promise<void> {
   // TODO: Phase 2 — store coach formation data
   console.log("   🚃 Formations:", formations.rid);
 }
 
-async function handleServiceLoading(
-  loading: DarwinServiceLoading,
-  _pipeline: ChainableCommander,
-  _generatedAt: string,
-): Promise<void> {
+async function handleServiceLoading(loading: DarwinServiceLoading): Promise<void> {
   // TODO: Phase 2 — store loading data per service/location
   console.log("   👥 ServiceLoading:", loading.rid);
 }
 
-async function handleFormationLoading(
-  loading: DarwinFormationLoading,
-  _pipeline: ChainableCommander,
-  _generatedAt: string,
-): Promise<void> {
+async function handleFormationLoading(loading: DarwinFormationLoading): Promise<void> {
   // TODO: Phase 2 — store per-coach loading data
   console.log("   👥 FormationLoading:", loading.rid);
 }
 
-async function handleTrainAlert(
-  alert: DarwinTrainAlert,
-  _pipeline: ChainableCommander,
-  _generatedAt: string,
-): Promise<void> {
+async function handleTrainAlert(alert: DarwinTrainAlert): Promise<void> {
   // TODO: Phase 3 — store train-specific alerts
   console.log("   🚨 TrainAlert:", alert.rid, alert.alert);
 }
 
-async function handleTrainOrder(
-  order: DarwinTrainOrder,
-  _pipeline: ChainableCommander,
-  _generatedAt: string,
-): Promise<void> {
+async function handleTrainOrder(order: DarwinTrainOrder): Promise<void> {
   // TODO: Phase 3 — store platform departure order
   console.log("   🚦 TrainOrder:", order.tiploc, order.platform);
 }
 
-async function handleTrackingID(
-  tracking: DarwinTrackingID,
-  _pipeline: ChainableCommander,
-  _generatedAt: string,
-): Promise<void> {
+async function handleTrackingID(tracking: DarwinTrackingID): Promise<void> {
   // TODO: Phase 3 — update headcode corrections
   console.log("   🏷️ TrackingID:", tracking.rid, tracking.trainId);
 }
 
-async function handleAlarm(
-  alarm: DarwinAlarm,
-  _pipeline: ChainableCommander,
-  _generatedAt: string,
-): Promise<void> {
+async function handleAlarm(alarm: DarwinAlarm): Promise<void> {
   // Log system alarms for operational awareness
   console.log("   🔔 Darwin Alarm:", alarm.alarmType, alarm.description);
 }
