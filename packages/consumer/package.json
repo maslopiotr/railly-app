@@ -14,7 +14,6 @@
   "dependencies": {
     "@railly-app/shared": "*",
     "dotenv": "^16.4.7",
-    "drizzle-orm": "^0.40.1",
     "kafkajs": "^2.2.4",
     "postgres": "^3.4.5"
   },

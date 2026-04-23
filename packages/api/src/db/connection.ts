@@ -27,4 +27,4 @@ const queryClient = postgres(connectionString, {
 });
 
 export const db = drizzle(queryClient, { schema });
-export { queryClient as pg };
+// queryClient re-export removed — use `db` only

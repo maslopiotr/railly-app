@@ -28,6 +28,8 @@
 
 **Fix**: ✅ DONE — Introduced `ApiError` class with `statusCode`; added `badRequest()`, `notFound()`, `tooManyRequests()` helpers; proper client vs server error logging
 
+**Fix 2**: ✅ VERIFIED & ENHANCED — Added PostgreSQL error code heuristics (23503→404, 22xxx→400, 08xxx→503), DB detail leak prevention for 500 errors, `boards.ts` now passes errors to `next(err)` instead of swallowing
+
 ---
 
 ### 🟠 Board route fetches PP (passing point) rows only to discard them
@@ -48,6 +50,8 @@
 
 **Fix**: ✅ DONE — `timeFrom`/`timeTo` filters moved to SQL with proper null handling
 
+**Fix 2**: ✅ VERIFIED & FIXED — Removed dead `timeConditions` array and duplicate `gte()`/`lte()` calls. Added HH:MM format validation for time params. Used proper `and(...conditions)` pattern.
+
 ---
 
 ### 🟠 `timetable.ts` fetches all columns including internal `id`
@@ -56,7 +60,7 @@
 **File**: `packages/api/src/routes/timetable.ts` (line 228)
 **Details**: `db.select().from(callingPoints)` fetches the internal `id` (serial PK) column which is never exposed in the API response.
 
-**Fix**: ⏳ TO FIX
+**Fix**: ✅ DONE — Explicit column lists on both journey detail queries (journeys and callingPoints). Internal `id` no longer fetched.
 
 ---
 

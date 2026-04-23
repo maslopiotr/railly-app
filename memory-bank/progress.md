@@ -81,13 +81,15 @@
 - ✅ Grace period for delayed trains
 
 #### Phase 3e: Bug Fix Round 2 (April 23, 2026) ✅ **CURRENT**
-- ✅ **Critical**: `errorHandler` returns proper HTTP status codes (400, 404, 429, 500)
+- ✅ **Critical**: `errorHandler` returns proper HTTP status codes (400, 404, 429, 500) — **ENHANCED**: Added PostgreSQL error code heuristics + DB detail leak prevention
 - ✅ **Critical**: Board route uses DB-level time filtering (not JS filtering)
 - ✅ **Critical**: `timetable.ts` uses UK timezone (Europe/London) not UTC
 - ✅ **High**: PP rows excluded at DB level (not filtered in JS)
 - ✅ **High**: `numRows` parameter respected by board route
-- ✅ **High**: `timetable.ts` time filtering done in SQL (not JS)
+- ✅ **High**: `timetable.ts` time filtering done in SQL (not JS) — **FIXED**: Removed dead `timeConditions` array, added time format validation, used proper `and(...conditions)` pattern
 - ✅ **High**: Consumer null-safety for estimated times (`.trim()` on null)
+- ✅ **High**: `boards.ts` error handling now passes errors to `next(err)` instead of swallowing with 500
+- ✅ **High**: `timetable.ts` explicit column lists in journey detail queries (no more `select()`)
 
 ---
 

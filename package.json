@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "scripts": {
-    "buildallanddocker": "npm run build && npm run docker:rebuild",
+    "rebuildall": "npm run build && npm run docker:rebuild",
     "build": "npm run build --workspaces",
     "docker:rebuild": "docker compose up -d --build",
     "dev:api": "npm run dev --workspace=packages/api",
@@ -29,5 +29,8 @@
   },
   "engines": {
     "node": ">=22.0.0"
+  },
+  "devDependencies": {
+    "knip": "^6.6.2"
   }
 }

@@ -9,7 +9,7 @@
 import { Router } from "express";
 import { db } from "../db/connection.js";
 import { journeys, callingPoints, locationRef, tocRef } from "../db/schema.js";
-import { eq, and, sql, asc, inArray, gte, lte } from "drizzle-orm";
+import { eq, and, sql, asc, inArray } from "drizzle-orm";
 import { normalizeCrsCode } from "@railly-app/shared";
 
 const router = Router();
@@ -74,18 +74,36 @@ router.get("/:crs/schedule", async (req, res, next) => {
     const timeFrom = (req.query.timeFrom as string) || undefined;
     const timeTo = (req.query.timeTo as string) || undefined;
 
+    // Validate time format if provided
+    if (timeFrom && !/^([01]\d|2[0-3]):([0-5]\d)$/.test(timeFrom)) {
+      res.status(400).json({ error: { code: "INVALID_TIME", message: "timeFrom must be in HH:MM format" } });
+      return;
+    }
+    if (timeTo && !/^([01]\d|2[0-3]):([0-5]\d)$/.test(timeTo)) {
+      res.status(400).json({ error: { code: "INVALID_TIME", message: "timeTo must be in HH:MM format" } });
+      return;
+    }
+
     // Limit
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
 
-    // Build time filter conditions
-    const timeConditions = [];
+    // Build WHERE conditions
+    const conditions = [
+      eq(callingPoints.crs, crs),
+      eq(journeys.ssd, date),
+      eq(journeys.isPassenger, true),
+      // Exclude passing points — only show stops
+      sql`${callingPoints.stopType} NOT IN ('PP')`,
+      // Exclude rows without any public time
+      sql`(${callingPoints.pta} IS NOT NULL OR ${callingPoints.ptd} IS NOT NULL)`,
+    ];
+
+    // Apply time filters at DB level
     if (timeFrom) {
-      timeConditions.push(gte(sql`${callingPoints.ptd}::text`, timeFrom));
-      // Also allow arrivals-only services (no ptd) with timeFrom applied to pta
-      timeConditions.push(sql`${callingPoints.ptd} IS NOT NULL`);
+      conditions.push(sql`${callingPoints.ptd} IS NOT NULL AND ${callingPoints.ptd} >= ${timeFrom}`);
     }
     if (timeTo) {
-      timeConditions.push(lte(sql`${callingPoints.ptd}::text`, timeTo));
+      conditions.push(sql`${callingPoints.ptd} IS NOT NULL AND ${callingPoints.ptd} <= ${timeTo}`);
     }
 
     // Query: find calling points at this CRS for the given date,
@@ -108,20 +126,7 @@ router.get("/:crs/schedule", async (req, res, next) => {
       .from(callingPoints)
       .innerJoin(journeys, eq(callingPoints.journeyRid, journeys.rid))
       .leftJoin(tocRef, eq(journeys.toc, tocRef.toc))
-      .where(
-        and(
-          eq(callingPoints.crs, crs),
-          eq(journeys.ssd, date),
-          eq(journeys.isPassenger, true),
-          // Exclude passing points — only show stops
-          sql`${callingPoints.stopType} NOT IN ('PP')`,
-          // Exclude rows without any public time
-          sql`(${callingPoints.pta} IS NOT NULL OR ${callingPoints.ptd} IS NOT NULL)`,
-          // Apply time filters at DB level
-          timeFrom ? sql`${callingPoints.ptd} IS NOT NULL AND ${callingPoints.ptd} >= ${timeFrom}` : undefined,
-          timeTo ? sql`${callingPoints.ptd} IS NOT NULL AND ${callingPoints.ptd} <= ${timeTo}` : undefined,
-        ),
-      )
+      .where(and(...conditions))
       .orderBy(asc(callingPoints.ptd), asc(callingPoints.pta))
       .limit(limit);
 
@@ -228,9 +233,17 @@ router.get("/:rid", async (req, res, next) => {
       return;
     }
 
-    // Get journey
+    // Get journey — explicit column list, omit internal id
     const [journey] = await db
-      .select()
+      .select({
+        rid: journeys.rid,
+        uid: journeys.uid,
+        trainId: journeys.trainId,
+        ssd: journeys.ssd,
+        toc: journeys.toc,
+        trainCat: journeys.trainCat,
+        isPassenger: journeys.isPassenger,
+      })
       .from(journeys)
       .where(eq(journeys.rid, rid))
       .limit(1);
@@ -240,9 +253,22 @@ router.get("/:rid", async (req, res, next) => {
       return;
     }
 
-    // Get calling points
+    // Get calling points — explicit column list, omit internal id
     const points = await db
-      .select()
+      .select({
+        journeyRid: callingPoints.journeyRid,
+        sequence: callingPoints.sequence,
+        stopType: callingPoints.stopType,
+        tpl: callingPoints.tpl,
+        crs: callingPoints.crs,
+        plat: callingPoints.plat,
+        pta: callingPoints.pta,
+        ptd: callingPoints.ptd,
+        wta: callingPoints.wta,
+        wtd: callingPoints.wtd,
+        wtp: callingPoints.wtp,
+        act: callingPoints.act,
+      })
       .from(callingPoints)
       .where(eq(callingPoints.journeyRid, rid))
       .orderBy(asc(callingPoints.sequence));

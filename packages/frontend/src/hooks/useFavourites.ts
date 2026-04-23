@@ -19,33 +19,6 @@ function loadFavourites(): StationSearchResult[] {
 export function useFavourites() {
   const [favourites, setFavourites] = useState<StationSearchResult[]>(loadFavourites);
 
-  const addFavourite = useCallback((station: StationSearchResult) => {
-    setFavourites((prev) => {
-      // Don't add duplicates
-      if (prev.some((s) => s.crsCode === station.crsCode)) return prev;
-      // Add to end, limit to MAX_FAVOURITES
-      const updated = [...prev, station].slice(0, MAX_FAVOURITES);
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-      } catch (err) {
-        console.error("Failed to save favourite stations:", err);
-      }
-      return updated;
-    });
-  }, []);
-
-  const removeFavourite = useCallback((crsCode: string) => {
-    setFavourites((prev) => {
-      const updated = prev.filter((s) => s.crsCode !== crsCode);
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-      } catch (err) {
-        console.error("Failed to save favourite stations:", err);
-      }
-      return updated;
-    });
-  }, []);
-
   const toggleFavourite = useCallback((station: StationSearchResult) => {
     setFavourites((prev) => {
       const isFav = prev.some((s) => s.crsCode === station.crsCode);
@@ -69,5 +42,5 @@ export function useFavourites() {
     [favourites]
   );
 
-  return { favourites, addFavourite, removeFavourite, toggleFavourite, isFavourite };
+  return { favourites, toggleFavourite, isFavourite };
 }

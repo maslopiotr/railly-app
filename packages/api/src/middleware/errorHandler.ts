@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 
 /** Custom error class with HTTP status code */
-export class ApiError extends Error {
+class ApiError extends Error {
   constructor(
     public code: string,
     message: string,
@@ -12,20 +12,18 @@ export class ApiError extends Error {
   }
 }
 
-/** Create a 400 Bad Request error */
-export function badRequest(code: string, message: string): ApiError {
-  return new ApiError(code, message, 400);
-}
+/** Postgres error codes that indicate not-found */
+const POSTGRES_NOT_FOUND_CODES = new Set(["23503", "42P01"]); // foreign_key_violation, undefined_table
 
-/** Create a 404 Not Found error */
-export function notFound(code: string, message: string): ApiError {
-  return new ApiError(code, message, 404);
-}
-
-/** Create a 429 Too Many Requests error */
-export function tooManyRequests(code: string, message: string): ApiError {
-  return new ApiError(code, message, 429);
-}
+/** Postgres error codes that indicate constraint/validation failure */
+const POSTGRES_VALIDATION_CODES = new Set([
+  "23502", // not_null_violation
+  "23505", // unique_violation
+  "23514", // check_violation
+  "22P02", // invalid_text_representation
+  "22007", // invalid_datetime_format
+  "22008", // datetime_field_overflow
+]);
 
 export function errorHandler(
   err: Error,
@@ -42,11 +40,54 @@ export function errorHandler(
     statusCode = err.statusCode;
     errorCode = err.code;
     message = err.message;
-  } else if ((err as Error).message?.includes("not found") || (err as Error).message?.includes("NOT_FOUND")) {
-    // Heuristic for common not-found errors from DB or other layers
-    statusCode = 404;
-    errorCode = "NOT_FOUND";
-    message = err.message;
+  } else {
+    // Heuristics for common error types passed via next(err)
+    const pgCode = (err as unknown as { code?: string }).code;
+    const pgCodeNum = (err as unknown as { code?: number }).code;
+
+    if (pgCode && typeof pgCode === "string" && pgCode.length === 5) {
+      // PostgreSQL error
+      if (POSTGRES_NOT_FOUND_CODES.has(pgCode)) {
+        statusCode = 404;
+        errorCode = "NOT_FOUND";
+        message = "Resource not found";
+      } else if (POSTGRES_VALIDATION_CODES.has(pgCode)) {
+        statusCode = 400;
+        errorCode = "VALIDATION_ERROR";
+        message = err.message || "Invalid data";
+      } else if (pgCode.startsWith("08")) {
+        // Connection errors
+        statusCode = 503;
+        errorCode = "DATABASE_UNAVAILABLE";
+        message = "Database temporarily unavailable";
+      } else {
+        // Other DB errors — don't leak internal details
+        statusCode = 500;
+        errorCode = "DATABASE_ERROR";
+        message = "Database error";
+      }
+    } else if (pgCodeNum && pgCodeNum >= 400 && pgCodeNum < 600) {
+      // Error with numeric status code property (from some libraries)
+      statusCode = pgCodeNum;
+      errorCode = (err as unknown as { type?: string }).type || "REQUEST_ERROR";
+      message = err.message;
+    } else if (
+      err.message?.includes("not found") ||
+      err.message?.includes("NOT_FOUND") ||
+      err.message?.includes("does not exist")
+    ) {
+      statusCode = 404;
+      errorCode = "NOT_FOUND";
+      message = err.message;
+    } else if (
+      err.message?.includes("invalid") ||
+      err.message?.includes("Invalid") ||
+      err.message?.includes("validation")
+    ) {
+      statusCode = 400;
+      errorCode = "VALIDATION_ERROR";
+      message = err.message;
+    }
   }
 
   // Log server errors, but not client errors (4xx)
@@ -56,10 +97,13 @@ export function errorHandler(
     console.warn(`[CLIENT ERROR ${statusCode}] ${errorCode}: ${message}`);
   }
 
+  // Never leak internal DB details to client for 500 errors
+  const clientMessage = statusCode >= 500 ? "An unexpected error occurred" : message;
+
   res.status(statusCode).json({
     error: {
       code: errorCode,
-      message,
+      message: clientMessage,
     },
   });
 }

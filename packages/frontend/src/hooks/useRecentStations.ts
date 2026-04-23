@@ -36,15 +36,5 @@ export function useRecentStations() {
     });
   }, []);
 
-  // Clear all recent stations
-  const clearRecentStations = useCallback(() => {
-    setRecentStations([]);
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-    } catch (err) {
-      console.error("Failed to clear recent stations:", err);
-    }
-  }, []);
-
-  return { recentStations, addRecentStation, clearRecentStations };
+  return { recentStations, addRecentStation };
 }

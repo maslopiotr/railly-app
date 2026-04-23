@@ -10,7 +10,7 @@
  * No Redis needed.
  */
 
-import { Router } from "express";
+import { Router, type NextFunction } from "express";
 import { normalizeCrsCode } from "@railly-app/shared";
 import type {
   HybridBoardService,
@@ -175,7 +175,7 @@ function getPlatformSource(
  *
  * Unified board: single PostgreSQL query returns everything.
  */
-router.get("/:crs/board", async (req, res) => {
+router.get("/:crs/board", async (req, res, next: NextFunction) => {
   try {
     // ── Validate CRS code ─────────────────────────────────────────────────
     const rawCrs = req.params.crs?.toUpperCase().trim();
@@ -679,12 +679,7 @@ router.get("/:crs/board", async (req, res) => {
     });
   } catch (err) {
     console.error("Board fetch error:", err);
-    return res.status(500).json({
-      error: {
-        code: "INTERNAL_ERROR",
-        message: "Failed to fetch board data",
-      },
-    });
+    next(err);
   }
 });
 
