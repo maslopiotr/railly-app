@@ -35,6 +35,22 @@
 - Container restart behaviour (doesn't re-seed unnecessarily if data is fresh)
 **Files**: `packages/api/Dockerfile.seed`, `packages/api/seed-entrypoint.sh`
 
+### Platform changes are incorrectly showed in Departure/Arrival boards
+
+### Some platforms missing from calling points when viewing specific journey
+
+### Calling at for departure/arrivals is reduntant, we don't need this anymore
+
+### Time/plat/destination/calling at/operator/status column headers missaligned
+
+### Arrivals view shows incorrect split of services
+
+### in calling points view for Euston departures, Euston is missing platform - example bug 14:24 service Euston to Manchester Picadilly and there is a warning at the top saying: Platform altered from 5 to 5, which is incorrect
+
+### what does the color-coding in departure/arrival for platforms mean? This is not very well explained to the user and should be at the top of the board and visually consistent.
+
+### Departure and arrivals board have influx of services - some that have already left long ago, or some are actually departures showing in arrivals and vice-versa. the logic seems to be broken, as it was built using different data.
+
 ## Deferred
 
 ### ⏸️ Historical schema (Phase 3)
