@@ -1,12 +1,12 @@
 /**
- * DepartureBoard — Hybrid timetable-first board with LDBWS real-time overlay
+ * DepartureBoard — Hybrid timetable-first board with real-time overlay
  *
  * Shows all services for a station within a time window (past 10min + next 2hr).
- * Splits into Departures and Arrivals tabs based on std/sta fields.
+ * Splits into Departures and Arrivals tabs, now server-filtered.
  * Manual refresh only (pull-to-refresh on mobile, button on desktop).
  */
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { HybridBoardService, HybridBoardResponse, StationSearchResult } from "@railly-app/shared";
 import { fetchBoard } from "../api/boards";
 import { ServiceRow } from "./ServiceRow";
@@ -20,16 +20,6 @@ interface DepartureBoardProps {
   /** Controlled active tab — lifted to App.tsx for persistence across navigation */
   activeTab: "departures" | "arrivals";
   onTabChange: (tab: "departures" | "arrivals") => void;
-}
-
-/** Classify a service as departure, arrival, or both (through service) */
-function classifyService(service: HybridBoardService): {
-  isDeparture: boolean;
-  isArrival: boolean;
-} {
-  const isDeparture = service.std !== null;
-  const isArrival = service.sta !== null;
-  return { isDeparture, isArrival };
 }
 
 export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack, onSelectService, activeTab, onTabChange }: DepartureBoardProps) {
@@ -47,10 +37,12 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
 
   const loadBoard = useCallback(async () => {
     try {
+      setBoard(null);
       setIsLoading(true);
       const data = await fetchBoard(station.crsCode, {
         timeWindow: 120,
         pastWindow: 10,
+        type: activeTab,
       });
       setBoard(data);
       setLastUpdated(new Date());
@@ -61,9 +53,9 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [station.crsCode]);
+  }, [station.crsCode, activeTab]);
 
-  // Load on mount (no auto-refresh)
+  // Load on mount and when tab changes
   useEffect(() => {
     loadBoard();
   }, [loadBoard]);
@@ -99,22 +91,8 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
     }
   }, [pullDistance, isRefreshing, loadBoard]);
 
-  // Split services into departures and arrivals
-  const { departures, arrivals } = useMemo(() => {
-    const allServices = board?.services || [];
-    const deps: HybridBoardService[] = [];
-    const arrs: HybridBoardService[] = [];
-
-    for (const service of allServices) {
-      const { isDeparture, isArrival } = classifyService(service);
-      if (isDeparture) deps.push(service);
-      if (isArrival) arrs.push(service);
-    }
-
-    return { departures: deps, arrivals: arrs };
-  }, [board]);
-
-  const displayServices = activeTab === "departures" ? departures : arrivals;
+  const displayServices = board?.services || [];
+  const serviceCount = displayServices.length;
 
   return (
     <div className="departure-board w-full max-w-6xl mx-auto animate-fade-slide-up">
@@ -168,14 +146,30 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
             className={`tab ${activeTab === "departures" ? "active" : ""}`}
             onClick={() => onTabChange("departures")}
           >
-            Departures ({departures.length})
+            Departures ({activeTab === "departures" ? serviceCount : "—"})
           </button>
           <button
             className={`tab ${activeTab === "arrivals" ? "active" : ""}`}
             onClick={() => onTabChange("arrivals")}
           >
-            Arrivals ({arrivals.length})
+            Arrivals ({activeTab === "arrivals" ? serviceCount : "—"})
           </button>
+      </div>
+
+      {/* Platform legend */}
+      <div className="board-legend">
+        <span className="legend-item">
+          <span className="platform-confirmed">5</span> Confirmed
+        </span>
+        <span className="legend-item">
+          <span className="platform-altered">3→7</span> Altered
+        </span>
+        <span className="legend-item">
+          <span className="platform-expected">5</span> Expected
+        </span>
+        <span className="legend-item">
+          <span className="platform-scheduled">5</span> Scheduled
+        </span>
       </div>
 
       {/* Table header (desktop only) - sticky */}
@@ -183,7 +177,6 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
         <div className="col-time">Time</div>
         <div className="col-platform">Plat</div>
         <div className="col-destination">Destination</div>
-        <div className="col-calling">Calling at</div>
         <div className="col-operator">Operator</div>
         <div className="col-status">Status</div>
       </div>
@@ -243,22 +236,6 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
             />
           ))}
         </div>
-      </div>
-
-      {/* Legend */}
-      <div className="board-legend">
-        <span className="legend-item">
-          <span className="platform-confirmed">5</span> Confirmed
-        </span>
-        <span className="legend-item">
-          <span className="platform-altered">3→7</span> Altered
-        </span>
-        <span className="legend-item">
-          <span className="platform-expected">5</span> Expected
-        </span>
-        <span className="legend-item">
-          <span className="platform-scheduled">5</span> Scheduled
-        </span>
       </div>
     </div>
   );

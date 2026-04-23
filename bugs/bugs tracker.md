@@ -24,6 +24,54 @@
 **Fix**: Removed all LDBWS code (`packages/api/src/services/ldbws.ts` deleted). Replaced with hybrid PostgreSQL (PP Timetable master) + Redis (Darwin Push Port overlay) architecture.
 **Files**: `packages/api/src/services/ldbws.ts` (deleted), `packages/api/src/routes/boards.ts`, `packages/api/src/routes/services.ts`, `docker-compose.yml`
 
+### ✅ Platform changes incorrectly shown ("Platform altered from 5 to 5")
+**Date**: April 23, 2026
+**Root cause**: `platform` field in the board response was being overwritten with the live platform value, so when the alert showed "Platform altered from {platform} to {platformLive}", both values were identical.
+**Fix**: `platform` now always holds the booked platform. `platformLive` holds the live platform (null if no real-time data). Alert only shows when they differ.
+**Files**: `packages/api/src/routes/boards.ts`, `packages/api/src/routes/services.ts`, `packages/frontend/src/components/ServiceDetail.tsx`
+
+### ✅ Some platforms missing from calling points when viewing specific journey
+**Date**: April 23, 2026
+**Root cause**: `services.ts` only set `platformLive` when `cp.livePlat !== cp.plat`. If `plat` was null but `livePlat` had a value, `platformLive` was dropped.
+**Fix**: Always pass `livePlat` through as `platformLive`, regardless of whether it differs from `plat`.
+**Files**: `packages/api/src/routes/services.ts`
+
+### ✅ "Calling at" column redundant
+**Date**: April 23, 2026
+**Root cause**: Next stops preview was shown inline on mobile and in a dedicated column on desktop — added noise without much value.
+**Fix**: Removed the "Calling at" column from both the desktop table header and `ServiceRow`. Mobile still shows next stops inline below the destination.
+**Files**: `packages/frontend/src/components/DepartureBoard.tsx`, `packages/frontend/src/components/ServiceRow.tsx`
+
+### ✅ Column headers misaligned
+**Date**: April 23, 2026
+**Root cause**: Table header defined explicit widths (`w-24`, `w-20`, `w-64`, `w-40`, `w-16`) but `ServiceRow` used flexbox without matching widths.
+**Fix**: Added explicit matching widths to `ServiceRow` columns (`w-24`, `w-20`, `w-40`, `w-16`). Removed `col-calling` from header.
+**Files**: `packages/frontend/src/components/ServiceRow.tsx`, `packages/frontend/src/index.css`
+
+### ✅ Arrivals view shows incorrect split of services
+**Date**: April 23, 2026
+**Root cause**: Board API always ordered by `ptd` and returned both departures and arrivals. Frontend client-side split caused departures to appear in arrivals tab and vice versa. Board API also applied grace minutes to already-departed trains.
+**Fix**: Added `type` query parameter (`departures`|`arrivals`) to board API. API now filters and orders by the correct time field (`ptd` for departures, `pta` for arrivals). Post-merge filter no longer applies `graceMinutes` to already-departed/arrived trains.
+**Files**: `packages/api/src/routes/boards.ts`, `packages/frontend/src/api/boards.ts`, `packages/frontend/src/components/DepartureBoard.tsx`
+
+### ✅ Platform color-coding not explained / inconsistent
+**Date**: April 23, 2026
+**Root cause**: Legend was at the bottom of the board. `ServiceDetail` used text colors while board rows used background badges — inconsistent visual language.
+**Fix**: Moved legend to top of board, directly below tabs. Added `PlatformBadge` component to `ServiceDetail` that uses the same badge styling as the board row.
+**Files**: `packages/frontend/src/components/DepartureBoard.tsx`, `packages/frontend/src/components/ServiceDetail.tsx`, `packages/frontend/src/components/ServiceRow.tsx`
+
+### ✅ Departure and arrivals board showing wrong services
+**Date**: April 23, 2026
+**Root cause**: Post-merge filter applied `graceMinutes` (120 min) to ALL real-time services. Trains that had already departed 55 minutes ago were still shown. Also, arrivals tab showed departures and vice versa due to client-side split.
+**Fix**: Added `type` parameter to board API for server-side filtering. Post-merge filter now uses stricter `pastWindow` (no grace) for already-departed/arrived trains. Grace minutes only apply to delayed trains that haven't left yet.
+**Files**: `packages/api/src/routes/boards.ts`, `packages/frontend/src/api/boards.ts`, `packages/frontend/src/components/DepartureBoard.tsx`
+
+### ✅ Tab switching shows "--:--" times / gets stuck
+**Date**: April 23, 2026
+**Root cause**: When switching tabs (departures → arrivals), the old board data was not cleared before the new fetch started. `ServiceRow` rendered stale departure data with `isArrival=true`, causing `sta` (arrival time) to be null → "--:--".
+**Fix**: `loadBoard()` now calls `setBoard(null)` immediately before `setIsLoading(true)`, clearing stale data so skeleton loading appears instead of incorrectly rendered old data.
+**Files**: `packages/frontend/src/components/DepartureBoard.tsx`
+
 ## Active
 
 ### ⏳ Daily PP Timetable seed needs monitoring
@@ -34,22 +82,6 @@
 - Seed completes without errors on production data volumes
 - Container restart behaviour (doesn't re-seed unnecessarily if data is fresh)
 **Files**: `packages/api/Dockerfile.seed`, `packages/api/seed-entrypoint.sh`
-
-### Platform changes are incorrectly showed in Departure/Arrival boards
-
-### Some platforms missing from calling points when viewing specific journey
-
-### Calling at for departure/arrivals is reduntant, we don't need this anymore
-
-### Time/plat/destination/calling at/operator/status column headers missaligned
-
-### Arrivals view shows incorrect split of services
-
-### in calling points view for Euston departures, Euston is missing platform - example bug 14:24 service Euston to Manchester Picadilly and there is a warning at the top saying: Platform altered from 5 to 5, which is incorrect
-
-### what does the color-coding in departure/arrival for platforms mean? This is not very well explained to the user and should be at the top of the board and visually consistent.
-
-### Departure and arrivals board have influx of services - some that have already left long ago, or some are actually departures showing in arrivals and vice-versa. the logic seems to be broken, as it was built using different data.
 
 ## Deferred
 

@@ -4,7 +4,7 @@
  * Shows scheduled time, platform, destination/origin, operator, status.
  * Clicking navigates to a full ServiceDetail view (no inline expansion).
  *
- * Desktop: table-style layout with next stops preview
+ * Desktop: table-style layout
  * Mobile: stacked card with origin + next stops
  */
 
@@ -52,7 +52,7 @@ function PlatformBadge({ platform, platformLive, platformSource }: {
 
   switch (platformSource) {
     case "confirmed":
-      return <span className="platform platform-confirmed">{platformLive || platform}</span>;
+      return <span className="platform platform-confirmed">{platformLive}</span>;
 
     case "altered":
       return (
@@ -66,13 +66,13 @@ function PlatformBadge({ platform, platformLive, platformSource }: {
     case "suppressed":
       return (
         <span className="platform platform-suppressed">
-          {platform}
+          {platformLive}
           <span className="suppressed-indicator">✱</span>
         </span>
       );
 
     case "expected":
-      return <span className="platform platform-expected">{platform}</span>;
+      return <span className="platform platform-expected">—</span>;
 
     case "scheduled":
       return <span className="platform platform-scheduled">{platform}</span>;
@@ -166,7 +166,7 @@ export function ServiceRow({ service, isArrival, stationCrs, onSelect }: Service
   const cancelled = service.isCancelled || isCancelled(estimatedTime);
   const onTime = !cancelled && isOnTime(estimatedTime);
 
-  // Get next calling points (up to 3 for preview)
+  // Get next calling points (up to 3 for mobile preview)
   const nextStops = getNextCallingPoints(service.callingPoints || [], stationCrs || null, 3);
 
   return (
@@ -181,7 +181,7 @@ export function ServiceRow({ service, isArrival, stationCrs, onSelect }: Service
       {/* Main row */}
       <div className="service-main">
         {/* Time column: scheduled + estimated + actual + delay */}
-        <div className="service-time flex flex-col gap-0.5">
+        <div className="service-time w-24 shrink-0 flex flex-col gap-0.5">
           <span className="time-scheduled text-sm font-mono font-semibold text-white">
             {formatTime(scheduledTime)}
           </span>
@@ -209,14 +209,16 @@ export function ServiceRow({ service, isArrival, stationCrs, onSelect }: Service
         </div>
 
         {/* Platform */}
-        <PlatformBadge
-          platform={service.platform}
-          platformLive={service.platformLive}
-          platformSource={service.platformSource}
-        />
+        <div className="w-20 shrink-0 flex justify-center">
+          <PlatformBadge
+            platform={service.platform}
+            platformLive={service.platformLive}
+            platformSource={service.platformSource}
+          />
+        </div>
 
         {/* Destination + origin */}
-        <div className="service-info">
+        <div className="service-info flex-1 min-w-0">
           <div className="service-destination">
             {destination?.name || destination?.crs || "Unknown"}
           </div>
@@ -240,24 +242,15 @@ export function ServiceRow({ service, isArrival, stationCrs, onSelect }: Service
           )}
         </div>
 
-        {/* Desktop: Next stops preview */}
-        {nextStops.length > 0 && (
-          <div className="service-calling">
-            <div className="calling-preview">
-              → {nextStops.map(s => s.name || s.crs).join(" → ")}
-            </div>
-          </div>
-        )}
-
         {/* Operator + ID */}
-        <div className="service-operator">
-          <span className="hidden lg:inline">{service.tocName || service.toc || ""}</span>
-          {service.trainId && <span className="service-id">{service.trainId}</span>}
-          {service.length && <span className="service-length hidden lg:inline">· {service.length} coaches</span>}
+        <div className="service-operator w-40 shrink-0 hidden lg:block">
+          <span>{service.tocName || service.toc || ""}</span>
+          {service.trainId && <span className="service-id ml-2">{service.trainId}</span>}
+          {service.length && <span className="service-length ml-2">· {service.length} coaches</span>}
         </div>
 
         {/* Status indicator — new visual badges */}
-        <div className="service-status">
+        <div className="service-status w-16 shrink-0 flex justify-center">
           <StatusBadge status={service.trainStatus} delayMinutes={service.delayMinutes} />
         </div>
 

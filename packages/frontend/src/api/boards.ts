@@ -18,11 +18,13 @@ export async function fetchBoard(
   options?: {
     timeWindow?: number;
     pastWindow?: number;
+    type?: "departures" | "arrivals";
   },
 ): Promise<HybridBoardResponse> {
   const params = new URLSearchParams();
   if (options?.timeWindow) params.set("timeWindow", String(options.timeWindow));
   if (options?.pastWindow) params.set("pastWindow", String(options.pastWindow));
+  if (options?.type) params.set("type", options.type);
 
   // Cache-bust to prevent stale cached responses on back-navigation
   params.set("_t", String(Date.now()));

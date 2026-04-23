@@ -44,6 +44,7 @@
 - ✅ ~~Seed overwrites real-time data~~ — Fixed: ON CONFLICT only updates static columns
 - ✅ ~~Consumer `TypeError: Cannot read properties of undefined (reading 'trim')`~~ — Fixed: null-safe `loc.tpl?.trim()` guards in schedule.ts + trainStatus.ts
 - ✅ ~~Consumer FK constraint violation `service_rt_rid_journeys_rid_fk`~~ — Fixed: removed FK from `service_rt` (cache table), DB migrated live
+- ✅ ~~Board status logic: "approaching" misclassified on-time trains~~ — Fixed: `determineTrainStatus()` now returns cancelled → scheduled → at_platform → departed → delayed (>5 min) → on_time. `"approaching"` is derived from `determineCurrentLocation()` (train has left previous stop but not yet arrived at current station)
 
 ## Architecture Evolution
 
@@ -117,6 +118,16 @@
 - [x] API `server.ts`: no Redis import
 - [x] API `seed-timetable.ts`: ON CONFLICT preserving RT columns
 - [x] Full build clean
+
+### Phase 3d: Bug Fix Round (April 23, 2026) ✅ COMPLETE
+- [x] Fix: `platform`/`platformLive` separation — `platform` = booked, `platformLive` = live
+- [x] Fix: Board `type` parameter for server-side departure/arrival filtering
+- [x] Fix: Post-merge filter — no grace for already-departed/arrived trains
+- [x] Fix: Remove redundant "Calling at" column
+- [x] Fix: Column alignment in ServiceRow (explicit widths matching header)
+- [x] Fix: Platform legend moved to top of board
+- [x] Fix: PlatformBadge shared component between board and service detail
+- [x] Fix: ServiceDetail platform alert shows booked→live (not live→live)
 
 ## Next Steps
 1. Monitor consumer logs for any new error patterns

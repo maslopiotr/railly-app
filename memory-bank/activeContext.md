@@ -75,6 +75,11 @@ PostgreSQL as single source of truth — Redis eliminated from data path.
 - **File**: `packages/consumer/src/parser.ts`
 - **Fix**: Added parser-level warnings when TS or schedule locations are missing `tpl`, showing raw JSON for debugging.
 
+### Fix 4: Broken "approaching" status logic in board
+- **Root cause**: `determineTrainStatus()` in `boards.ts` returned `"approaching"` for any train with delay between -2 and +5 minutes. This meant a train running on time or slightly late was marked "approaching" instead of "on_time" or "delayed".
+- **Fix**: Removed the delay-based "approaching" logic. Now `"approaching"` is determined by `determineCurrentLocation()` — a train is "approaching" only when it has departed the previous calling point but not yet arrived at the current station. `determineTrainStatus()` returns: cancelled → scheduled → at_platform → departed → delayed (>5 min) → on_time.
+- **File**: `packages/api/src/routes/boards.ts`
+
 ## Current Status
 - Consumer Docker image rebuilt and deployed
 - Zero `trim` errors in last verified window
@@ -85,3 +90,32 @@ PostgreSQL as single source of truth — Redis eliminated from data path.
 1. Monitor logs for any new error patterns over next hour
 2. Verify board and service detail endpoints return real-time data
 3. Consider removing Redis from docker-compose.yml (optional cleanup)
+
+## Bug Fixes Applied (April 23, 2026)
+
+### Fix 5: Platform model overhaul — `platform` vs `platformLive` separation
+- **Root cause**: `platform` was being overwritten with the live value, conflating booked and live platforms. This caused the "Platform altered from 5 to 5" bug and missing platform data in service details.
+- **Files**: `packages/api/src/routes/boards.ts`, `packages/api/src/routes/services.ts`, `packages/frontend/src/components/ServiceRow.tsx`, `packages/frontend/src/components/ServiceDetail.tsx`
+- **Changes**:
+  - `platform` = booked platform (`plat` from DB), never overwritten
+  - `platformLive` = live platform (`livePlat` from DB), always passed through
+  - `platformSource` determines how to render (confirmed/altered/suppressed/expected/scheduled)
+  - `PlatformBadge` component extracted and reused in both board rows and service detail
+  - Alert condition: only show "Platform altered" when `platformSource === "altered" && platform !== platformLive`
+
+### Fix 6: Server-side departure/arrival filtering
+- **Root cause**: Board API returned all services, frontend client-side split caused departures to show in arrivals tab. Post-merge filter applied grace minutes to already-departed trains.
+- **Files**: `packages/api/src/routes/boards.ts`, `packages/frontend/src/api/boards.ts`, `packages/frontend/src/components/DepartureBoard.tsx`
+- **Changes**:
+  - Added `type` query parameter (`departures` | `arrivals`) to board API
+  - API filters by `ptd IS NOT NULL` / `pta IS NOT NULL`, orders by correct time field
+  - Post-merge filter: `alreadyDeparted` and `alreadyArrived` trains use stricter `pastWindow` (no grace)
+  - Removed client-side `classifyService` split — data comes pre-filtered from server
+  - Removed redundant "Calling at" column and fixed column widths
+
+### Fix 7: Platform legend moved to top
+- **Root cause**: Legend was at bottom of board, invisible on long boards. ServiceDetail used inconsistent text colors vs board badges.
+- **Files**: `packages/frontend/src/components/DepartureBoard.tsx`, `packages/frontend/src/components/ServiceDetail.tsx`
+- **Changes**:
+  - Legend moved below tabs at top of board
+  - `PlatformBadge` component added to `ServiceDetail` using same badge styling as board rows

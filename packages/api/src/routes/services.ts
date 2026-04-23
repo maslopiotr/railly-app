@@ -119,35 +119,28 @@ router.get("/:serviceId", async (req, res) => {
     // ── Build response ────────────────────────────────────────────────
     const callingPointsResponse = points
       .filter((cp) => cp.stopType !== "PP")
-      .map((cp) => {
-        const platformChanged =
-          cp.livePlat != null &&
-          cp.plat != null &&
-          cp.livePlat !== cp.plat;
-
-        return {
-          sequence: cp.sequence,
-          stopType: cp.stopType,
-          tpl: cp.tpl,
-          crs: cp.crs ?? null,
-          name: cp.name || cp.tpl,
-          plat: cp.plat ?? null,
-          pta: cp.pta ?? null,
-          ptd: cp.ptd ?? null,
-          wta: cp.wta ?? null,
-          wtd: cp.wtd ?? null,
-          wtp: cp.wtp ?? null,
-          act: cp.act ?? null,
-          // Real-time overlay from calling_points
-          eta: cp.eta ?? cp.pta ?? null,
-          etd: cp.etd ?? cp.ptd ?? null,
-          ata: cp.ata ?? null,
-          atd: cp.atd ?? null,
-          platformLive: platformChanged ? cp.livePlat : null,
-          isCancelled: cp.isCancelled,
-          lateReason: rtState?.delayReason ?? null,
-        };
-      });
+      .map((cp) => ({
+        sequence: cp.sequence,
+        stopType: cp.stopType,
+        tpl: cp.tpl,
+        crs: cp.crs ?? null,
+        name: cp.name || cp.tpl,
+        plat: cp.plat ?? null,
+        pta: cp.pta ?? null,
+        ptd: cp.ptd ?? null,
+        wta: cp.wta ?? null,
+        wtd: cp.wtd ?? null,
+        wtp: cp.wtp ?? null,
+        act: cp.act ?? null,
+        // Real-time overlay from calling_points
+        eta: cp.eta ?? cp.pta ?? null,
+        etd: cp.etd ?? cp.ptd ?? null,
+        ata: cp.ata ?? null,
+        atd: cp.atd ?? null,
+        platformLive: cp.livePlat ?? null,
+        isCancelled: cp.isCancelled,
+        lateReason: rtState?.delayReason ?? null,
+      }));
 
     // Determine origin and destination from calling points
     const origin = points.find((p) => p.stopType === "OR" || p.stopType === "OPOR");

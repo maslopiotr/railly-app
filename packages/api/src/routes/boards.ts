@@ -107,13 +107,8 @@ function determineTrainStatus(
   if (ata && !atd) return "at_platform";
   if (atd) return "departed";
 
-  const etaMins = parseTimeToMinutes(eta);
-  const stdMins = parseTimeToMinutes(std);
-  if (etaMins !== null && stdMins !== null) {
-    const delay = computeDelayMinutes(std, eta, null);
-    if (delay !== null && delay <= 5 && delay >= -2) return "approaching";
-    if (delay !== null && delay > 1) return "delayed";
-  }
+  const delay = computeDelayMinutes(std, eta, null);
+  if (delay !== null && delay > 5) return "delayed";
 
   return "on_time";
 }
@@ -210,6 +205,8 @@ router.get("/:crs/board", async (req, res) => {
       480,
     );
 
+    const boardType = req.query.type === "arrivals" ? "arrivals" : "departures";
+
     const { dateStr: todayStr, nowMinutes } = getUkNow();
     const earliest = nowMinutes - pastWindow;
     const latest = nowMinutes + timeWindow;
@@ -238,6 +235,8 @@ router.get("/:crs/board", async (req, res) => {
       .limit(1);
 
     // ── Query 1: All passenger services at this CRS ─────────────────────
+    const timeField = boardType === "arrivals" ? callingPoints.pta : callingPoints.ptd;
+
     const scheduledResults = await db
       .select({
         rid: callingPoints.journeyRid,
@@ -280,13 +279,18 @@ router.get("/:crs/board", async (req, res) => {
           inArray(journeys.ssd, ssds),
           eq(journeys.isPassenger, true),
           sql`${callingPoints.stopType} != 'PP'`,
+          boardType === "arrivals"
+            ? sql`${callingPoints.pta} IS NOT NULL`
+            : sql`${callingPoints.ptd} IS NOT NULL`,
         ),
       )
-      .orderBy(asc(callingPoints.ptd), asc(callingPoints.pta));
+      .orderBy(asc(timeField), asc(callingPoints.pta));
 
     // Pre-filter by time window
     const windowedResults = scheduledResults.filter((svc) => {
-      const minutes = parseTimeToMinutes(svc.ptd || svc.pta);
+      const minutes = parseTimeToMinutes(
+        boardType === "arrivals" ? svc.pta : svc.ptd
+      );
       if (minutes === null) return false;
 
       if (queryEarliest >= 0 && latest < 1440) {
@@ -415,19 +419,32 @@ router.get("/:crs/board", async (req, res) => {
         entry.ata != null ||
         entry.atd != null;
 
-      const schedMinutes = parseTimeToMinutes(entry.ptd || entry.pta);
+      const schedMinutes = parseTimeToMinutes(
+        boardType === "arrivals" ? entry.pta : entry.ptd
+      );
       if (schedMinutes === null) return false;
+
+      // Already departed from this station — only show within pastWindow, no grace
+      const alreadyDeparted = entry.atd != null;
+      // Already arrived at this station (arrivals view) — only show within pastWindow
+      const alreadyArrived = boardType === "arrivals" && entry.ata != null;
 
       if (hasRealtime) {
         const rtTime =
-          entry.atd || entry.etd || entry.eta;
+          boardType === "arrivals"
+            ? (entry.ata || entry.eta)
+            : (entry.atd || entry.etd || entry.eta);
         const rtMinutes = rtTime
           ? parseTimeToMinutes(rtTime)
           : null;
         const effectiveMinutes =
           rtMinutes !== null ? rtMinutes : schedMinutes;
 
-        const effectiveEarliest = Math.max(0, earliest - graceMinutes);
+        // For departed/arrived trains, use stricter pastWindow without grace
+        const effectiveEarliest = alreadyDeparted || alreadyArrived
+          ? Math.max(0, earliest)
+          : Math.max(0, earliest - graceMinutes);
+
         if (effectiveEarliest >= 0 && latest < 1440) {
           return (
             effectiveMinutes >= effectiveEarliest &&
@@ -506,18 +523,16 @@ router.get("/:crs/board", async (req, res) => {
         platformChanged,
         entry.platIsSuppressed,
       );
-      const displayPlatform = entry.platIsSuppressed
-        ? (entry.livePlat ?? entry.plat)
-        : platformChanged
-          ? entry.livePlat
-          : (entry.livePlat ?? entry.plat);
+      // platform stays as the booked platform; platformLive is the live one
+      const displayPlatform = entry.plat;
+      const livePlatform = entry.livePlat;
 
       const delayMinutes = computeDelayMinutes(
         entry.ptd || entry.pta,
         eta || etd,
         entry.ata || entry.atd,
       );
-      const trainStatus = determineTrainStatus(
+      let trainStatus = determineTrainStatus(
         isCancelled,
         hasRealtime,
         eta,
@@ -544,14 +559,21 @@ router.get("/:crs/board", async (req, res) => {
           etd: cp.etd ?? null,
           ata: cp.ata ?? null,
           atd: cp.atd ?? null,
-          platformLive:
-            cp.livePlat != null && cp.plat != null && cp.livePlat !== cp.plat
-              ? cp.livePlat
-              : null,
+          platformLive: cp.livePlat ?? null,
           isCancelled: cp.isCancelled,
         }));
 
       const currentLocation = determineCurrentLocation(cpList);
+
+      // If the train is physically approaching this station, override status
+      if (
+        trainStatus !== "at_platform" &&
+        trainStatus !== "departed" &&
+        currentLocation?.status === "approaching" &&
+        currentLocation.tpl === entry.tpl
+      ) {
+        trainStatus = "approaching";
+      }
 
       services.push({
         rid,
@@ -580,7 +602,7 @@ router.get("/:crs/board", async (req, res) => {
         hasRealtime,
         eta,
         etd,
-        platformLive: platformChanged ? entry.livePlat : null,
+        platformLive: livePlatform,
         platIsSuppressed: entry.platIsSuppressed,
         platformSource,
         isCancelled,

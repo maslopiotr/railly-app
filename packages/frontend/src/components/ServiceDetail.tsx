@@ -6,7 +6,7 @@
  * Supports in-place refresh via onRefresh callback.
  */
 
-import type { HybridBoardService } from "@railly-app/shared";
+import type { HybridBoardService, PlatformSource } from "@railly-app/shared";
 import { CallingPoints } from "./CallingPoints";
 import { LoadingIndicator } from "./LoadingIndicator";
 
@@ -51,6 +51,48 @@ function computeDelay(scheduled: string | null, estimated: string | null, actual
   let d = e - s;
   if (d < -720) d += 1440;
   return d;
+}
+
+/** Platform badge for service detail — same styling as board row but larger */
+function PlatformBadge({ platform, platformLive, platformSource }: {
+  platform: string | null;
+  platformLive: string | null;
+  platformSource: PlatformSource;
+}) {
+  if (!platform && !platformLive) {
+    return <span className="platform platform-none text-lg px-3 py-1">—</span>;
+  }
+
+  switch (platformSource) {
+    case "confirmed":
+      return <span className="platform platform-confirmed text-lg px-3 py-1">{platformLive}</span>;
+
+    case "altered":
+      return (
+        <span className="platform platform-altered text-lg px-3 py-1">
+          <span className="platform-booked">{platform}</span>
+          <span className="platform-arrow">→</span>
+          <span className="platform-live">{platformLive}</span>
+        </span>
+      );
+
+    case "suppressed":
+      return (
+        <span className="platform platform-suppressed text-lg px-3 py-1">
+          {platformLive}
+          <span className="suppressed-indicator">✱</span>
+        </span>
+      );
+
+    case "expected":
+      return <span className="platform platform-expected text-lg px-3 py-1">—</span>;
+
+    case "scheduled":
+      return <span className="platform platform-scheduled text-lg px-3 py-1">{platform}</span>;
+
+    default:
+      return <span className="platform text-lg px-3 py-1">{platformLive || platform}</span>;
+  }
 }
 
 export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefresh, isRefreshing, lastUpdated }: ServiceDetailProps) {
@@ -131,17 +173,13 @@ export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefres
             </button>
           )}
 
-          {/* Platform */}
-          <div className="text-center shrink-0">
-            <div className={`text-2xl font-bold font-mono ${
-              !service.platform ? "text-slate-600" :
-              service.platformSource === "confirmed" ? "text-blue-400" :
-              service.platformSource === "altered" ? "text-amber-400" :
-              "text-slate-400"
-            }`}>
-              {service.platform || "—"}
-            </div>
-            <div className="text-[10px] uppercase tracking-wider text-slate-500">Plat</div>
+          {/* Platform badge */}
+          <div className="shrink-0">
+            <PlatformBadge
+              platform={service.platform}
+              platformLive={service.platformLive}
+              platformSource={service.platformSource}
+            />
           </div>
         </div>
       </div>
@@ -157,7 +195,7 @@ export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefres
           <strong>Delayed {delay} min:</strong> {service.delayReason}
         </div>
       )}
-      {service.platformSource === "altered" && service.platformLive && (
+      {service.platformSource === "altered" && service.platformLive && service.platform !== service.platformLive && (
         <div className="mx-4 mt-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-300 text-sm">
           Platform altered from {service.platform} to {service.platformLive}
         </div>
