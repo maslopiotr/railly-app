@@ -17,7 +17,6 @@ interface ServiceDetailProps {
   onBack: () => void;
   onRefresh?: () => void;
   isRefreshing?: boolean;
-  lastUpdated?: Date | null;
 }
 
 /** Format a rail time string (e.g. "0930" → "09:30") */
@@ -95,7 +94,7 @@ function PlatformBadge({ platform, platformLive, platformSource }: {
   }
 }
 
-export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefresh, isRefreshing, lastUpdated }: ServiceDetailProps) {
+export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefresh, isRefreshing }: ServiceDetailProps) {
   const scheduledTime = isArrival ? service.sta : service.std;
   const estimatedTime = isArrival ? service.eta : service.etd;
   const actualTime = isArrival ? service.actualArrival : service.actualDeparture;
@@ -146,11 +145,6 @@ export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefres
           <div className="text-sm text-slate-400 truncate">
             {destination?.name || destination?.crs || "Unknown"}
           </div>
-          {lastUpdated && (
-            <div className="text-[10px] text-slate-500 mt-0.5">
-              Updated {lastUpdated.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-            </div>
-          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -210,8 +204,8 @@ export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefres
       {service.currentLocation && (
         <div className="mx-4 mt-3 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg text-blue-300 text-sm flex items-center gap-2">
           <span className={`w-2 h-2 rounded-full ${
-            service.currentLocation.status === "at_platform" ? "bg-green-400 animate-pulse" :
-            service.currentLocation.status === "approaching" ? "bg-yellow-400 animate-pulse" :
+            service.currentLocation.status === "at_platform" ? "bg-green-400" :
+            service.currentLocation.status === "approaching" ? "bg-yellow-400" :
             "bg-slate-400"
           }`} />
           <span>

@@ -180,6 +180,11 @@ async function handleDeactivated(rid: string): Promise<void> {
       SET is_cancelled = true, last_updated = NOW()
       WHERE rid = ${rid}
     `;
+    await sql`
+      UPDATE calling_points
+      SET is_cancelled = true
+      WHERE journey_rid = ${rid}
+    `;
     console.log(`   🗑️ Deactivated: ${rid}`);
   } catch (err) {
     console.error(`   ❌ Deactivated failed for ${rid}:`, (err as Error).message);

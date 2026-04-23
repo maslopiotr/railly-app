@@ -8,7 +8,6 @@ export interface HealthResponse {
   timestamp: string;
   services: {
     database: "connected" | "disconnected";
-    redis: "connected" | "disconnected";
   };
 }
 

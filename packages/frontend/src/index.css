@@ -430,6 +430,10 @@
   @apply text-xs text-slate-500;
 }
 
+.selected-time-badge {
+  @apply text-xs font-mono font-medium text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded;
+}
+
 .btn-back {
   @apply text-sm text-slate-400 hover:text-white mr-2 select-none;
 }
@@ -525,6 +529,51 @@
 
 .btn-favourite.is-favourite {
   animation: favouritePop 300ms ease-out;
+}
+
+/* ─── Time Picker ──────────────────────────────────────────────────────── */
+
+.time-stepper {
+  @apply w-8 h-8 flex items-center justify-center rounded-lg
+    bg-slate-800 text-slate-400 border border-slate-700
+    hover:bg-slate-700 hover:text-white hover:border-slate-600
+    active:scale-90 transition-all duration-150;
+}
+
+.time-stepper.compact {
+  @apply w-7 h-7;
+}
+
+.time-input {
+  @apply appearance-none bg-slate-800 border border-slate-700 text-white text-sm font-mono
+    rounded-lg px-3 py-2 pr-8 cursor-pointer
+    hover:bg-slate-700 hover:border-slate-600
+    focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500
+    transition-colors;
+}
+
+.time-input::-webkit-calendar-picker-indicator {
+  opacity: 0;
+  cursor: pointer;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.time-input.compact {
+  @apply px-2 py-1 text-xs w-20;
+}
+
+.time-now-btn {
+  @apply px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300
+    bg-slate-800 border border-slate-700
+    hover:bg-slate-700 hover:text-white hover:border-slate-600
+    active:scale-90 transition-all duration-150;
+}
+
+.time-now-btn.compact {
+  @apply px-2 py-1 text-[10px];
 }
 
 /* ─── Pull-to-refresh ──────────────────────────────────────────────────── */

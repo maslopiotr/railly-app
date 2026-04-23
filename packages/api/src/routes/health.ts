@@ -30,7 +30,7 @@ router.get("/health/detail", async (_req, res) => {
     database = "error";
   }
 
-  const status = database === "connected" ? "ok" : "degraded";
+  const status = database === "connected" ? "ok" : "error";
 
   res.json({
     status,

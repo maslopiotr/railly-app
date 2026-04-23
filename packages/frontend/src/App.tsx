@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { StationSearch } from "./components/StationSearch";
 import { DepartureBoard } from "./components/DepartureBoard";
 import { ServiceDetail } from "./components/ServiceDetail";
+import { TimePicker } from "./components/TimePicker";
 import { useRecentStations } from "./hooks/useRecentStations";
 import { useFavourites } from "./hooks/useFavourites";
 import { fetchBoard } from "./api/boards";
@@ -20,24 +21,29 @@ const POPULAR_STATIONS: StationSearchResult[] = [
 ];
 
 /** Build URL for a given navigation state */
-function buildUrl(station: StationSearchResult | null, service: HybridBoardService | null): string {
+function buildUrl(station: StationSearchResult | null, service: HybridBoardService | null, time: string | null): string {
   if (!station) return "/";
   const name = encodeURIComponent(station.name);
+  const params = new URLSearchParams();
+  params.set("name", name);
+  if (time) params.set("time", time);
+  const qs = params.toString();
   if (service) {
-    return `/stations/${station.crsCode}/${service.rid}?name=${name}`;
+    return `/stations/${station.crsCode}/${service.rid}?${qs}`;
   }
-  return `/stations/${station.crsCode}?name=${name}`;
+  return `/stations/${station.crsCode}?${qs}`;
 }
 
 /** Parse the current URL to restore navigation state */
-function parseUrl(): { station: StationSearchResult | null; rid: string | null } {
+function parseUrl(): { station: StationSearchResult | null; rid: string | null; time: string | null } {
   const path = window.location.pathname;
   const params = new URLSearchParams(window.location.search);
   const name = params.get("name") || "";
+  const time = params.get("time");
 
   // Match /stations/:crs or /stations/:crs/:rid
   const match = path.match(/^\/stations\/([A-Z]{3})(?:\/(\d+))?\/?$/i);
-  if (!match) return { station: null, rid: null };
+  if (!match) return { station: null, rid: null, time: time && /^(\d{2}):(\d{2})$/.test(time) ? time : null };
 
   const crs = match[1].toUpperCase();
   const rid = match[2] || null;
@@ -45,6 +51,7 @@ function parseUrl(): { station: StationSearchResult | null; rid: string | null }
   return {
     station: { name, crsCode: crs, tiploc: "" },
     rid,
+    time: time && /^(\d{2}):(\d{2})$/.test(time) ? time : null,
   };
 }
 
@@ -59,6 +66,7 @@ function LiveClock() {
   const formattedTime = time.toLocaleTimeString("en-GB", {
     hour: "2-digit",
     minute: "2-digit",
+    second: "2-digit",
     hour12: false,
   });
 
@@ -113,13 +121,15 @@ function App() {
   // Board tab state — lifted so it persists across service detail navigation
   const [activeTab, setActiveTab] = useState<"departures" | "arrivals">("departures");
 
+  // Selected time-of-day (HH:MM) or null for "now"
+  const [selectedTime, setSelectedTime] = useState<string | null>(null);
+
   // Service refresh state
   const [isServiceRefreshing, setIsServiceRefreshing] = useState(false);
-  const [lastServiceUpdate, setLastServiceUpdate] = useState<Date | null>(null);
 
   // Navigate to a URL via pushState (for in-app navigation)
-  const navigateTo = useCallback((station: StationSearchResult | null, service: HybridBoardService | null) => {
-    const url = buildUrl(station, service);
+  const navigateTo = useCallback((station: StationSearchResult | null, service: HybridBoardService | null, time: string | null) => {
+    const url = buildUrl(station, service, time);
     window.history.pushState(null, "", url);
   }, []);
 
@@ -128,7 +138,7 @@ function App() {
     addRecentStation(station);
     setSelectedStation(station);
     setSelectedService(null);
-    navigateTo(station, null);
+    navigateTo(station, null, selectedTime);
   }
 
   // Handle service selection
@@ -136,31 +146,34 @@ function App() {
     const isArrival = service.sta !== null && service.std === null;
     setActiveTab(isArrival ? "arrivals" : "departures");
     setSelectedService(service);
-    setLastServiceUpdate(new Date());
-    navigateTo(selectedStation, service);
+    navigateTo(selectedStation, service, selectedTime);
   }
 
   // Handle back from service detail
   function handleBackFromService() {
     setSelectedService(null);
-    setLastServiceUpdate(null);
-    navigateTo(selectedStation, null);
+    navigateTo(selectedStation, null, selectedTime);
   }
 
   // Handle "Railly" logo click — go to landing page
   function handleLogoClick() {
     setSelectedStation(null);
     setSelectedService(null);
-    setLastServiceUpdate(null);
-    navigateTo(null, null);
+    setSelectedTime(null);
+    navigateTo(null, null, null);
+  }
+
+  // Handle time change from board view
+  function handleTimeChange(time: string | null) {
+    setSelectedTime(time);
+    navigateTo(selectedStation, selectedService, time);
   }
 
   // Handle back from board
   function handleBackFromBoard() {
     setSelectedStation(null);
     setSelectedService(null);
-    setLastServiceUpdate(null);
-    navigateTo(null, null);
+    navigateTo(null, null, null);
   }
 
   // Refresh service data by re-fetching the board
@@ -172,18 +185,17 @@ function App() {
       const data = await fetchBoard(selectedStation.crsCode, {
         timeWindow: 120,
         pastWindow: 10,
+        time: selectedTime || undefined,
       });
 
       // Find the updated service by RID
       const updated = data.services.find((s) => s.rid === selectedService.rid);
       if (updated) {
         setSelectedService(updated);
-        setLastServiceUpdate(new Date());
       } else {
         // Service no longer in the time window — navigate back to board
         setSelectedService(null);
-        setLastServiceUpdate(null);
-        navigateTo(selectedStation, null);
+        navigateTo(selectedStation, null, selectedTime);
       }
     } catch {
       // Silently fail — user can try again
@@ -195,23 +207,23 @@ function App() {
   // Restore state from URL on mount, and listen for browser back/forward
   useEffect(() => {
     function handlePopState() {
-      const { station, rid } = parseUrl();
+      const { station, rid, time } = parseUrl();
+      setSelectedTime(time);
       if (station) {
         setSelectedStation(station);
         if (rid) {
           // Need to fetch the board to get the service data
-          fetchBoard(station.crsCode, { timeWindow: 120, pastWindow: 10 })
+          fetchBoard(station.crsCode, { timeWindow: 120, pastWindow: 10, time: time || undefined })
             .then((data) => {
               const service = data.services.find((s) => s.rid === rid);
               if (service) {
                 setSelectedService(service);
-                setLastServiceUpdate(new Date());
                 const isArrival = service.sta !== null && service.std === null;
                 setActiveTab(isArrival ? "arrivals" : "departures");
               } else {
                 // Service not found, show board only
                 setSelectedService(null);
-                navigateTo(station, null);
+                navigateTo(station, null, time);
               }
             })
             .catch(() => {
@@ -228,17 +240,17 @@ function App() {
     }
 
     // Restore state from URL on initial load
-    const { station, rid } = parseUrl();
+    const { station, rid, time } = parseUrl();
+    setSelectedTime(time);
     if (station) {
       setSelectedStation(station);
       if (rid) {
         // Fetch board to get service details
-        fetchBoard(station.crsCode, { timeWindow: 120, pastWindow: 10 })
+        fetchBoard(station.crsCode, { timeWindow: 120, pastWindow: 10, time: time || undefined })
           .then((data) => {
             const service = data.services.find((s) => s.rid === rid);
             if (service) {
               setSelectedService(service);
-              setLastServiceUpdate(new Date());
               const isArrival = service.sta !== null && service.std === null;
               setActiveTab(isArrival ? "arrivals" : "departures");
             }
@@ -252,7 +264,7 @@ function App() {
           });
       } else {
         // Fetch board just to get station name
-        fetchBoard(station.crsCode, { timeWindow: 120, pastWindow: 10 })
+        fetchBoard(station.crsCode, { timeWindow: 120, pastWindow: 10, time: time || undefined })
           .then((data) => {
             if (data.stationName) {
               setSelectedStation({ ...station, name: data.stationName });
@@ -290,7 +302,6 @@ function App() {
               onBack={handleBackFromService}
               onRefresh={handleRefreshService}
               isRefreshing={isServiceRefreshing}
-              lastUpdated={lastServiceUpdate}
             />
           </div>
         ) : selectedStation ? (
@@ -303,6 +314,8 @@ function App() {
             onSelectService={handleSelectService}
             activeTab={activeTab}
             onTabChange={setActiveTab}
+            selectedTime={selectedTime}
+            onTimeChange={handleTimeChange}
           />
         ) : (
           /* Level 1: Landing */
@@ -320,14 +333,22 @@ function App() {
               Search any station to see departures, arrivals, and platform info
             </p>
 
-            {/* Search */}
+            {/* Search + Time picker inline */}
             <div className="w-full flex flex-col items-center mb-6">
-              <StationSearch
-                onSelect={handleStationSelect}
-                placeholder="Search for a station..."
-                autoFocus
-                size="large"
-              />
+              <div className="w-full flex items-center justify-center gap-3">
+                <div className="flex-1 max-w-md">
+                  <StationSearch
+                    onSelect={handleStationSelect}
+                    placeholder="Search for a station..."
+                    autoFocus
+                    size="large"
+                  />
+                </div>
+                <TimePicker
+                  value={selectedTime}
+                  onChange={setSelectedTime}
+                />
+              </div>
               <p className="text-xs text-slate-500 mt-2">
                 Try 'Euston', 'Manchester', or 'KGX'
               </p>

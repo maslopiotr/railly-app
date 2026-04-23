@@ -207,12 +207,39 @@ router.get("/:crs/board", async (req, res) => {
 
     const boardType = req.query.type === "arrivals" ? "arrivals" : "departures";
 
-    const { dateStr: todayStr, nowMinutes } = getUkNow();
-    const earliest = nowMinutes - pastWindow;
-    const latest = nowMinutes + timeWindow;
+    // ── Allow filtering by a specific time (like RTT) ─────────────────────
+    const timeParam = req.query.time as string | undefined;
+    let referenceMinutes: number;
+    let todayStr: string;
+
+    if (timeParam && /^(\d{2}):(\d{2})$/.test(timeParam)) {
+      const [h, m] = timeParam.split(":").map(Number);
+      referenceMinutes = h * 60 + m;
+      // Use today as the date, but reference time from the parameter
+      const now = new Date();
+      const ukTime = new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Europe/London",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      }).format(now);
+      const dateParts = ukTime.split(", ")[0].split("/");
+      todayStr = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`;
+    } else {
+      const ukNow = getUkNow();
+      referenceMinutes = ukNow.nowMinutes;
+      todayStr = ukNow.dateStr;
+    }
+
+    const earliest = referenceMinutes - pastWindow;
+    const latest = referenceMinutes + timeWindow;
 
     // Wide lookback for delayed trains
-    const queryEarliest = Math.max(0, nowMinutes - 180);
+    const queryEarliest = Math.max(0, referenceMinutes - 180);
 
     // ── Determine SSD dates to query ─────────────────────────────────────
     const ssds = [todayStr];
@@ -465,7 +492,7 @@ router.get("/:crs/board", async (req, res) => {
           return true;
         return false;
       } else {
-        const cutoff = Math.max(0, nowMinutes - SCHEDULED_ONLY_GRACE);
+        const cutoff = Math.max(0, referenceMinutes - SCHEDULED_ONLY_GRACE);
         if (cutoff >= 0 && latest < 1440) {
           return schedMinutes >= cutoff && schedMinutes <= latest;
         }

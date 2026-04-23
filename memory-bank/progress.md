@@ -129,12 +129,32 @@
 - [x] Fix: PlatformBadge shared component between board and service detail
 - [x] Fix: ServiceDetail platform alert shows booked→live (not live→live)
 
+### Phase 3e: Consumer Bug Fixes (April 23, 2026) ✅ COMPLETE
+- [x] Fix: Cancelled services not showing as cancelled on board
+  - `handleDeactivated` now propagates cancellation to `calling_points.is_cancelled`
+  - `handleSchedule` propagates cancellation when `schedule.can === true`
+- [x] Fix: Stale calling points from old Darwin schedule updates
+  - Pre-fetch real-time data by TIPLOC before transaction
+  - Delete calling points with `sequence NOT IN` current batch after upsert
+  - Re-apply preserved real-time data to new rows by TIPLOC match
+  - Prevents duplicate TIPLOC entries (e.g., two Euston rows with different times)
+
+## Completed (April 23, 2026 — cont.)
+- [x] Fix: Cancelled services not showing as cancelled on board (see activeContext)
+- [x] Fix: Stale calling points from old Darwin schedule updates (see activeContext)
+- [x] RTT comparison script — `bugs/compare-with-rtt.ts`
+  - Fetches our board data via API and compares against RTT data
+  - Matches services by UID, then STD+destination fallback
+  - Compares: scheduled times, real-time times, cancelled status, platform, destination, operator, hasRealtime, trainStatus
+  - Prints accuracy score, per-field mismatch breakdown, detailed diffs
+  - Exits with error code if accuracy < 90%
+
 ## Next Steps
 1. Monitor consumer logs for any new error patterns
 2. Verify board and service detail endpoints return real-time data (end-to-end smoke test)
 3. Test seed preserves real-time columns on re-run
-4. Consider removing Redis from docker-compose.yml (optional cleanup)
-5. Phase 4: Historical schema (`darwin_events` partitioning, delay repay tables)
+4. Run NR comparison: `npx tsx bugs/compare-with-national-rail.ts --crs EUS --time 17:00`
+5. Verify platform changes show on correct calling points after sequence disambiguation fix
 
 ## Deferred Work
 - Step 6b — Favourite Connections (origin→destination cards)

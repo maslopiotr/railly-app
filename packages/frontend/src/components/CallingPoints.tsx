@@ -228,8 +228,8 @@ function CallingPointRow({
                 ? "border-green-500 bg-green-500"
                 : isPast
                   ? "border-green-500/60 bg-green-500/20"
-                  : isCurrent
-                    ? "border-yellow-400 bg-yellow-400 animate-pulse"
+                    : isCurrent
+                    ? "border-yellow-400 bg-yellow-400"
                     : "border-slate-600 bg-slate-800"
           }`}
         >

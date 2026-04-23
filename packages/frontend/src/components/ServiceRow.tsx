@@ -90,14 +90,14 @@ function StatusBadge({ status, delayMinutes }: { status: string; delayMinutes: n
     case "at_platform":
       return (
         <span className={`${base} bg-green-500/20 text-green-300 border border-green-500/30`}>
-          <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+          <span className="w-2 h-2 rounded-full bg-green-400" />
           At platform
         </span>
       );
     case "approaching":
       return (
         <span className={`${base} bg-yellow-500/20 text-yellow-300 border border-yellow-500/30`}>
-          <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
+          <span className="w-2 h-2 rounded-full bg-yellow-400" />
           Approaching
         </span>
       );

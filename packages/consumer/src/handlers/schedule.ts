@@ -89,6 +89,51 @@ export async function handleSchedule(
     .filter((cp): cp is NonNullable<typeof cp> => cp !== null);
 
   try {
+    // ── Pre-fetch existing real-time data so we can preserve it ──────────────
+    // Capture timestamp BEFORE pre-fetch to avoid race condition: if a TS
+    // message arrives between pre-fetch and re-apply, it would update the row
+    // and then the re-apply would overwrite fresh data with stale pre-fetch data.
+    const preFetchTime = new Date().toISOString();
+
+    const existingRt = await sql`
+      SELECT
+        tpl,
+        eta, etd, ata, atd,
+        live_plat,
+        delay_minutes,
+        plat_is_suppressed,
+        updated_at
+      FROM calling_points
+      WHERE journey_rid = ${rid}
+    `;
+
+    const rtByTpl = new Map<
+      string,
+      {
+        eta: string | null;
+        etd: string | null;
+        ata: string | null;
+        atd: string | null;
+        livePlat: string | null;
+        delayMinutes: number | null;
+        platIsSuppressed: boolean;
+        updatedAt: string | null;
+      }
+    >();
+
+    for (const row of existingRt as Array<Record<string, unknown>>) {
+      rtByTpl.set(String(row.tpl), {
+        eta: row.eta ? String(row.eta) : null,
+        etd: row.etd ? String(row.etd) : null,
+        ata: row.ata ? String(row.ata) : null,
+        atd: row.atd ? String(row.atd) : null,
+        livePlat: row.live_plat ? String(row.live_plat) : null,
+        delayMinutes: row.delay_minutes != null ? Number(row.delay_minutes) : null,
+        platIsSuppressed: Boolean(row.plat_is_suppressed),
+        updatedAt: row.updated_at ? String(row.updated_at) : null,
+      });
+    }
+
     await sql.begin(async (tx) => {
       // Upsert journey first (VSTP services may not exist in PP Timetable)
       await tx`
@@ -160,6 +205,51 @@ export async function handleSchedule(
         `;
       }
     });
+
+    // ── Delete stale calling points from previous schedule versions ───────────
+    // Darwin can change the calling pattern (different sequence numbers for same
+    // TIPLOCs), leaving orphaned rows. Delete anything not in the current batch.
+    const validSequences = cps.map((cp) => cp.sequence);
+    if (validSequences.length > 0) {
+      await sql`
+        DELETE FROM calling_points
+        WHERE journey_rid = ${rid}
+          AND sequence NOT IN (${sql.unsafe(validSequences.join(","))})
+      `;
+    }
+
+      // ── Re-apply preserved real-time data to calling points by SEQUENCE ─────────
+      // Only touch rows that haven't been updated since preFetchTime. This guards
+      // against a TS message arriving between pre-fetch and re-apply — if updated_at
+      // is newer than preFetchTime, the fresh TS data wins and we don't overwrite it.
+      for (const cp of cps) {
+        const rt = rtByTpl.get(cp.tpl);
+        if (!rt) continue;
+        await sql`
+          UPDATE calling_points
+          SET
+            eta = ${rt.eta},
+            etd = ${rt.etd},
+            ata = ${rt.ata},
+            atd = ${rt.atd},
+            live_plat = ${rt.livePlat},
+            delay_minutes = ${rt.delayMinutes},
+            plat_is_suppressed = ${rt.platIsSuppressed},
+            updated_at = ${rt.updatedAt}
+          WHERE journey_rid = ${rid} AND sequence = ${cp.sequence}
+            AND (updated_at IS NULL OR updated_at <= ${preFetchTime}::timestamp with time zone)
+        `;
+      }
+
+    // If this schedule marks the service as cancelled, propagate to all calling points
+    // (including any stale rows from previous schedule updates that weren't overwritten)
+    if (isCancelled) {
+      await sql`
+        UPDATE calling_points
+        SET is_cancelled = true
+        WHERE journey_rid = ${rid}
+      `;
+    }
 
     console.log(`   ✅ Schedule upserted: ${rid} (${cps.length} calling points)`);
   } catch (err) {

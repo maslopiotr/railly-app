@@ -10,6 +10,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import type { HybridBoardService, HybridBoardResponse, StationSearchResult } from "@railly-app/shared";
 import { fetchBoard } from "../api/boards";
 import { ServiceRow } from "./ServiceRow";
+import { TimePicker } from "./TimePicker";
 
 interface DepartureBoardProps {
   station: StationSearchResult;
@@ -20,13 +21,16 @@ interface DepartureBoardProps {
   /** Controlled active tab — lifted to App.tsx for persistence across navigation */
   activeTab: "departures" | "arrivals";
   onTabChange: (tab: "departures" | "arrivals") => void;
+  /** Selected time of day (HH:MM) or null for "now" */
+  selectedTime?: string | null;
+  /** Callback when user changes the time from the board view */
+  onTimeChange?: (time: string | null) => void;
 }
 
-export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack, onSelectService, activeTab, onTabChange }: DepartureBoardProps) {
+export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack, onSelectService, activeTab, onTabChange, selectedTime, onTimeChange }: DepartureBoardProps) {
   const [board, setBoard] = useState<HybridBoardResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   // Pull-to-refresh state
   const [pullDistance, setPullDistance] = useState(0);
@@ -43,9 +47,9 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
         timeWindow: 120,
         pastWindow: 10,
         type: activeTab,
+        time: selectedTime || undefined,
       });
       setBoard(data);
-      setLastUpdated(new Date());
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load board");
@@ -53,7 +57,7 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [station.crsCode, activeTab]);
+  }, [station.crsCode, activeTab, selectedTime]);
 
   // Load on mount and when tab changes
   useEffect(() => {
@@ -120,11 +124,16 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
           </h2>
         </div>
         <div className="board-header-right">
-          {lastUpdated && (
-            <span className="last-updated">
-              Updated {lastUpdated.toLocaleTimeString()}
-            </span>
-          )}
+          {onTimeChange ? (
+            <TimePicker
+              value={selectedTime || null}
+              onChange={onTimeChange}
+              compact
+              className="time-picker-inline"
+            />
+          ) : selectedTime ? (
+            <span className="selected-time-badge">{selectedTime}</span>
+          ) : null}
           <button className="btn-refresh" onClick={loadBoard} disabled={isLoading} aria-label="Refresh board">
             ↻
           </button>

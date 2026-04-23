@@ -89,7 +89,34 @@ PostgreSQL as single source of truth — Redis eliminated from data path.
 ## Next Steps
 1. Monitor logs for any new error patterns over next hour
 2. Verify board and service detail endpoints return real-time data
-3. Consider removing Redis from docker-compose.yml (optional cleanup)
+3. Run NR comparison: `npx tsx bugs/compare-with-national-rail.ts --crs EUS --time 17:00`
+4. Verify platform changes show on correct calling points after sequence disambiguation fix
+
+## Time-of-Day Filtering Feature (2026-04-23)
+
+### What Changed
+- **Backend**: Already supported `?time=HH:MM` parameter on `/api/v1/stations/:crs/board` — no changes needed.
+- **Frontend API** (`packages/frontend/src/api/boards.ts`): Added `time?: string` to `fetchBoard` options.
+- **TimePicker component** (`packages/frontend/src/components/TimePicker.tsx`): ~~New reusable dropdown with 48 half-hourly options~~ → **REPLACED with native `<input type="time">` + ±60min stepper buttons**. All values snap to **full hours** (17:00, 18:00). Preset chips removed after user feedback.
+- **App.tsx**: 
+  - Added `selectedTime` state.
+  - Integrated `TimePicker` on landing page.
+  - `buildUrl` / `parseUrl` now include `time` query parameter.
+  - All `fetchBoard` calls pass `time` when set.
+  - Service detail navigation preserves time context.
+  - Added `handleTimeChange` callback for time changes from board view.
+- **DepartureBoard.tsx**: Accepts `selectedTime` prop, passes to `fetchBoard`, shows ~~selected time badge~~ → **inline TimePicker (compact mode)** in header for time adjustment without leaving board.
+- **LIVE indicator removal**: Removed `animate-pulse` from `ServiceRow`, `ServiceDetail` (current location dots), `CallingPoints` (next stop dot). Removed `lastUpdated` display from `ServiceDetail`.
+
+### Design Decisions
+- ~~48-option `<select>` dropdown~~ → **Native `<input type="time">` with ±60min stepper arrows** — eliminates scrolling, supports direct typing, step by full hours.
+- Time picker on landing page, **inline next to station search** — single row, no vertical stacking.
+- **Time adjustable from board view** via compact inline TimePicker in `DepartureBoard` header — no need to go back to landing page.
+- **Full-hour granularity** — snaps to 17:00, 18:00, etc. No half-hours.
+- No preset chips — user found Morning/Midday/Evening/Night confusing.
+- "Now" = null, no UI clutter when not needed.
+- URLs like `/stations/EUS?name=London+Euston&time=15:00` — bookmarkable and back-button safe.
+- Full-hour granularity enforced by `snapToHour()` helper.
 
 ## Bug Fixes Applied (April 23, 2026)
 
@@ -119,3 +146,18 @@ PostgreSQL as single source of truth — Redis eliminated from data path.
 - **Changes**:
   - Legend moved below tabs at top of board
   - `PlatformBadge` component added to `ServiceDetail` using same badge styling as board rows
+
+### Fix 8: Cancelled services not showing as cancelled
+- **Root cause**: `handleDeactivated` only updated `service_rt.is_cancelled` but never propagated to `calling_points.is_cancelled`. The board API checks `calling_points.is_cancelled`, so cancelled trains still appeared with no cancellation indication.
+- **Files**: `packages/consumer/src/handlers/index.ts`, `packages/consumer/src/handlers/schedule.ts`
+- **Changes**:
+  - `handleDeactivated` now also runs `UPDATE calling_points SET is_cancelled = true WHERE journey_rid = ${rid}`
+  - `handleSchedule` now runs the same update when `schedule.can === true` or `schedule.deleted === true`
+
+### Fix 9: Stale calling points from old Darwin schedule updates
+- **Root cause**: Darwin sends schedule updates where stations can shift position (different `sequence` numbers). The consumer used `ON CONFLICT (journey_rid, sequence)`, so old rows with different sequence numbers were never overwritten or deleted. This caused duplicate TIPLOC rows (e.g., two Euston entries with different times) in service detail views.
+- **Files**: `packages/consumer/src/handlers/schedule.ts`
+- **Changes**:
+  - Pre-fetch existing real-time data keyed by TIPLOC before the transaction (capture `preFetchTime` before the query)
+  - After upserting the new calling pattern, delete any calling points with `sequence NOT IN` the current batch
+  - Re-apply preserved real-time data to the new rows by TIPLOC match, only where `updated_at <= preFetchTime` — guards against a TS message arriving between pre-fetch and re-apply, which would otherwise be overwritten with stale pre-fetch data
