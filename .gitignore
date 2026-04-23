@@ -1,4 +1,14 @@
 # ──────────────────────────────────────────────
+# Reference documentation (SIZE — large PDFs, XSDs, docx)
+# ──────────────────────────────────────────────
+Darwin documentation/
+Best Practices for AI Operator.md
+PPTimetable
+corpus
+Railly App - Rail Buddy.md
+clean-up-prompt.md
+
+# ──────────────────────────────────────────────
 # Secrets & environment files (SECURITY)
 # ──────────────────────────────────────────────
 .env
@@ -35,15 +45,6 @@ build/
 # Test coverage
 # ──────────────────────────────────────────────
 coverage/
-
-# ──────────────────────────────────────────────
-# Reference documentation (SIZE — large PDFs, XSDs, docx)
-# ──────────────────────────────────────────────
-Darwin documentation/
-Best Practices for AI Operator.md
-PPTimetable
-corpus
-Railly App - Rail Buddy.md
 
 # ──────────────────────────────────────────────
 # macOS metadata
