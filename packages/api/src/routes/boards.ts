@@ -27,7 +27,7 @@ import {
   locationRef,
   serviceRt,
 } from "../db/schema.js";
-import { eq, inArray, and, sql, asc } from "drizzle-orm";
+import { eq, inArray, and, or, sql, asc } from "drizzle-orm";
 
 const router = Router();
 
@@ -204,6 +204,10 @@ router.get("/:crs/board", async (req, res) => {
       parseInt(req.query.timeWindow as string) || 120,
       480,
     );
+    const numRows = Math.min(
+      parseInt(req.query.numRows as string) || MAX_SERVICES,
+      MAX_SERVICES,
+    );
 
     const boardType = req.query.type === "arrivals" ? "arrivals" : "departures";
 
@@ -238,21 +242,59 @@ router.get("/:crs/board", async (req, res) => {
     const earliest = referenceMinutes - pastWindow;
     const latest = referenceMinutes + timeWindow;
 
-    // Wide lookback for delayed trains
-    const queryEarliest = Math.max(0, referenceMinutes - 180);
+    // Wide lookback for delayed trains (can go negative for cross-midnight)
+    const queryEarliest = referenceMinutes - 180;
 
     // ── Determine SSD dates to query ─────────────────────────────────────
     const ssds = [todayStr];
+    let tomorrowStr: string | null = null;
+    let yesterdayStr: string | null = null;
+
     if (latest >= 1440) {
       const tomorrow = new Date(todayStr + "T12:00:00Z");
       tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-      ssds.push(tomorrow.toISOString().split("T")[0]);
+      tomorrowStr = tomorrow.toISOString().split("T")[0];
+      ssds.push(tomorrowStr);
     }
     if (queryEarliest < 0) {
       const yesterday = new Date(todayStr + "T12:00:00Z");
       yesterday.setUTCDate(yesterday.getUTCDate() - 1);
-      ssds.unshift(yesterday.toISOString().split("T")[0]);
+      yesterdayStr = yesterday.toISOString().split("T")[0];
+      ssds.unshift(yesterdayStr);
     }
+
+    // ── Build SQL time filter conditions per SSD ─────────────────────────
+    const timeField = boardType === "arrivals" ? callingPoints.pta : callingPoints.ptd;
+    const timeFilterConditions = [];
+
+    // Today: from max(0, queryEarliest) to min(latest, 1439)
+    timeFilterConditions.push(sql`
+      (${journeys.ssd} = ${todayStr}
+       AND (EXTRACT(HOUR FROM ${timeField}::time) * 60 + EXTRACT(MINUTE FROM ${timeField}::time))
+           BETWEEN ${Math.max(0, queryEarliest)} AND ${Math.min(latest, 1439)})
+    `);
+
+    // Tomorrow: from 0 to latest - 1440
+    if (tomorrowStr && latest >= 1440) {
+      timeFilterConditions.push(sql`
+        (${journeys.ssd} = ${tomorrowStr}
+         AND (EXTRACT(HOUR FROM ${timeField}::time) * 60 + EXTRACT(MINUTE FROM ${timeField}::time))
+             BETWEEN 0 AND ${latest - 1440})
+      `);
+    }
+
+    // Yesterday: from 1440 + queryEarliest to 1439
+    if (yesterdayStr && queryEarliest < 0) {
+      timeFilterConditions.push(sql`
+        (${journeys.ssd} = ${yesterdayStr}
+         AND (EXTRACT(HOUR FROM ${timeField}::time) * 60 + EXTRACT(MINUTE FROM ${timeField}::time))
+             BETWEEN ${1440 + queryEarliest} AND 1439)
+      `);
+    }
+
+    const timeFilter = timeFilterConditions.length > 1
+      ? or(...timeFilterConditions)
+      : timeFilterConditions[0];
 
     // ── Fetch station name ───────────────────────────────────────────────
     const [station] = await db
@@ -262,8 +304,6 @@ router.get("/:crs/board", async (req, res) => {
       .limit(1);
 
     // ── Query 1: All passenger services at this CRS ─────────────────────
-    const timeField = boardType === "arrivals" ? callingPoints.pta : callingPoints.ptd;
-
     const scheduledResults = await db
       .select({
         rid: callingPoints.journeyRid,
@@ -309,30 +349,12 @@ router.get("/:crs/board", async (req, res) => {
           boardType === "arrivals"
             ? sql`${callingPoints.pta} IS NOT NULL`
             : sql`${callingPoints.ptd} IS NOT NULL`,
+          timeFilter,
         ),
       )
       .orderBy(asc(timeField), asc(callingPoints.pta));
 
-    // Pre-filter by time window
-    const windowedResults = scheduledResults.filter((svc) => {
-      const minutes = parseTimeToMinutes(
-        boardType === "arrivals" ? svc.pta : svc.ptd
-      );
-      if (minutes === null) return false;
-
-      if (queryEarliest >= 0 && latest < 1440) {
-        return minutes >= queryEarliest && minutes <= latest;
-      }
-
-      const tomorrowLatest = latest >= 1440 ? latest - 1440 : -1;
-      if (minutes >= queryEarliest && minutes < 1440) return true;
-      if (tomorrowLatest >= 0 && minutes >= 0 && minutes <= tomorrowLatest)
-        return true;
-
-      return false;
-    });
-
-    if (windowedResults.length === 0) {
+    if (scheduledResults.length === 0) {
       return res.json({
         crs,
         stationName: station?.name || null,
@@ -344,7 +366,7 @@ router.get("/:crs/board", async (req, res) => {
     }
 
     const uniqueRids = [
-      ...new Set(windowedResults.map((r) => r.rid)),
+      ...new Set(scheduledResults.map((r) => r.rid)),
     ];
 
     // ── Query 2: Origin and destination for each journey ──────────────────
@@ -438,7 +460,7 @@ router.get("/:crs/board", async (req, res) => {
       120,
     );
 
-    const filteredResults = windowedResults.filter((entry) => {
+    const filteredResults = scheduledResults.filter((entry) => {
       const hasRealtime =
         entry.serviceRtRid != null ||
         entry.eta != null ||
@@ -511,7 +533,7 @@ router.get("/:crs/board", async (req, res) => {
     // ── Build HybridBoardService objects ─────────────────────────────────
     const services: HybridBoardService[] = [];
 
-    for (const entry of filteredResults.slice(0, MAX_SERVICES)) {
+    for (const entry of filteredResults.slice(0, numRows)) {
       const rid = entry.rid;
       const endpoints = endpointMap.get(rid);
       const callingPattern = callingPatternMap.get(rid) || [];

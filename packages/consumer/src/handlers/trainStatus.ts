@@ -146,11 +146,11 @@ export async function handleTrainStatus(
       }
     }
 
-    const platform = loc.platform?.trim() || null;
-    const eta = loc.eta || loc.et || null;
-    const etd = loc.etd || loc.et || null;
-    const ata = loc.ata || null;
-    const atd = loc.atd || null;
+    // Safely extract and trim estimated times — Darwin sends whitespace/null values
+    const eta = loc.eta?.trim() || loc.et?.trim() || null;
+    const etd = loc.etd?.trim() || loc.et?.trim() || null;
+    const ata = loc.ata?.trim() || null;
+    const atd = loc.atd?.trim() || null;
 
     cpUpdates.push({
       rid,
@@ -160,7 +160,7 @@ export async function handleTrainStatus(
       etd,
       ata,
       atd,
-      livePlat: platform,
+      livePlat: loc.platform?.trim() || null,
       isCancelled: loc.cancelled === true,
       platIsSuppressed: loc.platIsSuppressed === true,
       updatedAt: generatedAt,

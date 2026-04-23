@@ -1,167 +1,144 @@
 # Progress
 
-## Completed
-- ✅ Step 0 — Scaffold (monorepo, shared, api, consumer, frontend, Docker Compose)
-- ✅ Step 1 — Station Search (Drizzle ORM, 4,112 stations, search API + React autocomplete)
-- ✅ Step 2 — LDBWS integration (shared types, API client, board + service detail routes)
-- ✅ Step 3 — PPTimetable Integration (PostgreSQL schema, incremental import, API endpoints)
-- ✅ Step 4 — Hybrid Board (timetable-first board with LDBWS overlay, removed LDBWS from board)
-- ✅ Step 4.1 — UX: timezone fix, URL navigation, service refresh, UI animations
-- ✅ Security hardening (Docker isolation, nginx headers, Helmet, rate limiting, input validation)
-- ✅ Responsive design (desktop table + mobile cards, calling points visual system, 3-level nav)
-- ✅ Step 6 — Favourite Stations (localStorage, landing page cards, unfavourite UX)
-- ✅ Step 7 Phase 1 — Consumer Infrastructure (KafkaJS SASL_SSL, eachBatch, parser, Dockerfile, docker-compose)
-- ✅ Step 7 Phase 2 — Redis Real-Time Store (handlers for all 12 message types P0-P3, deduplication, board index)
-- ✅ **Step 7 Phase 3 — Hybrid Architecture (April 22, 2026)**
-  - PostgreSQL as master timetable (PP Timetable `journeys` + `callingPoints`)
-  - Redis as real-time overlay (Darwin Push Port)
-  - Board API queries PostgreSQL for all scheduled services, merges Redis by RID
-  - Service Detail API queries PostgreSQL for journey + calling points, merges Redis overlay
-  - LDBWS completely removed (`packages/api/src/services/ldbws.ts` deleted)
-  - `DELAY_GRACE_MINUTES = 120` — delayed trains remain visible on board
-  - UK-local date/time for proper cross-midnight filtering
-  - Platforms sourced from PostgreSQL `callingPoints.plat`
-  - Daily seed cron container (`Dockerfile.seed`) runs at 03:00
-- ✅ **Step 7 Phase 3b — Platform Suppression Fix (April 23, 2026)**
-  - Parser: `Location` → `locations` rename, `plat` object→string normalization
-  - `platIsSuppressed`, `platSourcedFromTIPLOC`, `platformIsChanged` flags
-  - Frontend: suppressed platform badge (amber dashed border + asterisk)
-- ✅ **Step 7 Phase 3c — Unified PostgreSQL (April 23, 2026)**
-  - Real-time columns added directly to `calling_points` (eta, etd, ata, atd, live_plat, is_cancelled, delay_minutes, plat_is_suppressed, updated_at)
-  - `service_rt` table for service-level state + deduplication
-  - `darwin_events` append-only audit table
-  - Consumer writes directly to PostgreSQL (no Redis)
-  - API queries PostgreSQL only (no Redis)
-  - Seed uses ON CONFLICT preserving real-time columns
-  - Full build clean across all packages
+## Completed Steps
+
+### Step 0: Project Scaffolding
+- ✅ Monorepo with packages: `api`, `frontend`, `consumer`, `shared`
+- ✅ TypeScript, ESLint, Vite, Express, React
+- ✅ Docker Compose with PostgreSQL, Kafka, Zookeeper, consumer, API, frontend
+
+### Step 1: Database Schema
+- ✅ `stations`, `journeys`, `calling_points`, `service_rt`, `darwin_events`, `toc_ref`, `location_ref`
+- ✅ Migrations via Drizzle ORM
+- ✅ Indexes on hot query paths
+
+### Step 2: PP Timetable Seeding
+- ✅ CORPUS (stations reference data)
+- ✅ Daily PPTimetable ingestion
+- ✅ `seed-entrypoint.sh` cron wrapper
+- ✅ Journey + calling_points upsert with real-time preservation
+
+### Step 3: Darwin Push Port Consumer (P0)
+- ✅ Kafka consumer with `kafkajs`
+- ✅ Schedule handler with deduplication
+- ✅ Train Status handler with sequence mapping
+- ✅ VSTP support
+- ✅ Deactivated handler
+
+### Step 4: API Routes
+- ✅ `/api/v1/health` — health check
+- ✅ `/api/v1/stations` — station search
+- ✅ `/api/v1/stations/:crs/board` — unified departure/arrival board
+- ✅ `/api/v1/stations/:crs/schedule` — timetable schedule
+- ✅ `/api/v1/journeys/:rid` — journey detail
+- ✅ `/api/v1/services/:rid` — service detail (legacy)
+
+### Step 5: Frontend
+- ✅ React + Vite + TypeScript
+- ✅ Station search with autocomplete
+- ✅ Departure board with real-time overlay
+- ✅ Service detail with calling points
+- ✅ Journey detail
+- ✅ Favourites + recent stations
+
+### Step 6: Docker Compose
+- ✅ `docker-compose.yml` with all services
+- ✅ `nginx.conf` for frontend reverse proxy
+- ✅ Health checks and restart policies
+- ✅ Network isolation
+
+### Step 7: Architecture Evolution
+
+#### Phase 1: LDBWS (v1)
+- ✅ LDBWS SOAP client
+- ✅ `soap` library integration
+- ✅ LDBWS types
+
+#### Phase 2: PostgreSQL + LDBWS (v2)
+- ✅ Static data in PostgreSQL
+- ✅ Real-time from LDBWS
+- ✅ Hybrid board
+
+#### Phase 3a: Darwin Push Port (v3)
+- ✅ Kafka topics
+- ✅ Consumer group
+- ✅ Schedule + TS handlers
+
+#### Phase 3b: Redis Caching Layer (v3)
+- ✅ Redis for board caching
+- ✅ Redis for service state
+- ⚠️ Redis eliminated in v4 — not needed
+
+#### Phase 3c: Unified PostgreSQL (v4) ✅ **CURRENT**
+- ✅ All real-time data in PostgreSQL
+- ✅ Single query board
+- ✅ No Redis in data path
+- ✅ Consumer → PostgreSQL → API
+
+#### Phase 3d: Bug Fix Round 1 (April 23, 2026)
+- ✅ Consumer trim errors on null estimated times
+- ✅ Cross-midnight query support
+- ✅ Grace period for delayed trains
+
+#### Phase 3e: Bug Fix Round 2 (April 23, 2026) ✅ **CURRENT**
+- ✅ **Critical**: `errorHandler` returns proper HTTP status codes (400, 404, 429, 500)
+- ✅ **Critical**: Board route uses DB-level time filtering (not JS filtering)
+- ✅ **Critical**: `timetable.ts` uses UK timezone (Europe/London) not UTC
+- ✅ **High**: PP rows excluded at DB level (not filtered in JS)
+- ✅ **High**: `numRows` parameter respected by board route
+- ✅ **High**: `timetable.ts` time filtering done in SQL (not JS)
+- ✅ **High**: Consumer null-safety for estimated times (`.trim()` on null)
+
+---
 
 ## Known Issues (Resolved)
-- ✅ ~~LDBWS matching by RSID~~ — Replaced with hybrid PostgreSQL + Redis architecture
-- ✅ ~~LDBWS `numRows` limit may miss services~~ — PostgreSQL returns all scheduled services
-- ✅ ~~PPTimetable is static — requires daily re-seed~~ — Cron container implemented
-- ✅ ~~TIPLOC→CRS mapping missing~~ — Reference data seeded from PP Timetable `_ref` files
-- ✅ ~~Redis N+1 lookups per board~~ — Eliminated: all data in single PostgreSQL query
-- ✅ ~~Seed overwrites real-time data~~ — Fixed: ON CONFLICT only updates static columns
-- ✅ ~~Consumer `TypeError: Cannot read properties of undefined (reading 'trim')`~~ — Fixed: null-safe `loc.tpl?.trim()` guards in schedule.ts + trainStatus.ts
-- ✅ ~~Consumer FK constraint violation `service_rt_rid_journeys_rid_fk`~~ — Fixed: removed FK from `service_rt` (cache table), DB migrated live
-- ✅ ~~Board status logic: "approaching" misclassified on-time trains~~ — Fixed: `determineTrainStatus()` now returns cancelled → scheduled → at_platform → departed → delayed (>5 min) → on_time. `"approaching"` is derived from `determineCurrentLocation()` (train has left previous stop but not yet arrived at current station)
 
-## Architecture Evolution
+| Issue | Resolution |
+|-------|-----------|
+| Consumer trim errors on null `eta`/`etd` | Added null-safe optional chaining |
+| Board route fetched entire day's services | Moved time filtering to SQL `WHERE` |
+| `timetable.ts` used UTC for "today" | Added `getUkToday()` with Europe/London |
+| `errorHandler` always returned 500 | Introduced `ApiError` class with statusCode |
+| PP rows fetched then discarded | Moved `stopType != 'PP'` to SQL |
+| `numRows` parameter ignored | Now parsed and used in `.slice(0, numRows)` |
 
-### v1: LDBWS only (Step 2)
-- API → LDBWS SOAP → client
+---
 
-### v2: PostgreSQL timetable + LDBWS overlay (Steps 3-4)
-- PostgreSQL: static timetable from PP Timetable
-- LDBWS: real-time overlay
+## Next Steps (Immediate Priority)
 
-### v3: PostgreSQL + Redis hybrid (Phase 3)
-- PostgreSQL: static timetable
-- Redis: Darwin Push Port real-time overlay
-- API merged both sources per request
+### Performance
+- [ ] Add composite indexes for board query pattern
+  - `(crs, journey_rid)` on calling_points
+  - `(journey_rid, stop_type)` on calling_points
+  - `(ssd, is_passenger)` on journeys
+- [ ] Add database query timeout (30s)
+- [ ] Add query result caching (Redis as read-through cache)
 
-### v4: Unified PostgreSQL (Phase 3c) — CURRENT
-- PostgreSQL: single source of truth (static + real-time in `calling_points`)
-- Consumer: Kafka → PostgreSQL (raw SQL via postgres.js)
-- API: Drizzle ORM queries joining `calling_points` + `journeys` + `service_rt` + `location_ref`
-- No Redis in data path
+### Correctness
+- [ ] Fix TS delay calculation for midnight-crossing services
+- [ ] Fix schedule deduplication race condition (move check inside transaction)
+- [ ] Fix `handleDeactivated` to re-throw DB errors
 
-## Active Work: Step 7 — Darwin Push Port Real-Time
+### Frontend
+- [ ] Fix `App.tsx` history corruption (replaceState vs pushState)
+- [ ] Fix board fetch race condition (AbortController)
+- [ ] Fix `CallingPoints.tsx` to use UK timezone
+- [ ] Add React Error Boundary
 
-### Phase 1: Consumer Infrastructure ✅ COMPLETE
-- [x] Add `kafkajs` + `ioredis` to `packages/consumer`
-- [x] Implement SASL_SSL connection with env vars
-- [x] Implement `eachBatch` consumer with message type routing
-- [x] Add JSON envelope parser with type guards
-- [x] Add Dockerfile for consumer
-- [x] Add consumer service to `docker-compose.yml`
-- [x] Add graceful shutdown (SIGINT/SIGTERM)
-- [x] Add in-memory metrics logging
+### API
+- [ ] Fix `timetable.ts` journey detail to use explicit column list (not `select()`)
+- [ ] Fix `stations.ts` CRS lookup to add `.limit(1)`
 
-### Phase 2: Redis Real-Time Store ✅ COMPLETE (superseded by Phase 3c)
-- [x] Define Redis key schemas
-- [x] Implement all message handlers (P0-P3)
-- [x] Deduplication via `generatedAt`
-- [x] Station board index builder
-- [x] Verified in Docker (8+ min, 0 crashes)
-
-### Phase 3: Hybrid Architecture ✅ COMPLETE
-- [x] Merge schedule with existing real-time (not overwrite)
-- [x] Intelligent post-merge filtering
-- [x] Exclude past scheduled-only services
-- [x] Query-param configurable grace minutes
-- [x] Filter PP stops from calling points
-- [x] Trim TIPLOC matching + CRS enrichment
-- [x] Fix `computeDelay`: "On time" → 0
-- [x] Docker rebuild + live verification passed
-
-### Phase 3b: Platform Suppression Fix ✅ COMPLETE
-- [x] Parser `Location` → `locations` rename
-- [x] Parser `plat` object→string normalization
-- [x] TS handler stores suppression flags
-- [x] Board API shows suppressed platforms
-- [x] Frontend suppressed badge
-
-### Phase 3c: Unified PostgreSQL ✅ COMPLETE
-- [x] Schema: real-time columns in `calling_points`
-- [x] Schema: `service_rt` table
-- [x] Schema: `darwin_events` audit table
-- [x] Schema: uniqueIndex on (journey_rid, sequence)
-- [x] Consumer `db.ts`: postgres.js connection
-- [x] Consumer `trainStatus.ts`: writes to PostgreSQL
-- [x] Consumer `schedule.ts`: upserts with dedup, preserves RT columns
-- [x] Consumer `index.ts`: PostgreSQL startup check
-- [x] Consumer `handlers/index.ts`: async, no Redis pipeline
-- [x] API `boards.ts`: single PG query, no Redis
-- [x] API `services.ts`: single PG query, no Redis
-- [x] API `health.ts`: no Redis check
-- [x] API `server.ts`: no Redis import
-- [x] API `seed-timetable.ts`: ON CONFLICT preserving RT columns
-- [x] Full build clean
-
-### Phase 3d: Bug Fix Round (April 23, 2026) ✅ COMPLETE
-- [x] Fix: `platform`/`platformLive` separation — `platform` = booked, `platformLive` = live
-- [x] Fix: Board `type` parameter for server-side departure/arrival filtering
-- [x] Fix: Post-merge filter — no grace for already-departed/arrived trains
-- [x] Fix: Remove redundant "Calling at" column
-- [x] Fix: Column alignment in ServiceRow (explicit widths matching header)
-- [x] Fix: Platform legend moved to top of board
-- [x] Fix: PlatformBadge shared component between board and service detail
-- [x] Fix: ServiceDetail platform alert shows booked→live (not live→live)
-
-### Phase 3e: Consumer Bug Fixes (April 23, 2026) ✅ COMPLETE
-- [x] Fix: Cancelled services not showing as cancelled on board
-  - `handleDeactivated` now propagates cancellation to `calling_points.is_cancelled`
-  - `handleSchedule` propagates cancellation when `schedule.can === true`
-- [x] Fix: Stale calling points from old Darwin schedule updates
-  - Pre-fetch real-time data by TIPLOC before transaction
-  - Delete calling points with `sequence NOT IN` current batch after upsert
-  - Re-apply preserved real-time data to new rows by TIPLOC match
-  - Prevents duplicate TIPLOC entries (e.g., two Euston rows with different times)
-
-## Completed (April 23, 2026 — cont.)
-- [x] Fix: Cancelled services not showing as cancelled on board (see activeContext)
-- [x] Fix: Stale calling points from old Darwin schedule updates (see activeContext)
-- [x] RTT comparison script — `bugs/compare-with-rtt.ts`
-  - Fetches our board data via API and compares against RTT data
-  - Matches services by UID, then STD+destination fallback
-  - Compares: scheduled times, real-time times, cancelled status, platform, destination, operator, hasRealtime, trainStatus
-  - Prints accuracy score, per-field mismatch breakdown, detailed diffs
-  - Exits with error code if accuracy < 90%
-
-## Next Steps
-1. Monitor consumer logs for any new error patterns
-2. Verify board and service detail endpoints return real-time data (end-to-end smoke test)
-3. Test seed preserves real-time columns on re-run
-4. Run NR comparison: `npx tsx bugs/compare-with-national-rail.ts --crs EUS --time 17:00`
-5. Verify platform changes show on correct calling points after sequence disambiguation fix
+---
 
 ## Deferred Work
-- Step 6b — Favourite Connections (origin→destination cards)
-- HTS (Historical Train Service Performance) integration
-- Delay Repay screen
-- Price alerts
-- Crowding data
-- PWA + Service Worker
-- WebSocket real-time push to clients
-- Prometheus metrics + Grafana dashboard
+
+- [ ] Favourite connections (save specific origin-destination pairs)
+- [ ] HTS (High Speed Train) formation data
+- [ ] Delay repay integration
+- [ ] Price alerts
+- [ ] Crowding data
+- [ ] PWA (Progressive Web App)
+- [ ] WebSocket real-time updates
+- [ ] Prometheus metrics
+- [ ] API rate limiting per user

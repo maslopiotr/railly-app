@@ -9,7 +9,7 @@
 import { Router } from "express";
 import { db } from "../db/connection.js";
 import { journeys, callingPoints, locationRef, tocRef } from "../db/schema.js";
-import { eq, and, sql, asc, inArray } from "drizzle-orm";
+import { eq, and, sql, asc, inArray, gte, lte } from "drizzle-orm";
 import { normalizeCrsCode } from "@railly-app/shared";
 
 const router = Router();
@@ -20,6 +20,19 @@ const MAX_CRS_LENGTH = 3;
 /** Only allow alpha chars in CRS codes */
 const SAFE_CRS_REGEX = /^[A-Z]+$/;
 
+/** Get today's date in UK timezone (Europe/London) */
+function getUkToday(): string {
+  const now = new Date();
+  const ukTime = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+  const [day, month, year] = ukTime.split("/");
+  return `${year}-${month}-${day}`;
+}
+
 /**
  * GET /api/v1/stations/:crs/schedule
  *
@@ -27,7 +40,7 @@ const SAFE_CRS_REGEX = /^[A-Z]+$/;
  * Returns passenger services that stop at this station.
  *
  * Query params:
- *   - date (optional, default today, format YYYY-MM-DD)
+ *   - date (optional, default today in UK timezone, format YYYY-MM-DD)
  *   - timeFrom (optional, format HH:MM, filters from this departure time)
  *   - timeTo (optional, format HH:MM, filters to this departure time)
  *   - limit (optional, default 50, max 200)
@@ -46,10 +59,9 @@ router.get("/:crs/schedule", async (req, res, next) => {
       return;
     }
 
-    // Date parameter — default to today
+    // Date parameter — default to today in UK timezone
     const dateParam = req.query.date as string | undefined;
-    const today = new Date();
-    const todayStr = today.toISOString().slice(0, 10); // YYYY-MM-DD
+    const todayStr = getUkToday();
     const date = dateParam || todayStr;
 
     // Validate date format
@@ -58,15 +70,27 @@ router.get("/:crs/schedule", async (req, res, next) => {
       return;
     }
 
-    // Time window filters
+    // Time window filters (applied at DB level)
     const timeFrom = (req.query.timeFrom as string) || undefined;
     const timeTo = (req.query.timeTo as string) || undefined;
 
     // Limit
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
 
+    // Build time filter conditions
+    const timeConditions = [];
+    if (timeFrom) {
+      timeConditions.push(gte(sql`${callingPoints.ptd}::text`, timeFrom));
+      // Also allow arrivals-only services (no ptd) with timeFrom applied to pta
+      timeConditions.push(sql`${callingPoints.ptd} IS NOT NULL`);
+    }
+    if (timeTo) {
+      timeConditions.push(lte(sql`${callingPoints.ptd}::text`, timeTo));
+    }
+
     // Query: find calling points at this CRS for the given date,
-    // excluding passing points (PP) — we only want stops
+    // excluding passing points (PP) — we only want stops,
+    // with time filtering done in the database
     const results = await db
       .select({
         rid: callingPoints.journeyRid,
@@ -91,6 +115,11 @@ router.get("/:crs/schedule", async (req, res, next) => {
           eq(journeys.isPassenger, true),
           // Exclude passing points — only show stops
           sql`${callingPoints.stopType} NOT IN ('PP')`,
+          // Exclude rows without any public time
+          sql`(${callingPoints.pta} IS NOT NULL OR ${callingPoints.ptd} IS NOT NULL)`,
+          // Apply time filters at DB level
+          timeFrom ? sql`${callingPoints.ptd} IS NOT NULL AND ${callingPoints.ptd} >= ${timeFrom}` : undefined,
+          timeTo ? sql`${callingPoints.ptd} IS NOT NULL AND ${callingPoints.ptd} <= ${timeTo}` : undefined,
         ),
       )
       .orderBy(asc(callingPoints.ptd), asc(callingPoints.pta))
@@ -150,22 +179,9 @@ router.get("/:crs/schedule", async (req, res, next) => {
       }
     }
 
-    // Apply time filters if specified
-    let filteredResults = results;
-    if (timeFrom) {
-      filteredResults = filteredResults.filter((r) => {
-        const time = r.ptd || r.pta;
-        return !time || time >= timeFrom;
-      });
-    }
-    if (timeTo) {
-      filteredResults = filteredResults.filter((r) => {
-        const time = r.ptd || r.pta;
-        return !time || time <= timeTo;
-      });
-    }
+    // No more JS-level time filtering — all done in SQL
 
-    const services = filteredResults.map((r) => {
+    const services = results.map((r) => {
       const endpoints = journeyEndpoints.get(r.rid);
       return {
         rid: r.rid,
