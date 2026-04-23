@@ -17,9 +17,10 @@ interface DepartureBoardProps {
   onToggleFavourite?: () => void;
   onBack?: () => void;
   onSelectService?: (service: HybridBoardService) => void;
+  /** Controlled active tab — lifted to App.tsx for persistence across navigation */
+  activeTab: "departures" | "arrivals";
+  onTabChange: (tab: "departures" | "arrivals") => void;
 }
-
-type TabType = "departures" | "arrivals";
 
 /** Classify a service as departure, arrival, or both (through service) */
 function classifyService(service: HybridBoardService): {
@@ -31,8 +32,7 @@ function classifyService(service: HybridBoardService): {
   return { isDeparture, isArrival };
 }
 
-export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack, onSelectService }: DepartureBoardProps) {
-  const [activeTab, setActiveTab] = useState<TabType>("departures");
+export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack, onSelectService, activeTab, onTabChange }: DepartureBoardProps) {
   const [board, setBoard] = useState<HybridBoardResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -164,18 +164,18 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
 
       {/* Tabs */}
       <div className="board-tabs">
-        <button
-          className={`tab ${activeTab === "departures" ? "active" : ""}`}
-          onClick={() => setActiveTab("departures")}
-        >
-          Departures ({departures.length})
-        </button>
-        <button
-          className={`tab ${activeTab === "arrivals" ? "active" : ""}`}
-          onClick={() => setActiveTab("arrivals")}
-        >
-          Arrivals ({arrivals.length})
-        </button>
+          <button
+            className={`tab ${activeTab === "departures" ? "active" : ""}`}
+            onClick={() => onTabChange("departures")}
+          >
+            Departures ({departures.length})
+          </button>
+          <button
+            className={`tab ${activeTab === "arrivals" ? "active" : ""}`}
+            onClick={() => onTabChange("arrivals")}
+          >
+            Arrivals ({arrivals.length})
+          </button>
       </div>
 
       {/* Table header (desktop only) - sticky */}

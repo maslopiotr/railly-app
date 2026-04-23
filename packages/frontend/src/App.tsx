@@ -110,8 +110,8 @@ function App() {
   const { recentStations, addRecentStation } = useRecentStations();
   const { favourites, toggleFavourite, isFavourite } = useFavourites();
 
-  // Track which tab the service was selected from (for detail view)
-  const [serviceTab, setServiceTab] = useState<"departures" | "arrivals">("departures");
+  // Board tab state — lifted so it persists across service detail navigation
+  const [activeTab, setActiveTab] = useState<"departures" | "arrivals">("departures");
 
   // Service refresh state
   const [isServiceRefreshing, setIsServiceRefreshing] = useState(false);
@@ -134,7 +134,7 @@ function App() {
   // Handle service selection
   function handleSelectService(service: HybridBoardService) {
     const isArrival = service.sta !== null && service.std === null;
-    setServiceTab(isArrival ? "arrivals" : "departures");
+    setActiveTab(isArrival ? "arrivals" : "departures");
     setSelectedService(service);
     setLastServiceUpdate(new Date());
     navigateTo(selectedStation, service);
@@ -207,7 +207,7 @@ function App() {
                 setSelectedService(service);
                 setLastServiceUpdate(new Date());
                 const isArrival = service.sta !== null && service.std === null;
-                setServiceTab(isArrival ? "arrivals" : "departures");
+                setActiveTab(isArrival ? "arrivals" : "departures");
               } else {
                 // Service not found, show board only
                 setSelectedService(null);
@@ -240,7 +240,7 @@ function App() {
               setSelectedService(service);
               setLastServiceUpdate(new Date());
               const isArrival = service.sta !== null && service.std === null;
-              setServiceTab(isArrival ? "arrivals" : "departures");
+              setActiveTab(isArrival ? "arrivals" : "departures");
             }
             // Update station name from API data
             if (data.stationName) {
@@ -285,7 +285,7 @@ function App() {
           <div className="w-full max-w-2xl animate-fade-slide-right">
             <ServiceDetail
               service={selectedService}
-              isArrival={serviceTab === "arrivals"}
+              isArrival={activeTab === "arrivals"}
               stationCrs={selectedStation.crsCode}
               onBack={handleBackFromService}
               onRefresh={handleRefreshService}
@@ -301,6 +301,8 @@ function App() {
             onToggleFavourite={() => toggleFavourite(selectedStation)}
             onBack={handleBackFromBoard}
             onSelectService={handleSelectService}
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
           />
         ) : (
           /* Level 1: Landing */

@@ -24,10 +24,12 @@ export async function fetchBoard(
   if (options?.timeWindow) params.set("timeWindow", String(options.timeWindow));
   if (options?.pastWindow) params.set("pastWindow", String(options.pastWindow));
 
+  // Cache-bust to prevent stale cached responses on back-navigation
+  params.set("_t", String(Date.now()));
   const qs = params.toString();
-  const url = `${API_BASE}/stations/${crs.toUpperCase()}/board${qs ? `?${qs}` : ""}`;
+  const url = `${API_BASE}/stations/${crs.toUpperCase()}/board?${qs}`;
 
-  const res = await fetch(url);
+  const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: { message: res.statusText } }));
     throw new Error((err as { error?: { message?: string } }).error?.message ?? `Board fetch failed: ${res.status}`);

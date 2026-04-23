@@ -30,15 +30,38 @@ function formatTime(time: string | null | undefined): string {
   return cleaned;
 }
 
+/** Parse HH:MM to minutes since midnight for delay calc */
+function parseTimeToMinutes(time: string | null | undefined): number | null {
+  if (!time) return null;
+  const t = formatTime(time);
+  const [h, m] = t.split(":").map(Number);
+  if (isNaN(h) || isNaN(m)) return null;
+  return h * 60 + m;
+}
+
+/** Compute delay in minutes between scheduled and estimated/actual */
+function computeDelay(scheduled: string | null, estimated: string | null, actual: string | null): number | null {
+  const ref = actual || estimated;
+  if (!scheduled || !ref || ref === "On time" || ref === "Cancelled") return null;
+  const s = parseTimeToMinutes(scheduled);
+  const e = parseTimeToMinutes(ref);
+  if (s === null || e === null) return null;
+  let d = e - s;
+  if (d < -720) d += 1440;
+  return d;
+}
+
 export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefresh, isRefreshing, lastUpdated }: ServiceDetailProps) {
   const scheduledTime = isArrival ? service.sta : service.std;
   const estimatedTime = isArrival ? service.eta : service.etd;
+  const actualTime = isArrival ? service.actualArrival : service.actualDeparture;
   const destination = isArrival ? service.origin : service.destination;
   const origin = isArrival ? service.destination : service.origin;
 
   const cancelled = service.isCancelled || estimatedTime === "Cancelled" || estimatedTime === "cancelled";
   const onTime = !cancelled && estimatedTime === "On time";
-  const delayed = !cancelled && !onTime && estimatedTime && estimatedTime !== scheduledTime;
+  const delay = computeDelay(scheduledTime, estimatedTime, actualTime);
+  const isDelayed = !cancelled && delay !== null && delay > 1;
 
   return (
     <div className="service-detail flex flex-col h-full">
@@ -59,7 +82,12 @@ export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefres
             <span className="text-xl font-mono font-bold text-white">
               {formatTime(scheduledTime)}
             </span>
-            {estimatedTime && !onTime && !cancelled && (
+            {actualTime && (
+              <span className="text-xl font-mono font-bold text-green-400">
+                {formatTime(actualTime)}
+              </span>
+            )}
+            {!actualTime && estimatedTime && !onTime && !cancelled && (
               <span className="text-xl font-mono font-bold text-amber-400">
                 {formatTime(estimatedTime)}
               </span>
@@ -122,12 +150,12 @@ export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefres
           <strong>Cancelled:</strong> {service.cancelReason}
         </div>
       )}
-      {delayed && service.delayReason && (
+      {isDelayed && service.delayReason && (
         <div className="mx-4 mt-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-300 text-sm">
-          <strong>Delayed:</strong> {service.delayReason}
+          <strong>Delayed {delay} min:</strong> {service.delayReason}
         </div>
       )}
-      {service.platformSource === "altered" && (
+      {service.platformSource === "altered" && service.platformLive && (
         <div className="mx-4 mt-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-300 text-sm">
           Platform altered from {service.platform} to {service.platformLive}
         </div>
@@ -137,6 +165,92 @@ export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefres
           {alert}
         </div>
       ))}
+
+      {/* Current location indicator */}
+      {service.currentLocation && (
+        <div className="mx-4 mt-3 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg text-blue-300 text-sm flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full ${
+            service.currentLocation.status === "at_platform" ? "bg-green-400 animate-pulse" :
+            service.currentLocation.status === "approaching" ? "bg-yellow-400 animate-pulse" :
+            "bg-slate-400"
+          }`} />
+          <span>
+            {service.currentLocation.status === "at_platform" ? "At platform" :
+             service.currentLocation.status === "approaching" ? "Approaching" :
+             "Departed"} {service.currentLocation.name || service.currentLocation.crs || service.currentLocation.tpl}
+          </span>
+        </div>
+      )}
+
+      {/* Time comparison table */}
+      <div className="mx-4 mt-4">
+        <table className="w-full text-sm border-collapse">
+          <thead>
+            <tr className="text-left text-xs text-slate-500 border-b border-slate-700">
+              <th className="py-1 font-medium">Event</th>
+              <th className="py-1 font-medium">Scheduled</th>
+              <th className="py-1 font-medium">Real-time</th>
+              <th className="py-1 font-medium">Delay</th>
+            </tr>
+          </thead>
+          <tbody className="text-slate-300">
+            {service.sta && (
+              <tr className="border-b border-slate-700/50">
+                <td className="py-1.5">Arrival</td>
+                <td className="py-1.5 font-mono">{formatTime(service.sta)}</td>
+                <td className="py-1.5 font-mono">
+                  {service.actualArrival ? (
+                    <span className="text-green-400">{formatTime(service.actualArrival)}</span>
+                  ) : service.eta ? (
+                    <span className={service.eta === "On time" ? "text-green-400" : "text-amber-400"}>
+                      {formatTime(service.eta)}
+                    </span>
+                  ) : (
+                    <span className="text-slate-500">--:--</span>
+                  )}
+                </td>
+                <td className="py-1.5">
+                  {computeDelay(service.sta, service.eta, service.actualArrival) !== null ? (
+                    <span className={computeDelay(service.sta, service.eta, service.actualArrival)! > 0 ? "text-red-400" : "text-green-400"}>
+                      {computeDelay(service.sta, service.eta, service.actualArrival)! > 0 ? "+" : ""}
+                      {computeDelay(service.sta, service.eta, service.actualArrival)} min
+                    </span>
+                  ) : (
+                    <span className="text-slate-500">--</span>
+                  )}
+                </td>
+              </tr>
+            )}
+            {service.std && (
+              <tr>
+                <td className="py-1.5">Departure</td>
+                <td className="py-1.5 font-mono">{formatTime(service.std)}</td>
+                <td className="py-1.5 font-mono">
+                  {service.actualDeparture ? (
+                    <span className="text-green-400">{formatTime(service.actualDeparture)}</span>
+                  ) : service.etd ? (
+                    <span className={service.etd === "On time" ? "text-green-400" : "text-amber-400"}>
+                      {formatTime(service.etd)}
+                    </span>
+                  ) : (
+                    <span className="text-slate-500">--:--</span>
+                  )}
+                </td>
+                <td className="py-1.5">
+                  {computeDelay(service.std, service.etd, service.actualDeparture) !== null ? (
+                    <span className={computeDelay(service.std, service.etd, service.actualDeparture)! > 0 ? "text-red-400" : "text-green-400"}>
+                      {computeDelay(service.std, service.etd, service.actualDeparture)! > 0 ? "+" : ""}
+                      {computeDelay(service.std, service.etd, service.actualDeparture)} min
+                    </span>
+                  ) : (
+                    <span className="text-slate-500">--</span>
+                  )}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
 
       {/* Route info */}
       <div className="mx-4 mt-4 flex items-center gap-2 text-xs text-slate-400">

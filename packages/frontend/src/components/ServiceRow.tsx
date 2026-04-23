@@ -74,6 +74,60 @@ function PlatformBadge({ platform, platformLive, platformSource }: {
   }
 }
 
+/** Status badge with visual color coding */
+function StatusBadge({ status, delayMinutes }: { status: string; delayMinutes: number | null }) {
+  const base = "inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium";
+
+  switch (status) {
+    case "at_platform":
+      return (
+        <span className={`${base} bg-green-500/20 text-green-300 border border-green-500/30`}>
+          <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+          At platform
+        </span>
+      );
+    case "approaching":
+      return (
+        <span className={`${base} bg-yellow-500/20 text-yellow-300 border border-yellow-500/30`}>
+          <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
+          Approaching
+        </span>
+      );
+    case "departed":
+      return (
+        <span className={`${base} bg-slate-500/20 text-slate-300 border border-slate-500/30`}>
+          <span className="w-2 h-2 rounded-full bg-slate-400" />
+          Departed
+        </span>
+      );
+    case "delayed":
+      return (
+        <span className={`${base} bg-red-500/20 text-red-300 border border-red-500/30`}>
+          <span className="w-2 h-2 rounded-full bg-red-400" />
+          {delayMinutes !== null ? `+${delayMinutes} min` : "Delayed"}
+        </span>
+      );
+    case "cancelled":
+      return (
+        <span className={`${base} bg-red-500/20 text-red-300 border border-red-500/30`}>
+          Cancelled
+        </span>
+      );
+    case "on_time":
+      return (
+        <span className={`${base} bg-green-500/10 text-green-400 border border-green-500/20`}>
+          On time
+        </span>
+      );
+    default:
+      return (
+        <span className={`${base} bg-slate-500/10 text-slate-400 border border-slate-500/20`}>
+          Scheduled
+        </span>
+      );
+  }
+}
+
 /** Get the next N calling points after the current station */
 function getNextCallingPoints(
   callingPoints: HybridCallingPoint[],
@@ -97,10 +151,10 @@ function getNextCallingPoints(
 export function ServiceRow({ service, isArrival, stationCrs, onSelect }: ServiceRowProps) {
   const scheduledTime = isArrival ? service.sta : service.std;
   const estimatedTime = isArrival ? service.eta : service.etd;
+  const actualTime = isArrival ? service.actualArrival : service.actualDeparture;
   const destination = isArrival ? service.origin : service.destination;
   const origin = isArrival ? service.destination : service.origin;
 
-  // Determine status display
   const cancelled = service.isCancelled || isCancelled(estimatedTime);
   const onTime = !cancelled && isOnTime(estimatedTime);
 
@@ -118,14 +172,32 @@ export function ServiceRow({ service, isArrival, stationCrs, onSelect }: Service
     >
       {/* Main row */}
       <div className="service-main">
-        {/* Scheduled time */}
-        <div className="service-time">
-          <span className="time-scheduled">{formatTime(scheduledTime)}</span>
-          {estimatedTime && !onTime && !cancelled && (
-            <span className="time-estimated">{formatTime(estimatedTime)}</span>
+        {/* Time column: scheduled + estimated + actual + delay */}
+        <div className="service-time flex flex-col gap-0.5">
+          <span className="time-scheduled text-sm font-mono font-semibold text-white">
+            {formatTime(scheduledTime)}
+          </span>
+
+          {actualTime && (
+            <span className="text-xs font-mono text-green-400">
+              {formatTime(actualTime)}
+            </span>
           )}
-          {onTime && <span className="time-on-time">On time</span>}
-          {cancelled && <span className="time-cancelled">Cancelled</span>}
+
+          {!actualTime && estimatedTime && !onTime && !cancelled && (
+            <span className="text-xs font-mono text-amber-400">
+              {formatTime(estimatedTime)}
+            </span>
+          )}
+
+          {service.delayMinutes !== null && service.delayMinutes > 0 && !cancelled && (
+            <span className="text-[10px] font-medium text-red-400">
+              +{service.delayMinutes} min
+            </span>
+          )}
+
+          {onTime && <span className="text-[10px] font-medium text-green-400">On time</span>}
+          {cancelled && <span className="text-[10px] font-medium text-red-400">Cancelled</span>}
         </div>
 
         {/* Platform */}
@@ -176,14 +248,9 @@ export function ServiceRow({ service, isArrival, stationCrs, onSelect }: Service
           {service.length && <span className="service-length hidden lg:inline">· {service.length} coaches</span>}
         </div>
 
-        {/* Status indicator */}
+        {/* Status indicator — new visual badges */}
         <div className="service-status">
-          {service.hasRealtime && !cancelled && (
-            <span className="realtime-badge" title="Real-time data available">●</span>
-          )}
-          {!service.hasRealtime && (
-            <span className="scheduled-badge" title="Scheduled — no real-time data">◎</span>
-          )}
+          <StatusBadge status={service.trainStatus} delayMinutes={service.delayMinutes} />
         </div>
 
         {/* Navigation chevron */}

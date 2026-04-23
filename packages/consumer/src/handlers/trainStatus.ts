@@ -87,7 +87,7 @@ function buildLocationsFromTS(
     wtd: loc.wtd || null,
     wtp: loc.wtp || null,
     act: null,
-    plat: loc.platform || null,
+    plat: loc.platform?.trim() || null,
     eta: loc.eta || loc.et || null,
     etd: loc.etd || loc.et || null,
     ata: loc.ata || null,
@@ -126,7 +126,7 @@ function mergeTSIntoLocations(
         wtd: tsLoc.wtd || null,
         wtp: tsLoc.wtp || null,
         act: null,
-        plat: tsLoc.platform || null,
+        plat: tsLoc.platform?.trim() || null,
         eta: tsLoc.eta || tsLoc.et || null,
         etd: tsLoc.etd || tsLoc.et || null,
         ata: tsLoc.ata || null,
@@ -141,10 +141,12 @@ function mergeTSIntoLocations(
 
     // Merge updates into existing location
     if (tsLoc.platform !== undefined) {
-      if (existingLoc.plat && tsLoc.platform !== existingLoc.plat) {
+      const newPlat = tsLoc.platform?.trim() || null;
+      const oldPlat = existingLoc.plat?.trim() || null;
+      if (newPlat !== oldPlat && (newPlat !== null || oldPlat !== null)) {
         existingLoc.platformChanged = true;
       }
-      existingLoc.plat = tsLoc.platform;
+      existingLoc.plat = newPlat;
     }
     if (tsLoc.eta !== undefined) existingLoc.eta = tsLoc.eta;
     if (tsLoc.etd !== undefined) existingLoc.etd = tsLoc.etd;

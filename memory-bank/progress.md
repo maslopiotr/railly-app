@@ -56,18 +56,25 @@
 - [x] Fix board indexing (use `tpl` fallback when `crs` is null)
 - [x] Live verification: 8+ minutes, 0 crashes, 6,838 services, 269 boards, 4 station messages
 
-### Phase 3: Hybrid Architecture ✅ COMPLETE (April 22, 2026)
-- [x] Rewrite `boards.ts` to query PostgreSQL master + Redis overlay
-- [x] Rewrite `services.ts` to query PostgreSQL master + Redis overlay
-- [x] Delete LDBWS client (`packages/api/src/services/ldbws.ts`)
-- [x] Remove LDBWS env vars from `docker-compose.yml`
-- [x] Add `DELAY_GRACE_MINUTES = 120` for delayed trains
-- [x] Fix UK-local date handling for cross-midnight
-- [x] Platforms from PostgreSQL `callingPoints.plat`
-- [x] Create `Dockerfile.seed` for daily cron container
-- [x] Create `seed-entrypoint.sh` (immediate seed + cron daemon)
-- [x] Verify TypeScript build clean
-- [x] Verify Docker build clean
+### Phase 3: Hybrid Architecture — Bug Fixes (April 23, 2026)
+
+**Root cause analysis** (see `bugs/audit-report.md` for full detail):
+1. **Real-time fields empty**: `handleSchedule` overwrites Redis `darwin:service:${rid}:locations` with `eta/etd/ata/atd = null`, wiping any real-time data accumulated from prior `TS` messages. Fix: merge schedule base fields with existing real-time fields instead of overwriting.
+2. **Too many trains shown**: Board filter uses only scheduled time (`ptd`/`pta`) and a 120-minute grace period, showing past services that never activated. Fix: apply post-merge intelligent filtering — exclude past services with no real-time data (Darwin never activated them), use `etd`/`eta` when real-time data exists.
+
+**Completed April 23, 2026**:
+- [x] Fix `handleSchedule` to merge with existing Redis data instead of overwriting
+- [x] Add deduplication for schedule messages (skip if `generatedAt` older than stored)
+- [x] Reorder board API: fetch Redis data before filtering
+- [x] Apply intelligent post-merge filter (real-time time > scheduled time)
+- [x] Exclude past scheduled-only services without real-time data
+- [x] Make `DELAY_GRACE_MINUTES` a query parameter (default 60, max 120)
+- [x] Verify service detail real-time merge after fixes
+- [x] Docker rebuild + live Darwin feed verification
+
+**Out of scope for this run** (to be revisited in Phase 4+):
+- Batch PostgreSQL sync of real-time data — user suggested populating Redis real-time into PostgreSQL via batches, then discarding stale data. This would eliminate N+1 Redis lookups per board request and enable pure SQL filtering. **Deferred**: requires new table(s), batch processor, TTL cleanup, schema migrations — significant scope increase beyond Phase 3 bug fixes.
+- TIPLOC→CRS resolution for all Redis locations — partially addressed by existing `locationRef` join; full fix requires consumer-side lookup.
 
 ### Phase 4: Historical Schema
 - [ ] Add `darwin_service_events` table

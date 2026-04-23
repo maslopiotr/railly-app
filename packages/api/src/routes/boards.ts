@@ -15,7 +15,7 @@
 
 import { Router } from "express";
 import { normalizeCrsCode } from "@railly-app/shared";
-import type { HybridBoardService, HybridCallingPoint } from "@railly-app/shared";
+import type { HybridBoardService, HybridCallingPoint, TrainStatus, CurrentLocation } from "@railly-app/shared";
 import type { DarwinServiceState, DarwinServiceLocation } from "@railly-app/shared";
 import { db } from "../db/connection.js";
 import { stations, journeys, callingPoints, tocRef, locationRef } from "../db/schema.js";
@@ -33,9 +33,9 @@ const SAFE_CRS_REGEX = /^[A-Z]+$/;
 /** Maximum services to return */
 const MAX_SERVICES = 100;
 
-/** Grace period (minutes) — how long past scheduled departure a delayed
- *  train remains visible on the board */
-const DELAY_GRACE_MINUTES = 120;
+/** How far back (in minutes) to look for scheduled-only services
+ *  that have no real-time data from Darwin */
+const SCHEDULED_ONLY_GRACE = 15;
 
 /** Get UK-local date and minutes-since-midnight */
 function getUkNow(): { dateStr: string; nowMinutes: number } {
@@ -68,6 +68,98 @@ function parseTimeToMinutes(time: string | null): number | null {
   const mins = parseInt(match[2], 10);
   if (hours > 23 || mins > 59) return null;
   return hours * 60 + mins;
+}
+
+/**
+ * Compute delay in minutes between scheduled and estimated/actual time.
+ * Returns null if either time is missing or unparseable.
+ */
+function computeDelayMinutes(
+  scheduled: string | null,
+  estimated: string | null,
+  actual: string | null,
+): number | null {
+  const actualOrEstimated = actual || estimated;
+  if (!scheduled || !actualOrEstimated) return null;
+  if (actualOrEstimated === "On time" || actualOrEstimated === "Cancelled") return 0;
+
+  const schedMins = parseTimeToMinutes(scheduled);
+  const actualMins = parseTimeToMinutes(actualOrEstimated);
+  if (schedMins === null || actualMins === null) return null;
+
+  let delay = actualMins - schedMins;
+  // Handle midnight crossover (e.g. sched 23:50, actual 00:05 → delay = +15)
+  if (delay < -720) delay += 1440;
+  return delay;
+}
+
+/**
+ * Determine high-level train status for the board row.
+ */
+function determineTrainStatus(
+  isCancelled: boolean,
+  hasRealtime: boolean,
+  rtLoc: DarwinServiceLocation | undefined,
+  std: string | null,
+  eta: string | null,
+): TrainStatus {
+  if (isCancelled) return "cancelled";
+  if (!hasRealtime) return "scheduled";
+
+  // Train is at platform: arrived (ata) but not yet departed (no atd)
+  if (rtLoc?.ata && !rtLoc?.atd) return "at_platform";
+  // Train has departed from this station
+  if (rtLoc?.atd) return "departed";
+
+  const etaMins = parseTimeToMinutes(eta);
+  const stdMins = parseTimeToMinutes(std);
+  if (etaMins !== null && stdMins !== null) {
+    const delay = computeDelayMinutes(std, eta, null);
+    // Approaching: ETA within next 5 minutes and train hasn't arrived yet
+    if (delay !== null && delay <= 5 && delay >= -2) return "approaching";
+    if (delay !== null && delay > 1) return "delayed";
+  }
+
+  return "on_time";
+}
+
+/**
+ * Find where the train is right now by scanning calling points.
+ */
+function determineCurrentLocation(
+  callingPoints: HybridCallingPoint[],
+): CurrentLocation | null {
+  // Find the last stop the train has departed from
+  let lastDepartedIndex = -1;
+  for (let i = 0; i < callingPoints.length; i++) {
+    if (callingPoints[i].atd) {
+      lastDepartedIndex = i;
+    }
+  }
+
+  // If train has departed from a stop, the next one is current or approaching
+  if (lastDepartedIndex >= 0 && lastDepartedIndex < callingPoints.length - 1) {
+    const nextCp = callingPoints[lastDepartedIndex + 1];
+    return {
+      tpl: nextCp.tpl,
+      crs: nextCp.crs,
+      name: nextCp.name,
+      status: nextCp.ata ? "at_platform" : "approaching",
+    };
+  }
+
+  // Check if train is at the first stop (ata but no atd)
+  if (callingPoints.length > 0 && callingPoints[0].ata && !callingPoints[0].atd) {
+    const cp = callingPoints[0];
+    return {
+      tpl: cp.tpl,
+      crs: cp.crs,
+      name: cp.name,
+      status: "at_platform",
+    };
+  }
+
+  return null;
 }
 
 /**
@@ -141,8 +233,10 @@ router.get("/:crs/board", async (req, res) => {
     const earliest = nowMinutes - pastWindow;
     const latest = nowMinutes + timeWindow;
 
-    // For delayed trains, query further back than earliest
-    const queryEarliest = earliest - DELAY_GRACE_MINUTES;
+    // Wide lookback to catch all candidate services (delayed trains may
+    // have scheduled times far in the past). Actual filtering happens
+    // post-merge after fetching Redis real-time data.
+    const queryEarliest = Math.max(0, nowMinutes - 180);
 
     // ── Determine SSD dates to query ─────────────────────────────────────
     // Cross-midnight: if window extends past midnight, query tomorrow's SSD too
@@ -203,30 +297,22 @@ router.get("/:crs/board", async (req, res) => {
       )
       .orderBy(asc(callingPoints.ptd), asc(callingPoints.pta));
 
-    // Filter by time window in JavaScript (DB doesn't have proper time comparison)
-    // Handles cross-midnight: services after midnight are included when window extends past 24:00
+    // Pre-filter: exclude services obviously too old (more than 3 hours ago)
+    // Full intelligent filtering happens post-merge after Redis fetch
     const windowedResults = scheduledResults.filter((svc) => {
       const minutes = parseTimeToMinutes(svc.ptd || svc.pta);
       if (minutes === null) return false;
 
       // Normal case: no midnight crossing
-      if (earliest >= 0 && latest < 1440) {
+      if (queryEarliest >= 0 && latest < 1440) {
         return minutes >= queryEarliest && minutes <= latest;
       }
 
-      // Window extends past midnight — include early morning services (00:00+)
+      // Window extends past midnight
       const tomorrowLatest = latest >= 1440 ? latest - 1440 : -1;
 
-      // Delayed trains from yesterday evening
-      const yesterdayEarliest = queryEarliest < 0 ? queryEarliest + 1440 : -1;
-
-      // Service is in window if:
-      // 1. It's in today's evening portion
       if (minutes >= queryEarliest && minutes < 1440) return true;
-      // 2. It's in tomorrow's early morning portion
       if (tomorrowLatest >= 0 && minutes >= 0 && minutes <= tomorrowLatest) return true;
-      // 3. It's a delayed train from yesterday evening
-      if (yesterdayEarliest >= 0 && minutes >= yesterdayEarliest && minutes < 1440) return true;
 
       return false;
     });
@@ -352,10 +438,55 @@ router.get("/:crs/board", async (req, res) => {
       }
     }
 
+    // ── Post-merge intelligent filter ──────────────────────────────────────
+    const graceMinutes = Math.min(parseInt(req.query.grace as string) || 60, 120);
+
+    const filteredResults = windowedResults.filter((entry) => {
+      const state = serviceStateMap.get(entry.rid);
+      const redisLocs = serviceLocationsMap.get(entry.rid);
+      const rtLoc = redisLocs?.find(
+        (l) => l.tpl === entry.tpl && l.crs === entry.crs
+      ) || redisLocs?.find((l) => l.tpl === entry.tpl);
+
+      const hasRealtime = state !== undefined ||
+        (rtLoc && (rtLoc.eta || rtLoc.etd || rtLoc.ata || rtLoc.atd));
+
+      const schedMinutes = parseTimeToMinutes(entry.ptd || entry.pta);
+      if (schedMinutes === null) return false;
+
+      if (hasRealtime) {
+        // Service has real-time data - use real-time departure/arrival time
+        const rtTime = rtLoc?.atd || rtLoc?.etd || rtLoc?.eta;
+        const rtMinutes = rtTime ? parseTimeToMinutes(rtTime) : null;
+        const effectiveMinutes = rtMinutes !== null ? rtMinutes : schedMinutes;
+
+        const effectiveEarliest = Math.max(0, earliest - graceMinutes);
+        if (effectiveEarliest >= 0 && latest < 1440) {
+          return effectiveMinutes >= effectiveEarliest && effectiveMinutes <= latest;
+        }
+        const tomorrowLatest = latest >= 1440 ? latest - 1440 : -1;
+        if (effectiveMinutes >= effectiveEarliest && effectiveMinutes < 1440) return true;
+        if (tomorrowLatest >= 0 && effectiveMinutes >= 0 && effectiveMinutes <= tomorrowLatest) return true;
+        return false;
+      } else {
+        // No real-time data from Darwin - only show if scheduled time is
+        // in the future or very recent past (services should activate
+        // 30-60 min before departure, so anything > 15 min past is stale)
+        const cutoff = Math.max(0, nowMinutes - SCHEDULED_ONLY_GRACE);
+        if (cutoff >= 0 && latest < 1440) {
+          return schedMinutes >= cutoff && schedMinutes <= latest;
+        }
+        const tomorrowLatest = latest >= 1440 ? latest - 1440 : -1;
+        if (schedMinutes >= cutoff && schedMinutes < 1440) return true;
+        if (tomorrowLatest >= 0 && schedMinutes >= 0 && schedMinutes <= tomorrowLatest) return true;
+        return false;
+      }
+    });
+
     // ── Build HybridBoardService objects ─────────────────────────────────
     const services: HybridBoardService[] = [];
 
-    for (const entry of windowedResults.slice(0, MAX_SERVICES)) {
+    for (const entry of filteredResults.slice(0, MAX_SERVICES)) {
       const rid = entry.rid;
       const endpoints = endpointMap.get(rid);
       const callingPattern = callingPatternMap.get(rid) || [];
@@ -404,10 +535,10 @@ router.get("/:crs/board", async (req, res) => {
       // hasRealtime: any real-time data exists for this service
       const hasRealtime =
         state !== undefined ||
-        rtLoc?.eta !== null ||
-        rtLoc?.etd !== null ||
-        rtLoc?.ata !== null ||
-        rtLoc?.atd !== null ||
+        (rtLoc != null && rtLoc.eta != null) ||
+        (rtLoc != null && rtLoc.etd != null) ||
+        (rtLoc != null && rtLoc.ata != null) ||
+        (rtLoc != null && rtLoc.atd != null) ||
         platformChanged ||
         isCancelled;
 
@@ -426,6 +557,11 @@ router.get("/:crs/board", async (req, res) => {
       // Platform source logic
       const platformSource = getPlatformSource(bookedPlat, livePlat, platformChanged);
       const displayPlatform = platformChanged ? livePlat : (livePlat ?? bookedPlat);
+
+      // Compute derived fields
+      const delayMinutes = computeDelayMinutes(entry.ptd || entry.pta, eta || etd, rtLoc?.ata || rtLoc?.atd || null);
+      const trainStatus = determineTrainStatus(isCancelled, hasRealtime, rtLoc ?? undefined, entry.ptd || entry.pta, eta);
+      const currentLocation = determineCurrentLocation(cpList);
 
       services.push({
         rid,
@@ -463,6 +599,13 @@ router.get("/:crs/board", async (req, res) => {
         adhocAlerts: [],
         serviceId: null,
         length: null,
+
+        // Derived fields for rich UI
+        delayMinutes,
+        trainStatus,
+        currentLocation,
+        actualArrival: rtLoc?.ata || null,
+        actualDeparture: rtLoc?.atd || null,
       });
     }
 

@@ -12,7 +12,7 @@ import type {
   DarwinServiceLocation,
   DarwinServiceState,
 } from "@railly-app/shared";
-import { keys, TTL } from "../redis/client.js";
+import { redis, keys, TTL } from "../redis/client.js";
 import type { ChainableCommander } from "ioredis";
 
 /**
@@ -25,7 +25,15 @@ function toArray<T>(v: T | T[] | undefined): T[] {
 }
 
 /**
+ * Parse ISO timestamp for comparison.
+ */
+function parseTs(ts: string): number {
+  return new Date(ts).getTime();
+}
+
+/**
  * Process a schedule message: store full calling pattern in Redis.
+ * Merges with existing real-time data so TS messages are not overwritten.
  */
 export async function handleSchedule(
   schedule: DarwinSchedule,
@@ -33,6 +41,20 @@ export async function handleSchedule(
   generatedAt: string,
 ): Promise<void> {
   const { rid } = schedule;
+
+  const serviceKey = keys.service(rid);
+  const locKey = keys.serviceLocations(rid);
+
+  // ── Deduplication: skip if stored schedule is newer ─────────────────────
+  const storedTs = await redis.hget(serviceKey, "generatedAt");
+  if (storedTs) {
+    const storedTime = parseTs(storedTs);
+    const incomingTime = parseTs(generatedAt);
+    if (incomingTime < storedTime) {
+      // Stored data is newer — skip this schedule message
+      return;
+    }
+  }
 
   // Darwin sometimes sends a single location as an object instead of an array
   const rawLocations = toArray(schedule.locations);
@@ -55,11 +77,11 @@ export async function handleSchedule(
     source: "schedule",
   };
 
-  // Build locations array
-  const locations: DarwinServiceLocation[] = rawLocations.map(
+  // Build locations array from schedule
+  const scheduleLocations: DarwinServiceLocation[] = rawLocations.map(
     (loc: DarwinScheduleLocation) => ({
       tpl: loc.tpl,
-      crs: null, // Will be resolved later if needed
+      crs: null,
       stopType: loc.stopType,
       pta: loc.pta || null,
       ptd: loc.ptd || null,
@@ -78,14 +100,26 @@ export async function handleSchedule(
     }),
   );
 
-  // Update Redis via pipeline (batch with other messages)
-  const serviceKey = keys.service(rid);
-  const locKey = keys.serviceLocations(rid);
+  // ── Merge with existing real-time data ───────────────────────────────────
+  const existingRaw = await redis.get(locKey);
+  let finalLocations: DarwinServiceLocation[];
 
+  if (existingRaw) {
+    try {
+      const existing = JSON.parse(existingRaw) as DarwinServiceLocation[];
+      finalLocations = mergeScheduleWithExisting(scheduleLocations, existing);
+    } catch {
+      finalLocations = scheduleLocations;
+    }
+  } else {
+    finalLocations = scheduleLocations;
+  }
+
+  // Update Redis via pipeline (batch with other messages)
   pipeline
     .hset(serviceKey, flattenState(state))
     .expire(serviceKey, TTL.service)
-    .set(locKey, JSON.stringify(locations))
+    .set(locKey, JSON.stringify(finalLocations))
     .expire(locKey, TTL.locations);
 
   // Add to active services set for this date
@@ -93,8 +127,8 @@ export async function handleSchedule(
   pipeline.expire(keys.activeServices(state.ssd), TTL.activeSet);
 
   // Build station board indices for each calling point
-  for (let i = 0; i < locations.length; i++) {
-    const loc = locations[i];
+  for (let i = 0; i < finalLocations.length; i++) {
+    const loc = finalLocations[i];
     const locationKey = loc.crs || loc.tpl; // Use CRS if available, otherwise TIPLOC
     if (!locationKey) continue;
 
@@ -110,6 +144,44 @@ export async function handleSchedule(
     pipeline.zadd(boardKey, String(minutes), member);
     pipeline.expire(boardKey, TTL.board);
   }
+}
+
+/**
+ * Merge schedule base data with existing real-time fields.
+ * Schedule provides: tpl, crs, stopType, pta, ptd, wta, wtd, wtp, act, plat
+ * Existing may have:  eta, etd, ata, atd, platformChanged, isCancelled, lateReason
+ */
+function mergeScheduleWithExisting(
+  schedule: DarwinServiceLocation[],
+  existing: DarwinServiceLocation[],
+): DarwinServiceLocation[] {
+  const existingMap = new Map(existing.map((l) => [l.tpl, l]));
+
+  return schedule.map((sched) => {
+    const existingLoc = existingMap.get(sched.tpl);
+    if (!existingLoc) {
+      return sched; // No prior real-time data for this location
+    }
+
+    return {
+      ...sched,
+      // Preserve real-time fields from existing data
+      eta: existingLoc.eta ?? sched.eta,
+      etd: existingLoc.etd ?? sched.etd,
+      ata: existingLoc.ata ?? sched.ata,
+      atd: existingLoc.atd ?? sched.atd,
+      // If schedule has a new platform but existing had a different one, mark changed
+      platformChanged: existingLoc.platformChanged ||
+        (existingLoc.plat !== null &&
+          sched.plat !== null &&
+          existingLoc.plat !== sched.plat),
+      plat: existingLoc.plat ?? sched.plat,
+      // Preserve cancellation/reason data
+      isCancelled: existingLoc.isCancelled || sched.isCancelled,
+      isDelayed: existingLoc.isDelayed || sched.isDelayed,
+      lateReason: existingLoc.lateReason ?? sched.lateReason,
+    };
+  });
 }
 
 /**

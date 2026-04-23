@@ -73,6 +73,8 @@ export type {
   HybridBoardService,
   HybridBoardResponse,
   PlatformSource,
+  TrainStatus,
+  CurrentLocation,
 } from "./types/board.js";
 
 // Utils

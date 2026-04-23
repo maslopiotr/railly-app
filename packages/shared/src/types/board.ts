@@ -112,6 +112,18 @@ export interface HybridBoardService {
   serviceId: string | null;
   /** Length (number of coaches) from LDBWS */
   length: number | null;
+
+  // ── Derived fields for rich UI ──
+  /** Delay in minutes (negative = early). Null if no real-time data */
+  delayMinutes: number | null;
+  /** High-level train status for visual badges */
+  trainStatus: TrainStatus;
+  /** Where the train is right now (null if unknown) */
+  currentLocation: CurrentLocation | null;
+  /** Actual arrival time at this station (ATA) */
+  actualArrival: string | null;
+  /** Actual departure time from this station (ATD) */
+  actualDeparture: string | null;
 }
 
 // ─── Hybrid Board Response ─────────────────────────────────────────────────
@@ -125,4 +137,28 @@ export interface HybridBoardResponse {
   nrccMessages: { Value: string }[];
   /** Services ordered by departure/arrival time */
   services: HybridBoardService[];
+}
+
+// ─── Train Status for Board Row ──────────────────────────────────────────────
+
+/** High-level status of the train for quick visual identification */
+export type TrainStatus =
+  | "on_time"
+  | "delayed"
+  | "at_platform"
+  | "approaching"
+  | "departed"
+  | "cancelled"
+  | "scheduled";
+
+/** Where the train is right now */
+export interface CurrentLocation {
+  /** TIPLOC code */
+  tpl: string;
+  /** CRS code */
+  crs: string | null;
+  /** Location name */
+  name: string | null;
+  /** What the train is doing here */
+  status: "at_platform" | "departed" | "approaching" | "future";
 }

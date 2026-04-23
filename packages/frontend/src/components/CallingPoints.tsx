@@ -1,21 +1,15 @@
 /**
  * CallingPoints — Displays the calling pattern for a hybrid service
  *
- * Shows all stops in a timeline format with both planned times
- * (from timetable) and real-time estimates (from LDBWS overlay).
- *
- * Visual indicators (time-based, Kafka-ready):
- * - Green filled dot: Train has been at this stop
- *   → Now: scheduled/estimated time has passed vs current time
- *   → Later (Kafka): ata/atd actual times will override
- * - Yellow pulsing dot: Next stop the train will reach (first upcoming)
- * - Grey hollow dot: Future stops (after the next one)
- * - Red time + delay: Late arrival/departure
+ * Timeline format with both planned times and real-time estimates.
+ * Enhanced features:
+ * - Platform badges per calling point (booked vs live with visual distinction)
+ * - Visited stops clearly marked with actual arrival/departure times and platform
+ * - Delay per calling point shown as a badge
+ * - Prominent current train position indicator
  *
  * Midnight crossover: Times are normalized to be monotonically increasing
- * based on the calling point sequence. If a stop's raw time ≤ previous stop's
- * raw time, 1440 (24h) is added. If viewing after midnight for a service that
- * started before midnight, nowMinutes is also adjusted.
+ * based on the calling point sequence.
  */
 
 import type { HybridCallingPoint } from "@railly-app/shared";
@@ -48,7 +42,6 @@ function timeToMinutes(time: string | null | undefined): number | null {
 /**
  * Normalize calling point times to be monotonically increasing.
  * If a stop's raw time ≤ previous stop's raw time, add 1440 (next day).
- * Returns an array of normalized minutes parallel to the input points.
  */
 function normalizeCallingPointTimes(points: HybridCallingPoint[]): number[] {
   const normalized: number[] = [];
@@ -59,11 +52,9 @@ function normalizeCallingPointTimes(points: HybridCallingPoint[]): number[] {
     const raw = timeToMinutes(effectiveTime);
 
     if (raw === null) {
-      // No time — carry forward previous + 1 to maintain ordering
       normalized.push(prevMinutes + 1);
       prevMinutes = prevMinutes + 1;
     } else if (raw <= prevMinutes) {
-      // Time went backwards → crossed midnight → add 24h
       normalized.push(raw + 1440);
       prevMinutes = raw + 1440;
     } else {
@@ -75,45 +66,25 @@ function normalizeCallingPointTimes(points: HybridCallingPoint[]): number[] {
   return normalized;
 }
 
-/**
- * Normalize nowMinutes for comparison against a service's normalized times.
- *
- * If we're viewing after midnight (e.g. 00:30 = 30 min) but the service
- * started before midnight (first normalized time > 1440), we need to
- * add 1440 to nowMinutes so the comparison works correctly.
- */
+/** Normalize nowMinutes for services crossing midnight */
 function normalizeNowMinutes(nowMinutes: number, firstNormalizedTime: number): number {
   if (nowMinutes < firstNormalizedTime && firstNormalizedTime > 1200) {
-    // We're after midnight, service started yesterday
     return nowMinutes + 1440;
   }
   return nowMinutes;
 }
 
-/** Calculate delay in minutes between scheduled and estimated */
-function calculateDelay(scheduled: string | null, estimated: string | null): number | null {
-  if (!scheduled || !estimated) return null;
-  if (estimated === "On time") return 0;
-
+/** Calculate delay in minutes between scheduled and estimated/actual */
+function calculateDelay(scheduled: string | null, estimated: string | null, actual: string | null): number | null {
+  const ref = actual || estimated;
+  if (!scheduled || !ref || ref === "On time" || ref === "Cancelled" || ref === "cancelled") return null;
   const schedMins = timeToMinutes(scheduled);
-  const estMins = timeToMinutes(estimated);
-
-  if (schedMins === null || estMins === null) return null;
-
-  // Handle midnight crossover for delay too
-  const delay = estMins - schedMins;
-  return delay < -720 ? delay + 1440 : delay;
+  const refMins = timeToMinutes(ref);
+  if (schedMins === null || refMins === null) return null;
+  const d = refMins - schedMins;
+  return d < -720 ? d + 1440 : d;
 }
 
-/**
- * Determine if a stop is in the past, current, or future.
- *
- * Priority:
- * 1. If ata/atd exist → past (Kafka actual times)
- * 2. Compare normalized time to now → past if time has passed
- * 3. First stop whose time hasn't passed → current (yellow)
- * 4. Everything after → future (grey)
- */
 type StopState = "past" | "current" | "future";
 
 function determineStopState(
@@ -123,19 +94,82 @@ function determineStopState(
   isFirstUpcoming: boolean,
   nowMinutes: number
 ): StopState {
-  // If we have actual times (from Kafka), this stop is definitely past
   if (ata || atd) return "past";
-
-  if (normalizedTime <= nowMinutes) {
-    return "past";
-  }
-
-  // First stop whose time hasn't passed yet
+  if (normalizedTime <= nowMinutes) return "past";
   if (isFirstUpcoming) return "current";
-
   return "future";
 }
 
+/** Platform badge component for a calling point */
+function PlatformBadge({
+  plat,
+  platformLive,
+  isPast,
+}: {
+  plat: string | null;
+  platformLive: string | null;
+  isPast: boolean;
+}) {
+  const bookedPlat = plat?.trim() || null;
+  const livePlat = platformLive?.trim() || null;
+  const displayPlat = livePlat || bookedPlat;
+
+  if (!displayPlat) return null;
+
+  // If live differs from booked, show both
+  if (livePlat && bookedPlat && livePlat !== bookedPlat) {
+    return (
+      <span className="inline-flex items-center gap-0.5 text-[11px] font-mono">
+        <span className={`px-1 rounded line-through opacity-60 ${isPast ? "bg-slate-700 text-slate-500" : "bg-slate-700 text-slate-400"}`}>
+          {bookedPlat}
+        </span>
+        <span className="text-slate-500">→</span>
+        <span className={`px-1 rounded ${isPast ? "bg-green-900 text-green-300" : "bg-blue-900 text-blue-300"}`}>
+          {livePlat}
+        </span>
+      </span>
+    );
+  }
+
+  // Single platform
+  return (
+    <span className={`text-[11px] font-mono px-1 rounded ${
+      livePlat
+        ? isPast
+          ? "bg-green-900 text-green-300"
+          : "bg-blue-900 text-blue-300"
+        : isPast
+          ? "bg-slate-700 text-slate-500"
+          : "bg-slate-700 text-slate-400"
+    }`}>
+      {displayPlat}
+    </span>
+  );
+}
+
+/** Delay badge showing minutes late/early */
+function DelayBadge({ delay }: { delay: number | null }) {
+  if (delay === null || delay === 0) return null;
+  const isLate = delay > 0;
+  return (
+    <span className={`text-[10px] font-mono font-medium ${
+      isLate ? "text-red-400" : "text-green-400"
+    }`}>
+      {isLate ? `+${delay}` : delay} min
+    </span>
+  );
+}
+
+/** Checkmark icon for visited stops */
+function CheckIcon() {
+  return (
+    <svg className="w-3 h-3 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+    </svg>
+  );
+}
+
+/** Individual calling point row */
 function CallingPointRow({
   name,
   crs,
@@ -149,6 +183,7 @@ function CallingPointRow({
   platformLive,
   isCancelled,
   stopState,
+  isLast,
 }: {
   name: string | null;
   crs: string | null;
@@ -162,48 +197,55 @@ function CallingPointRow({
   platformLive: string | null;
   isCancelled: boolean;
   stopState: StopState;
+  isLast: boolean;
 }) {
   const displayName = name || crs || "Unknown";
   const displayCrs = crs || "";
 
-  // Determine which times to show
-  const showDeparture = ptd !== null;
-
-  const scheduledTime = formatTime(showDeparture ? ptd : pta);
-  const estimatedTime = formatTime(showDeparture ? etd : eta);
-  const actualTime = formatTime(showDeparture ? atd : ata);
-
-  // Calculate delay
-  const delay = calculateDelay(scheduledTime, estimatedTime);
-  const isOnTime = estimatedTime === "On time" || delay === 0;
-  const isLate = delay !== null && delay > 0;
-
-  // Platform display
-  const displayPlatform = platformLive || plat;
-
   const isCurrent = stopState === "current";
   const isPast = stopState === "past";
+  const visited = !!ata || !!atd;
+
+  // Determine which times to show: prefer departure times, fall back to arrival
+  const hasDeparture = ptd !== null || etd !== null || atd !== null;
+  const scheduled = formatTime(hasDeparture ? ptd : pta);
+  const estimated = formatTime(hasDeparture ? etd : eta);
+  const actual = formatTime(hasDeparture ? atd : ata);
+
+  // Delay: use actual vs scheduled, or estimated vs scheduled
+  const delay = calculateDelay(hasDeparture ? ptd : pta, estimated, actual);
 
   return (
     <div className={`flex items-start gap-3 group ${isCurrent ? "current-stop" : ""}`}>
-      {/* Timeline dot */}
+      {/* Timeline column */}
       <div className="flex flex-col items-center">
+        {/* Dot */}
         <div
-          className={`w-3 h-3 rounded-full border-2 mt-1.5 ${
+          className={`w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center mt-1.5 shrink-0 ${
             isCancelled
               ? "border-red-500 bg-red-500"
-              : isPast
+              : visited
                 ? "border-green-500 bg-green-500"
-                : isCurrent
-                  ? "border-yellow-400 bg-yellow-400 animate-pulse"
-                  : "border-slate-500 bg-slate-800"
+                : isPast
+                  ? "border-green-500/60 bg-green-500/20"
+                  : isCurrent
+                    ? "border-yellow-400 bg-yellow-400 animate-pulse"
+                    : "border-slate-600 bg-slate-800"
           }`}
-        />
-        <div className={`w-0.5 h-6 ${isPast ? "bg-green-600" : "bg-slate-700"}`} />
+        >
+          {visited && <CheckIcon />}
+        </div>
+        {/* Connector line */}
+        {!isLast && (
+          <div className={`w-0.5 flex-1 min-h-[1.5rem] ${
+            isPast ? "bg-green-600" : "bg-slate-700"
+          }`} />
+        )}
       </div>
 
       {/* Stop info */}
-      <div className="flex-1 min-w-0 pb-1">
+      <div className="flex-1 min-w-0 pb-3">
+        {/* Name row with platform + CRS */}
         <div className="flex items-center justify-between gap-2">
           <span className={`text-sm font-medium truncate ${
             isCancelled
@@ -211,51 +253,67 @@ function CallingPointRow({
               : isCurrent
                 ? "text-yellow-300"
                 : isPast
-                  ? "text-slate-300"
+                  ? visited
+                    ? "text-green-300"
+                    : "text-slate-300"
                   : "text-slate-200"
           }`}>
             {displayName}
-          </span>
-          <div className="flex items-center gap-2 shrink-0">
-            {displayPlatform && (
-              <span className={`text-[11px] font-mono px-1 rounded ${
-                platformLive ? "bg-blue-900 text-blue-300" : "bg-slate-700 text-slate-400"
-              }`}>
-                {displayPlatform}
+            {isCurrent && (
+              <span className="ml-2 text-[10px] font-medium text-yellow-400 uppercase tracking-wider">
+                Next
               </span>
             )}
+          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            <PlatformBadge plat={plat} platformLive={platformLive} isPast={isPast} />
             <span className="text-[11px] font-mono text-slate-600">{displayCrs}</span>
           </div>
         </div>
-        <div className="flex items-center gap-2 text-xs">
-          {/* Show actual time if available (train has been there — Kafka) */}
-          {actualTime && (
-            <span className="text-green-400 font-medium">{actualTime}</span>
-          )}
 
-          {/* Show scheduled time */}
-          {scheduledTime && !actualTime && (
-            <span className="text-slate-400">{scheduledTime}</span>
-          )}
-
-          {/* Show estimated time with delay indicator */}
-          {estimatedTime && !isCancelled && !actualTime && (
-            <span className={`font-mono ${
-              isOnTime
-                ? "text-green-400"
-                : isLate
-                  ? "text-red-400"
-                  : "text-slate-400"
-            }`}>
-              {estimatedTime}
-              {isLate && delay !== null && (
-                <span className="text-red-400 ml-1">(+{delay})</span>
-              )}
-            </span>
-          )}
-
+        {/* Time row */}
+        <div className="flex items-center gap-2 mt-0.5">
+          {/* Cancelled */}
           {isCancelled && (
-            <span className="text-red-400 font-medium">Cancelled</span>
+            <span className="text-xs text-red-400 font-medium">Cancelled</span>
+          )}
+
+          {/* Not cancelled — show times */}
+          {!isCancelled && (
+            <>
+              {/* Actual time (visited) */}
+              {actual && (
+                <span className="text-xs font-mono font-medium text-green-400">
+                  {actual}
+                </span>
+              )}
+
+              {/* Scheduled time (strikethrough if visited) */}
+              {scheduled && (
+                <span className={`text-xs font-mono ${actual ? "text-slate-500 line-through" : "text-slate-400"}`}>
+                  {scheduled}
+                </span>
+              )}
+
+              {/* Estimated time (if not visited) */}
+              {estimated && !actual && (
+                <span className={`text-xs font-mono ${
+                  estimated === "On time" ? "text-green-400" : "text-amber-400"
+                }`}>
+                  {estimated}
+                </span>
+              )}
+
+              {/* Delay badge */}
+              {!actual && <DelayBadge delay={delay} />}
+
+              {/* Visited status text */}
+              {actual && (
+                <span className="text-[10px] text-green-400/80">
+                  {atd ? "Departed" : "Arrived"}
+                </span>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -272,40 +330,32 @@ export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
     );
   }
 
-  // Normalize calling point times to handle midnight crossover
   const normalizedTimes = normalizeCallingPointTimes(points);
 
-  // Get current time and normalize for comparison
   const now = new Date();
   const rawNowMinutes = now.getHours() * 60 + now.getMinutes();
   const nowMinutes = normalizeNowMinutes(rawNowMinutes, normalizedTimes[0]);
 
-  // Find the first "upcoming" stop index (for yellow dot)
+  // Find first upcoming stop (for yellow dot)
   let firstUpcomingIndex = -1;
   for (let i = 0; i < points.length; i++) {
     const cp = points[i];
-    // Skip passing points
     if (cp.stopType === "PP") continue;
-
-    // If we have actual times, this is past
     if (cp.ata || cp.atd) continue;
-
-    // Use normalized time for comparison
     if (normalizedTimes[i] > nowMinutes) {
       firstUpcomingIndex = i;
       break;
     }
   }
 
-  // Find current station in the list (for highlighting)
   const currentStationIndex = currentCrs
     ? points.findIndex(cp => cp.crs === currentCrs)
     : -1;
 
   return (
     <div className="py-2 px-1">
-      <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1.5 font-semibold">
-        Route
+      <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2 font-semibold">
+        Calling Points
       </div>
       {points.map((cp, i) => {
         const isFirstUpcoming = i === firstUpcomingIndex;
@@ -318,9 +368,7 @@ export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
           nowMinutes
         );
 
-        // Override: only mark current station as "current" (yellow)
-        // if the time-based state is "future" (train hasn't reached it yet).
-        // If the train has already departed, keep it as "past" (green).
+        // Override current station to "current" if it's in the future
         const finalState: StopState =
           i === currentStationIndex && stopState === "future"
             ? "current"
@@ -341,6 +389,7 @@ export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
             platformLive={cp.platformLive}
             isCancelled={cp.isCancelled}
             stopState={finalState}
+            isLast={i === points.length - 1}
           />
         );
       })}
