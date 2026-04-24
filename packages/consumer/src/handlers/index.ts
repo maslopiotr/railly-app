@@ -20,6 +20,7 @@ import type {
 } from "@railly-app/shared";
 import { handleSchedule } from "./schedule.js";
 import { handleTrainStatus } from "./trainStatus.js";
+import { sql } from "../db.js";
 
 /**
  * Metrics counters (simple in-memory; Prometheus will replace these).
@@ -50,7 +51,64 @@ function extractDiagnosticRid(message: DarwinMessage): string | undefined {
 }
 
 /**
+ * Log a Darwin message to the darwin_events audit table.
+ */
+async function logDarwinEvent(
+  messageType: string,
+  rid: string | null,
+  rawJson: string,
+  generatedAt: string,
+): Promise<void> {
+  try {
+    await sql`
+      INSERT INTO darwin_events (
+        message_type, rid, raw_json, generated_at, processed_at
+      ) VALUES (
+        ${messageType}, ${rid}, ${rawJson.slice(0, 19990)}, ${generatedAt}, NOW()
+      )
+    `;
+  } catch (err) {
+    // Don't let audit logging fail the main processing
+    console.error("   ⚠️ Audit log failed:", (err as Error).message);
+  }
+}
+
+/**
+ * Log a structured error to the darwin_errors table.
+ * Uses INSERT ... ON CONFLICT DO NOTHING to avoid duplicates in the same second.
+ */
+async function logDarwinError(
+  messageType: string,
+  rid: string | null,
+  error: Error,
+  rawJson: string,
+  retryCount = 0,
+): Promise<void> {
+  const errorCode = (error as unknown as Record<string, unknown>).code as string | undefined
+    ?? error.name
+    ?? "UNKNOWN";
+  const errorMessage = error.message.slice(0, 2000);
+  const stackTrace = error.stack?.slice(0, 1990) ?? null;
+
+  try {
+    await sql`
+      INSERT INTO darwin_errors (
+        message_type, rid, error_code, error_message, raw_json, stack_trace, retry_count
+      ) VALUES (
+        ${messageType}, ${rid}, ${errorCode}, ${errorMessage},
+        ${rawJson.slice(0, 4990)}, ${stackTrace}, ${retryCount}
+      )
+    `;
+  } catch (logErr) {
+    // Last resort: don't let error logging itself crash the consumer
+    console.error("   ⚠️ Error log insert failed:", (logErr as Error).message);
+  }
+}
+
+/**
  * Process a single parsed Darwin message envelope.
+ * Each inner message is handled independently — failure of one does not
+ * block others in the same envelope.
  */
 export async function handleDarwinMessage(
   message: DarwinMessage,
@@ -59,27 +117,50 @@ export async function handleDarwinMessage(
 
   metrics.messagesReceived++;
 
+  const rid = extractDiagnosticRid(message);
+  const rawJson = JSON.stringify(message);
+
   try {
     // --- P0: Critical path ---
     if (message.schedule) {
       for (const s of message.schedule) {
-        await handleSchedule(s, generatedAt);
-        incrementType("schedule");
+        try {
+          await handleSchedule(s, generatedAt);
+          incrementType("schedule");
+        } catch (err) {
+          const error = err instanceof Error ? err : new Error(String(err));
+          console.error(`   ❌ Schedule handler error for ${s.rid}:`, error.message);
+          metrics.messagesErrored++;
+          await logDarwinError("schedule", s.rid ?? null, error, JSON.stringify(s));
+        }
       }
     }
 
     if (message.TS) {
       for (const ts of message.TS) {
-        await handleTrainStatus(ts, generatedAt);
-        incrementType("TS");
+        try {
+          await handleTrainStatus(ts, generatedAt);
+          incrementType("TS");
+        } catch (err) {
+          const error = err instanceof Error ? err : new Error(String(err));
+          console.error(`   ❌ TS handler error for ${ts.rid}:`, error.message);
+          metrics.messagesErrored++;
+          await logDarwinError("TS", ts.rid ?? null, error, JSON.stringify(ts));
+        }
       }
     }
 
     if (message.deactivated) {
       for (const d of message.deactivated) {
-        // Deactivated: mark service_rt as cancelled, clear calling_points real-time
-        await handleDeactivated(d.rid);
-        incrementType("deactivated");
+        try {
+          await handleDeactivated(d.rid);
+          incrementType("deactivated");
+        } catch (err) {
+          const error = err instanceof Error ? err : new Error(String(err));
+          console.error(`   ❌ Deactivated handler error for ${d.rid}:`, error.message);
+          metrics.messagesErrored++;
+          await logDarwinError("deactivated", d.rid ?? null, error, JSON.stringify(d));
+        }
       }
     }
 
@@ -152,7 +233,6 @@ export async function handleDarwinMessage(
     metrics.messagesProcessed++;
   } catch (err) {
     metrics.messagesErrored++;
-    const rid = extractDiagnosticRid(message);
     const error = err instanceof Error ? err : new Error(String(err));
     console.error(
       `   ❌ Error processing Darwin message (type: ${message.type}, rid: ${rid ?? "unknown"}):`,
@@ -161,8 +241,16 @@ export async function handleDarwinMessage(
     if (error.stack) {
       console.error("   📚 Stack:", error.stack.split("\n").slice(0, 4).join("\n"));
     }
-    // Don't throw — we want to continue processing subsequent messages
+    await logDarwinError(message.type ?? "unknown", rid ?? null, error, rawJson);
   }
+
+  // Log to audit table (fire-and-forget)
+  const messageType = message.schedule ? "schedule"
+    : message.TS ? "TS"
+    : message.deactivated ? "deactivated"
+    : message.OW ? "OW"
+    : "unknown";
+  await logDarwinEvent(messageType, rid ?? null, rawJson, generatedAt);
 }
 
 function incrementType(type: string): void {
@@ -171,24 +259,20 @@ function incrementType(type: string): void {
 
 // ── Deactivated handler ───────────────────────────────────────────────────────
 
-import { sql } from "../db.js";
-
 async function handleDeactivated(rid: string): Promise<void> {
-  try {
-    await sql`
+  await sql.begin(async (tx) => {
+    await tx`
       UPDATE service_rt
       SET is_cancelled = true, last_updated = NOW()
       WHERE rid = ${rid}
     `;
-    await sql`
+    await tx`
       UPDATE calling_points
       SET is_cancelled = true
       WHERE journey_rid = ${rid}
     `;
-    console.log(`   🗑️ Deactivated: ${rid}`);
-  } catch (err) {
-    console.error(`   ❌ Deactivated failed for ${rid}:`, (err as Error).message);
-  }
+  });
+  console.log(`   🗑️ Deactivated: ${rid}`);
 }
 
 // ── Station Message handler (P1) ──────────────────────────────────────────────

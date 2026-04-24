@@ -159,6 +159,41 @@ export function parseDarwinMessage(raw: Buffer | string | null): DarwinMessage |
               console.warn("   ⚠️ TS location missing tpl (raw):", JSON.stringify(l).slice(0, 200));
             }
             normalizePlatform(l);
+
+            // Map Darwin's generic `et` field to the correct specific field.
+            // Darwin sends `et` when the location only has one meaningful time.
+            // Use isPass/isOrigin/isDestination to determine which:
+            //   - isPass=true OR (isOrigin=true AND isDestination!=true) → et is a departure (etd)
+            //   - isDestination=true AND isOrigin!=true → et is an arrival (eta)
+            //   - Otherwise, if both pta/wta and ptd/wtd exist, keep et as fallback for both
+            if (l.et !== undefined && l.et !== null) {
+              const etVal = String(l.et).trim();
+              if (etVal) {
+                const isPass = l.isPass === true;
+                const isOrigin = l.isOrigin === true;
+                const isDest = l.isDestination === true;
+                if (isPass || (isOrigin && !isDest)) {
+                  if (!l.etd) l.etd = etVal;
+                } else if (isDest && !isOrigin) {
+                  if (!l.eta) l.eta = etVal;
+                } else {
+                  // Fallback: apply to whichever is missing
+                  if (!l.etd) l.etd = etVal;
+                  if (!l.eta) l.eta = etVal;
+                }
+                // Do NOT delete l.et — keep it for reference
+              }
+            }
+
+            // Extract lateReason from TS location
+            if (l.lateReason !== undefined) {
+              const lr = l.lateReason as Record<string, unknown>;
+              if (lr?.reasontext !== undefined) {
+                l.delayReason = String(lr.reasontext);
+              } else if (lr?.code !== undefined) {
+                l.delayReason = String(lr.code);
+              }
+            }
           }
         }
       }

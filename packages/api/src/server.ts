@@ -104,6 +104,6 @@ process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
 app.listen(PORT, () => {
   console.log(
-    `[${new Date().toISOString()}] [PID:${process.pid}] 🚂 Rail Buddy API running on port ${PORT}`,
+    `[RESTART] [${new Date().toISOString()}] [PID:${process.pid}] 🚂 Rail Buddy API running on port ${PORT}`,
   );
 });

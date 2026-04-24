@@ -8,6 +8,7 @@ import {
   index,
   uniqueIndex,
   boolean,
+  text,
 } from "drizzle-orm/pg-core";
 
 /**
@@ -57,6 +58,7 @@ export const journeys = pgTable(
     index("idx_journeys_uid_ssd").on(table.uid, table.ssd),
     index("idx_journeys_toc").on(table.toc),
     index("idx_journeys_ssd").on(table.ssd),
+    index("idx_journeys_ssd_passenger").on(table.ssd, table.isPassenger),
   ],
 );
 
@@ -97,8 +99,12 @@ export const callingPoints = pgTable(
     livePlat: varchar("live_plat", { length: 5 }), // Live platform from Darwin
     isCancelled: boolean("is_cancelled").default(false).notNull(),
     delayMinutes: integer("delay_minutes"), // Computed delay vs scheduled
+    delayReason: varchar("delay_reason", { length: 100 }), // Per-location delay reason from TS
+    cancelReason: varchar("cancel_reason", { length: 100 }), // Per-location cancel reason from schedule
     platIsSuppressed: boolean("plat_is_suppressed").default(false).notNull(),
+    dayOffset: integer("day_offset").default(0).notNull(), // 0=same day as ssd, 1=next day, 2=day after
     updatedAt: timestamp("updated_at", { withTimezone: true }), // Last Darwin message
+    tsGeneratedAt: timestamp("ts_generated_at", { withTimezone: true }), // Last TS message timestamp (for dedup)
   },
   (table) => [
     index("idx_calling_points_journey_rid").on(table.journeyRid),
@@ -107,6 +113,12 @@ export const callingPoints = pgTable(
     uniqueIndex("idx_calling_points_journey_rid_sequence").on(
       table.journeyRid,
       table.sequence,
+    ),
+    // Composite indexes for board query patterns
+    index("idx_calling_points_crs_journey_rid").on(table.crs, table.journeyRid),
+    index("idx_calling_points_journey_rid_stop_type").on(
+      table.journeyRid,
+      table.stopType,
     ),
   ],
 );
@@ -129,10 +141,14 @@ export const serviceRt = pgTable(
     cancelReason: varchar("cancel_reason", { length: 100 }),
     delayReason: varchar("delay_reason", { length: 100 }),
     platform: varchar("platform", { length: 5 }), // Live platform at origin/head
-    generatedAt: timestamp("generated_at", { withTimezone: true }), // Darwin timestamp
+    generatedAt: timestamp("generated_at", { withTimezone: true }), // Schedule message timestamp (for schedule dedup)
+    tsGeneratedAt: timestamp("ts_generated_at", { withTimezone: true }), // TS message timestamp (for TS dedup)
     lastUpdated: timestamp("last_updated", { withTimezone: true }).defaultNow(),
   },
-  (table) => [index("idx_service_rt_rid").on(table.rid)],
+  (table) => [
+    index("idx_service_rt_rid").on(table.rid),
+    index("idx_service_rt_last_updated").on(table.lastUpdated),
+  ],
 );
 
 /**
@@ -145,7 +161,7 @@ export const darwinEvents = pgTable(
   {
     id: serial("id").primaryKey(),
     messageType: varchar("message_type", { length: 20 }).notNull(), // TS, schedule, deactivated, OW, etc.
-    rid: varchar("rid", { length: 20 }).notNull(),
+    rid: varchar("rid", { length: 20 }), // Nullable — some message types (formationLoading) have no RID
     rawJson: varchar("raw_json", { length: 20000 }), // Truncated raw message
     generatedAt: timestamp("generated_at", { withTimezone: true }), // From Darwin message
     receivedAt: timestamp("received_at", { withTimezone: true }).defaultNow(),
@@ -155,6 +171,34 @@ export const darwinEvents = pgTable(
     index("idx_darwin_events_rid").on(table.rid),
     index("idx_darwin_events_message_type").on(table.messageType),
     index("idx_darwin_events_received_at").on(table.receivedAt),
+  ],
+);
+
+/**
+ * Darwin errors — structured log of every consumer failure
+ * Used for debugging, replay, and alerting.
+ * Partitioned by day; old partitions dropped after retention period.
+ */
+export const darwinErrors = pgTable(
+  "darwin_errors",
+  {
+    id: serial("id").primaryKey(),
+    messageType: varchar("message_type", { length: 20 }).notNull(),
+    rid: varchar("rid", { length: 20 }),
+    errorCode: varchar("error_code", { length: 100 }), // e.g. "UNDEFINED_VALUE", "FK_VIOLATION"
+    errorMessage: text("error_message"), // Full error message
+    rawJson: varchar("raw_json", { length: 5000 }), // Truncated message that caused the error
+    stackTrace: text("stack_trace"), // First 2000 chars of stack
+    receivedAt: timestamp("received_at", { withTimezone: true }).defaultNow(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }), // When fixed (null = unresolved)
+    retryCount: integer("retry_count").default(0),
+  },
+  (table) => [
+    index("idx_darwin_errors_rid").on(table.rid),
+    index("idx_darwin_errors_message_type").on(table.messageType),
+    index("idx_darwin_errors_received_at").on(table.receivedAt),
+    index("idx_darwin_errors_error_code").on(table.errorCode),
+    index("idx_darwin_errors_resolved_at").on(table.resolvedAt),
   ],
 );
 
@@ -201,3 +245,5 @@ export type NewServiceRt = typeof serviceRt.$inferInsert;
 export type ServiceRtRow = typeof serviceRt.$inferSelect;
 /** Type for inserting a darwin_events row */
 export type NewDarwinEvent = typeof darwinEvents.$inferInsert;
+/** Type for inserting a darwin_errors row */
+export type NewDarwinError = typeof darwinErrors.$inferInsert;

@@ -4,12 +4,8 @@
 - **Runtime**: Node.js 24.x, TypeScript 5.8+/6.x, ESM modules
 - **Backend**: Express 4.21, Helmet, CORS, Drizzle ORM, postgres.js, tsx (dev)
 - **Frontend**: Vite 8.x, React 19.x, Tailwind CSS 4.x (`@tailwindcss/vite`), History API routing
-- **Infrastructure**: Docker Compose (PostgreSQL 17, Redis 7, API, nginx+frontend)
+- **Infrastructure**: Docker Compose (PostgreSQL 17, Kafka, Zookeeper, API, Consumer, nginx+frontend)
 - **Shared**: Pure TypeScript types + utilities, no runtime deps
-
-## LDBWS Subscriptions
-- **Board**: `GetArrDepBoardWithDetails/{crs}` — env: `LIVE_ARRIVAL_DEPARTURE_BOARDS_*`
-- **Service**: `GetServiceDetails/{serviceid}` — env: `SERVICE_DETAILS_*`
 
 ## Build & Run
 ```bash
@@ -23,7 +19,7 @@ npm run docker:rebuild   # rebuild Docker after changes
 ## Constraints
 - Self-hosted (Hetzner, Docker Compose), free/open-source only
 - No Next.js, no Supabase — plain SPA + self-hosted DB
-- Darwin data feeds (Kafka PubSub + LDB APIs)
+- Darwin data feeds (Kafka Push Port)
 - PWA-first, mobile-responsive, WCAG 2.1 AA target
 
 ## Docker Rebuild Rules
@@ -37,10 +33,11 @@ npm run docker:rebuild   # rebuild Docker after changes
 - **Format**: JSON (human-readable, easy to debug)
 - **Auth**: SASL_SSL (SCRAM-SHA-512 mechanism)
 - **Client**: KafkaJS (Node.js) in `packages/consumer/src/index.ts`
-- **Processing**: `eachBatch` with pipelined Redis updates, offset resolution per message
-- **Parser**: `packages/consumer/src/parser.ts` — JSON envelope parser with `uR`/`sR` type guards
-- **Router**: `packages/consumer/src/handlers/index.ts` — routes all 12 message types (P0-P3)
-- **Retention**: Kafka ~5 minutes; Redis AOF for durability
+- **Processing**: `eachBatch` with `autoCommit: false`, manual gap-aware offset commits
+- **Parser**: `packages/consumer/src/parser.ts` — JSON STOMP envelope parser with `uR`/`sR` type guards, `et` field mapping
+- **Router**: `packages/consumer/src/handlers/index.ts` — routes all message types with per-message error isolation
+- **Retry**: 3 attempts with exponential backoff per message before skipping
+- **Retention**: Kafka ~5 minutes; PostgreSQL is durable store
 - **Group ID**: `railly-consumer` (configurable via `KAFKA_GROUP_ID`)
 
 ## Consumer Environment Variables
@@ -52,26 +49,23 @@ KAFKA_USERNAME=your-username
 KAFKA_PASSWORD=your-password
 KAFKA_SESSION_TIMEOUT_MS=45000
 KAFKA_HEARTBEAT_INTERVAL_MS=3000
-REDIS_HOST=redis
-REDIS_PORT=6379
-REDIS_PASSWORD=your-password
+DATABASE_URL=postgres://user:pass@postgres:5432/railly
 METRICS_INTERVAL_MS=30000
 ```
 
-## Redis Configuration
-- **Image**: `redis:7` with AOF persistence
-- **Command**: `--appendonly yes --appendfsync everysec --auto-aof-rewrite-percentage 100 --auto-aof-rewrite-min-size 64mb`
-- **Memory policy**: `allkeys-lru` with maxmemory limit
-- **TTL strategy**: 48h on service/locations/board keys, 6h on station messages, 48h on active/deactivated sets
-- **Client**: `ioredis` with lazy connect, retry strategy, pipeline batching
+## Consumer Database (PostgreSQL)
+- **Client**: `postgres.js` (raw SQL) for high-volume writes
+- **Pattern**: `sql.begin()` transactions for schedule/TS message processing
+- **Deduplication**: `FOR UPDATE` lock on `service_rt` row inside transaction
+- **Audit**: Every message logged to `darwin_events` table
 
 ## Consumer Handlers
 | Handler | File | Priority | Description |
 |---------|------|----------|-------------|
-| `schedule` | `handlers/schedule.ts` | P0 | Stores full calling pattern, builds board index |
-| `TS` | `handlers/trainStatus.ts` | P0 | Merges forecasts/actuals/platforms into locations |
-| `deactivated` | `handlers/deactivated.ts` | P0 | Removes from active set, cleans board indices |
-| `OW` | `handlers/stationMessage.ts` | P1 | Stores station messages per-CRS |
+| `schedule` | `handlers/schedule.ts` | P0 | Upserts journeys + calling points with real-time preservation, dedup via `generated_at` |
+| `TS` | `handlers/trainStatus.ts` | P0 | Updates calling points by composite key `(tpl, pta, ptd)`, inserts VSTP stubs |
+| `deactivated` | `handlers/index.ts` | P0 | Sets `is_cancelled = true` on `service_rt` + `calling_points` |
+| `OW` | `handlers/index.ts` (stub) | P1 | Logs only — Phase 2 implementation |
 | `association` | `handlers/index.ts` (stub) | P2 | Logs only — Phase 2 implementation |
 | `scheduleFormations` | `handlers/index.ts` (stub) | P2 | Logs only — Phase 2 implementation |
 | `serviceLoading` | `handlers/index.ts` (stub) | P2 | Logs only — Phase 2 implementation |
@@ -83,10 +77,40 @@ METRICS_INTERVAL_MS=30000
 
 ## Monitoring
 - **Prometheus**: `/metrics` endpoint on consumer (messages/sec, lag, errors)
-- **Grafana**: Dashboard for Kafka lag, Redis memory, consumer health
-- **Health checks**: Consumer exposes `/health` (Kafka connected, Redis connected)
+- **Grafana**: Dashboard for Kafka lag, PostgreSQL health, consumer health
+- **Health checks**: Consumer exposes `/health` (Kafka connected, PostgreSQL connected)
 
 ## Development Environment Notes
 - **Docker Desktop I/O**: PostgreSQL checkpoints may take 20s+ during host I/O contention (Time Machine, Spotlight). This is normal for Docker Desktop's virtualization layer and does not indicate production issues. Managed PostgreSQL or bare metal will not exhibit this.
 - **API startup logging**: Server now logs `[ISO timestamp] [PID:xxx]` on startup to distinguish restarts from log aggregation artifacts.
 - **API health checks**: Docker health check added via `curl` to `/api/health` with 30s interval, 5s timeout, 3 retries, 10s start period.
+
+## Database Migration
+Apply schema changes:
+```bash
+psql $DATABASE_URL -f packages/api/drizzle/0001_add_darwin_fields.sql
+```
+
+## Key Commands
+```bash
+# Full rebuild
+npm run build
+
+# Per-package builds
+npm run build:shared
+npm run build:api
+npm run build:consumer
+npm run build:frontend
+
+# Dev servers
+npm run dev:api
+npm run dev:frontend
+npm run dev:consumer
+
+# Docker
+npm run docker:rebuild   # full rebuild
+npm run docker:rebuild:api
+npm run docker:rebuild:frontend
+npm run docker:rebuild:consumer
+npm run docker:down
+npm run docker:logs

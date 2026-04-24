@@ -1,6 +1,8 @@
 #!/bin/sh
 set -e
 
+echo "[RESTART] Seed container starting — Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
 # Compute today's SSD (YYYY-MM-DD) in UK time
 TODAY_SSD=$(TZ=Europe/London date +%Y-%m-%d)
 

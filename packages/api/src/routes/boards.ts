@@ -7,7 +7,8 @@
  * - service_rt (service-level state)
  * - location_ref (station names)
  *
- * No Redis needed.
+ * Uses day_offset on calling_points for correct cross-midnight handling.
+ * wall_clock_date = ssd + day_offset days
  */
 
 import { Router, type NextFunction } from "express";
@@ -27,7 +28,7 @@ import {
   locationRef,
   serviceRt,
 } from "../db/schema.js";
-import { eq, inArray, and, or, sql, asc } from "drizzle-orm";
+import { eq, inArray, and, sql, asc } from "drizzle-orm";
 
 const router = Router();
 
@@ -70,6 +71,7 @@ function parseTimeToMinutes(time: string | null): number | null {
 
 /**
  * Compute delay in minutes between scheduled and estimated/actual time.
+ * Handles midnight crossings correctly (e.g. 23:50 → 00:05 = +15 min).
  */
 function computeDelayMinutes(
   scheduled: string | null,
@@ -86,7 +88,9 @@ function computeDelayMinutes(
   if (schedMins === null || actualMins === null) return null;
 
   let delay = actualMins - schedMins;
+  // Handle midnight crossing in both directions
   if (delay < -720) delay += 1440;
+  if (delay > 720) delay -= 1440;
   return delay;
 }
 
@@ -174,6 +178,7 @@ function getPlatformSource(
  * GET /api/v1/stations/:crs/board
  *
  * Unified board: single PostgreSQL query returns everything.
+ * Uses day_offset for correct cross-midnight handling.
  */
 router.get("/:crs/board", async (req, res, next: NextFunction) => {
   try {
@@ -211,7 +216,7 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
 
     const boardType = req.query.type === "arrivals" ? "arrivals" : "departures";
 
-    // ── Allow filtering by a specific time (like RTT) ─────────────────────
+    // ── Allow filtering by a specific time (like RTT) ────────────────────
     const timeParam = req.query.time as string | undefined;
     let referenceMinutes: number;
     let todayStr: string;
@@ -246,55 +251,38 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
     const queryEarliest = referenceMinutes - 180;
 
     // ── Determine SSD dates to query ─────────────────────────────────────
-    const ssds = [todayStr];
-    let tomorrowStr: string | null = null;
-    let yesterdayStr: string | null = null;
+    // With day_offset, wall-clock date = ssd + day_offset days.
+    // We need SSDs that could produce services visible today:
+    //   - 2 days ago (day_offset=2 → sleeper services visible today, rare)
+    //   - yesterday (day_offset=1 → services that ran past midnight visible today)
+    //   - today (day_offset=0 → normal services)
+    //   - tomorrow (day_offset=0 → early morning services from tomorrow's schedule)
+    const twoDaysAgo = new Date(todayStr + "T12:00:00Z");
+    twoDaysAgo.setUTCDate(twoDaysAgo.getUTCDate() - 2);
+    const yesterday = new Date(todayStr + "T12:00:00Z");
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+    const tomorrow = new Date(todayStr + "T12:00:00Z");
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
 
-    if (latest >= 1440) {
-      const tomorrow = new Date(todayStr + "T12:00:00Z");
-      tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-      tomorrowStr = tomorrow.toISOString().split("T")[0];
-      ssds.push(tomorrowStr);
-    }
-    if (queryEarliest < 0) {
-      const yesterday = new Date(todayStr + "T12:00:00Z");
-      yesterday.setUTCDate(yesterday.getUTCDate() - 1);
-      yesterdayStr = yesterday.toISOString().split("T")[0];
-      ssds.unshift(yesterdayStr);
-    }
+    const ssds = [
+      twoDaysAgo.toISOString().split("T")[0],
+      yesterday.toISOString().split("T")[0],
+      todayStr,
+      tomorrow.toISOString().split("T")[0],
+    ];
 
-    // ── Build SQL time filter conditions per SSD ─────────────────────────
+    // ── Build SQL time filter using day_offset ─────────────────────────
+    // wall_clock_minutes = days_from_today * 1440 + time_minutes
+    // where days_from_today = (ssd_date + day_offset) - today_date
+    // This replaces all per-SSD time window logic with a single condition.
     const timeField = boardType === "arrivals" ? callingPoints.pta : callingPoints.ptd;
-    const timeFilterConditions = [];
+    const wallMinutesSql = sql<number>`
+      (EXTRACT(EPOCH FROM (${journeys.ssd}::date + ${callingPoints.dayOffset} * INTERVAL '1 day') - ${todayStr}::date) / 86400)::integer * 1440
+      + EXTRACT(HOUR FROM ${timeField}::time) * 60
+      + EXTRACT(MINUTE FROM ${timeField}::time)
+    `;
 
-    // Today: from max(0, queryEarliest) to min(latest, 1439)
-    timeFilterConditions.push(sql`
-      (${journeys.ssd} = ${todayStr}
-       AND (EXTRACT(HOUR FROM ${timeField}::time) * 60 + EXTRACT(MINUTE FROM ${timeField}::time))
-           BETWEEN ${Math.max(0, queryEarliest)} AND ${Math.min(latest, 1439)})
-    `);
-
-    // Tomorrow: from 0 to latest - 1440
-    if (tomorrowStr && latest >= 1440) {
-      timeFilterConditions.push(sql`
-        (${journeys.ssd} = ${tomorrowStr}
-         AND (EXTRACT(HOUR FROM ${timeField}::time) * 60 + EXTRACT(MINUTE FROM ${timeField}::time))
-             BETWEEN 0 AND ${latest - 1440})
-      `);
-    }
-
-    // Yesterday: from 1440 + queryEarliest to 1439
-    if (yesterdayStr && queryEarliest < 0) {
-      timeFilterConditions.push(sql`
-        (${journeys.ssd} = ${yesterdayStr}
-         AND (EXTRACT(HOUR FROM ${timeField}::time) * 60 + EXTRACT(MINUTE FROM ${timeField}::time))
-             BETWEEN ${1440 + queryEarliest} AND 1439)
-      `);
-    }
-
-    const timeFilter = timeFilterConditions.length > 1
-      ? or(...timeFilterConditions)
-      : timeFilterConditions[0];
+    const timeFilter = sql`${wallMinutesSql} BETWEEN ${queryEarliest} AND ${latest}`;
 
     // ── Fetch station name ───────────────────────────────────────────────
     const [station] = await db
@@ -318,6 +306,7 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         wtd: callingPoints.wtd,
         wtp: callingPoints.wtp,
         act: callingPoints.act,
+        dayOffset: callingPoints.dayOffset,
         // Real-time columns
         eta: callingPoints.eta,
         etd: callingPoints.etd,
@@ -326,6 +315,7 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         livePlat: callingPoints.livePlat,
         isCancelled: callingPoints.isCancelled,
         delayMinutes: callingPoints.delayMinutes,
+        delayReason: callingPoints.delayReason,
         platIsSuppressed: callingPoints.platIsSuppressed,
         updatedAt: callingPoints.updatedAt,
         uid: journeys.uid,
@@ -335,6 +325,9 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         status: journeys.status,
         tocName: tocRef.tocName,
         serviceRtRid: serviceRt.rid,
+        rtIsCancelled: serviceRt.isCancelled,
+        rtCancelReason: serviceRt.cancelReason,
+        rtDelayReason: serviceRt.delayReason,
       })
       .from(callingPoints)
       .innerJoin(journeys, eq(callingPoints.journeyRid, journeys.rid))
@@ -352,7 +345,7 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
           timeFilter,
         ),
       )
-      .orderBy(asc(timeField), asc(callingPoints.pta));
+      .orderBy(asc(wallMinutesSql), asc(callingPoints.pta));
 
     if (scheduledResults.length === 0) {
       return res.json({
@@ -429,6 +422,7 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         wtd: callingPoints.wtd,
         wtp: callingPoints.wtp,
         act: callingPoints.act,
+        dayOffset: callingPoints.dayOffset,
         name: locationRef.name,
         // Real-time columns
         eta: callingPoints.eta,
@@ -473,6 +467,13 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       );
       if (schedMinutes === null) return false;
 
+      // Compute wall-clock minutes using day_offset
+      // daysFromToday = (ssd + dayOffset) - today
+      const ssdDate = new Date(entry.rid.slice(0, 4) + "-" + entry.rid.slice(4, 6) + "-" + entry.rid.slice(6, 8) + "T12:00:00Z");
+      const todayDate = new Date(todayStr + "T12:00:00Z");
+      const daysFromToday = Math.round((ssdDate.getTime() - todayDate.getTime()) / 86400000) + entry.dayOffset;
+      const wallMinutes = daysFromToday * 1440 + schedMinutes;
+
       // Already departed from this station — only show within pastWindow, no grace
       const alreadyDeparted = entry.atd != null;
       // Already arrived at this station (arrivals view) — only show within pastWindow
@@ -486,47 +487,22 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         const rtMinutes = rtTime
           ? parseTimeToMinutes(rtTime)
           : null;
+        // Use wall-clock minutes for effective time (rtMinutes are same-day, add daysFromToday)
         const effectiveMinutes =
-          rtMinutes !== null ? rtMinutes : schedMinutes;
+          rtMinutes !== null ? (daysFromToday * 1440 + rtMinutes) : wallMinutes;
 
         // For departed/arrived trains, use stricter pastWindow without grace
         const effectiveEarliest = alreadyDeparted || alreadyArrived
-          ? Math.max(0, earliest)
-          : Math.max(0, earliest - graceMinutes);
+          ? earliest
+          : earliest - graceMinutes;
 
-        if (effectiveEarliest >= 0 && latest < 1440) {
-          return (
-            effectiveMinutes >= effectiveEarliest &&
-            effectiveMinutes <= latest
-          );
-        }
-        const tomorrowLatest = latest >= 1440 ? latest - 1440 : -1;
-        if (
+        return (
           effectiveMinutes >= effectiveEarliest &&
-          effectiveMinutes < 1440
-        )
-          return true;
-        if (
-          tomorrowLatest >= 0 &&
-          effectiveMinutes >= 0 &&
-          effectiveMinutes <= tomorrowLatest
-        )
-          return true;
-        return false;
+          effectiveMinutes <= latest
+        );
       } else {
-        const cutoff = Math.max(0, referenceMinutes - SCHEDULED_ONLY_GRACE);
-        if (cutoff >= 0 && latest < 1440) {
-          return schedMinutes >= cutoff && schedMinutes <= latest;
-        }
-        const tomorrowLatest = latest >= 1440 ? latest - 1440 : -1;
-        if (schedMinutes >= cutoff && schedMinutes < 1440) return true;
-        if (
-          tomorrowLatest >= 0 &&
-          schedMinutes >= 0 &&
-          schedMinutes <= tomorrowLatest
-        )
-          return true;
-        return false;
+        const cutoff = referenceMinutes - SCHEDULED_ONLY_GRACE;
+        return wallMinutes >= cutoff && wallMinutes <= latest;
       }
     });
 
@@ -544,8 +520,9 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         entry.livePlat !== entry.plat;
 
       const isCancelled =
-        entry.isCancelled;
-      const cancelReason = null; // From service_rt
+        entry.isCancelled || entry.rtIsCancelled || false;
+      const cancelReason = entry.rtCancelReason || null;
+      const delayReason = entry.rtDelayReason || null;
 
       const hasRealtime =
         entry.serviceRtRid != null ||
@@ -604,12 +581,16 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
           wtd: cp.wtd ?? null,
           wtp: cp.wtp ?? null,
           act: cp.act ?? null,
+          dayOffset: cp.dayOffset ?? 0,
           eta: cp.eta ?? null,
           etd: cp.etd ?? null,
           ata: cp.ata ?? null,
           atd: cp.atd ?? null,
           platformLive: cp.livePlat ?? null,
           isCancelled: cp.isCancelled,
+          delayReason: null,
+          cancelReason: null,
+          delayMinutes: null,
         }));
 
       const currentLocation = determineCurrentLocation(cpList);
@@ -656,7 +637,7 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         platformSource,
         isCancelled,
         cancelReason,
-        delayReason: null,
+        delayReason,
         formation: null,
         adhocAlerts: [],
         serviceId: null,
@@ -678,7 +659,6 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       services,
     });
   } catch (err) {
-    console.error("Board fetch error:", err);
     next(err);
   }
 });

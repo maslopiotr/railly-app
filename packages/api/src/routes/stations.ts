@@ -35,7 +35,7 @@ function escapeLikeWildcards(input: string): string {
  * Search stations by CRS code or name.
  * Returns up to 10 results for autocomplete.
  */
-router.get("/", async (req, res) => {
+router.get("/", async (req, res, next) => {
   try {
     const { q, crs } = req.query;
 
@@ -146,13 +146,7 @@ router.get("/", async (req, res) => {
       },
     });
   } catch (err) {
-    console.error("Station search error:", err);
-    return res.status(500).json({
-      error: {
-        code: "INTERNAL_ERROR",
-        message: "Failed to search stations",
-      },
-    });
+    next(err);
   }
 });
 

@@ -23,9 +23,6 @@ export type {
   DarwinTrackingID,
   DarwinAlarm,
   DarwinDisruptionReason,
-  DarwinServiceState,
-  DarwinServiceLocation,
-  DarwinBoardMember,
 } from "./types/darwin.js";
 export type {
   HealthResponse,

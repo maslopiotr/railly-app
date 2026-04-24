@@ -30,6 +30,19 @@ function formatTime(time: string | null | undefined): string | null {
   return cleaned;
 }
 
+/** Get current UK-local time as minutes since midnight */
+function getUkNowMinutes(): number {
+  const now = new Date();
+  const ukTime = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(now);
+  const [h, m] = ukTime.split(":").map(Number);
+  return h * 60 + m;
+}
+
 /** Parse time string to raw minutes since midnight (no midnight adjustment) */
 function timeToMinutes(time: string | null | undefined): number | null {
   if (!time) return null;
@@ -74,15 +87,18 @@ function normalizeNowMinutes(nowMinutes: number, firstNormalizedTime: number): n
   return nowMinutes;
 }
 
-/** Calculate delay in minutes between scheduled and estimated/actual */
+/** Calculate delay in minutes between scheduled and estimated/actual.
+ *  Handles midnight crossings in both directions. */
 function calculateDelay(scheduled: string | null, estimated: string | null, actual: string | null): number | null {
   const ref = actual || estimated;
   if (!scheduled || !ref || ref === "On time" || ref === "Cancelled" || ref === "cancelled") return null;
   const schedMins = timeToMinutes(scheduled);
   const refMins = timeToMinutes(ref);
   if (schedMins === null || refMins === null) return null;
-  const d = refMins - schedMins;
-  return d < -720 ? d + 1440 : d;
+  let d = refMins - schedMins;
+  if (d < -720) d += 1440;
+  if (d > 720) d -= 1440;
+  return d;
 }
 
 type StopState = "past" | "current" | "future";
@@ -336,8 +352,7 @@ export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
 
   const normalizedTimes = normalizeCallingPointTimes(displayPoints);
 
-  const now = new Date();
-  const rawNowMinutes = now.getHours() * 60 + now.getMinutes();
+  const rawNowMinutes = getUkNowMinutes();
   const nowMinutes = normalizeNowMinutes(rawNowMinutes, normalizedTimes[0]);
 
   // Find first upcoming stop (for yellow dot)

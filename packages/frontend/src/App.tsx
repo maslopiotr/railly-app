@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { StationSearch } from "./components/StationSearch";
 import { DepartureBoard } from "./components/DepartureBoard";
 import { ServiceDetail } from "./components/ServiceDetail";
@@ -64,6 +64,7 @@ function LiveClock() {
   }, []);
 
   const formattedTime = time.toLocaleTimeString("en-GB", {
+    timeZone: "Europe/London",
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
@@ -127,6 +128,9 @@ function App() {
   // Service refresh state
   const [isServiceRefreshing, setIsServiceRefreshing] = useState(false);
 
+  // AbortController for in-flight requests (popstate + mount + service refresh)
+  const abortRef = useRef<AbortController | null>(null);
+
   // Navigate to a URL via pushState (for in-app navigation)
   const navigateTo = useCallback((station: StationSearchResult | null, service: HybridBoardService | null, time: string | null) => {
     const url = buildUrl(station, service, time);
@@ -180,12 +184,18 @@ function App() {
   async function handleRefreshService() {
     if (!selectedStation || !selectedService || isServiceRefreshing) return;
 
+    // Abort any previous in-flight request
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setIsServiceRefreshing(true);
     try {
       const data = await fetchBoard(selectedStation.crsCode, {
         timeWindow: 120,
         pastWindow: 10,
         time: selectedTime || undefined,
+        signal: controller.signal,
       });
 
       // Find the updated service by RID
@@ -197,24 +207,42 @@ function App() {
         setSelectedService(null);
         navigateTo(selectedStation, null, selectedTime);
       }
-    } catch {
+    } catch (err) {
+      // Ignore aborted requests
+      if (err instanceof DOMException && err.name === "AbortError") return;
       // Silently fail — user can try again
     } finally {
-      setIsServiceRefreshing(false);
+      if (!controller.signal.aborted) {
+        setIsServiceRefreshing(false);
+      }
     }
   }
 
   // Restore state from URL on mount, and listen for browser back/forward
   useEffect(() => {
     function handlePopState() {
+      // IMPORTANT: Do NOT call navigateTo/pushState here!
+      // popstate fires because the user navigated back/forward.
+      // We only need to update React state — the URL is already correct.
       const { station, rid, time } = parseUrl();
       setSelectedTime(time);
       if (station) {
         setSelectedStation(station);
         if (rid) {
+          // Abort any previous in-flight request
+          abortRef.current?.abort();
+          const controller = new AbortController();
+          abortRef.current = controller;
+
           // Need to fetch the board to get the service data
-          fetchBoard(station.crsCode, { timeWindow: 120, pastWindow: 10, time: time || undefined })
+          fetchBoard(station.crsCode, {
+            timeWindow: 120,
+            pastWindow: 10,
+            time: time || undefined,
+            signal: controller.signal,
+          })
             .then((data) => {
+              if (controller.signal.aborted) return;
               const service = data.services.find((s) => s.rid === rid);
               if (service) {
                 setSelectedService(service);
@@ -223,7 +251,8 @@ function App() {
               } else {
                 // Service not found, show board only
                 setSelectedService(null);
-                navigateTo(station, null, time);
+                // Use replaceState to fix URL (no pushState!)
+                window.history.replaceState(null, "", buildUrl(station, null, time));
               }
             })
             .catch(() => {
@@ -245,9 +274,20 @@ function App() {
     if (station) {
       setSelectedStation(station);
       if (rid) {
+        // Abort any previous in-flight request
+        abortRef.current?.abort();
+        const controller = new AbortController();
+        abortRef.current = controller;
+
         // Fetch board to get service details
-        fetchBoard(station.crsCode, { timeWindow: 120, pastWindow: 10, time: time || undefined })
+        fetchBoard(station.crsCode, {
+          timeWindow: 120,
+          pastWindow: 10,
+          time: time || undefined,
+          signal: controller.signal,
+        })
           .then((data) => {
+            if (controller.signal.aborted) return;
             const service = data.services.find((s) => s.rid === rid);
             if (service) {
               setSelectedService(service);
@@ -264,8 +304,18 @@ function App() {
           });
       } else {
         // Fetch board just to get station name
-        fetchBoard(station.crsCode, { timeWindow: 120, pastWindow: 10, time: time || undefined })
+        abortRef.current?.abort();
+        const controller = new AbortController();
+        abortRef.current = controller;
+
+        fetchBoard(station.crsCode, {
+          timeWindow: 120,
+          pastWindow: 10,
+          time: time || undefined,
+          signal: controller.signal,
+        })
           .then((data) => {
+            if (controller.signal.aborted) return;
             if (data.stationName) {
               setSelectedStation({ ...station, name: data.stationName });
             }
@@ -275,7 +325,10 @@ function App() {
     }
 
     window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+      abortRef.current?.abort();
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (

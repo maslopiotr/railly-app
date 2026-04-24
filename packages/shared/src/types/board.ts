@@ -36,6 +36,8 @@ export interface HybridCallingPoint {
   wtp: string | null;
   /** Activities at this location */
   act: string | null;
+  /** Day offset from SSD: 0=same day, 1=next day, 2=day after (for cross-midnight) */
+  dayOffset: number;
   // ── LDBWS overlay (null if no real-time data) ──
   /** Estimated arrival (from LDBWS) */
   eta: string | null;
@@ -49,6 +51,12 @@ export interface HybridCallingPoint {
   platformLive: string | null;
   /** Is this stop cancelled? */
   isCancelled: boolean;
+  /** Delay reason for this calling point */
+  delayReason: string | null;
+  /** Cancel reason for this calling point */
+  cancelReason: string | null;
+  /** Computed delay in minutes for this calling point */
+  delayMinutes: number | null;
 }
 
 // ─── Hybrid Board Service ──────────────────────────────────────────────────

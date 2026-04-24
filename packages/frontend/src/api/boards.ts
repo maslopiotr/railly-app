@@ -20,6 +20,7 @@ export async function fetchBoard(
     pastWindow?: number;
     type?: "departures" | "arrivals";
     time?: string;
+    signal?: AbortSignal;
   },
 ): Promise<HybridBoardResponse> {
   const params = new URLSearchParams();
@@ -33,7 +34,7 @@ export async function fetchBoard(
   const qs = params.toString();
   const url = `${API_BASE}/stations/${crs.toUpperCase()}/board?${qs}`;
 
-  const res = await fetch(url, { cache: "no-store" });
+  const res = await fetch(url, { cache: "no-store", signal: options?.signal });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: { message: res.statusText } }));
     throw new Error((err as { error?: { message?: string } }).error?.message ?? `Board fetch failed: ${res.status}`);

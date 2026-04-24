@@ -49,6 +49,7 @@ interface ParsedCallingPoint {
   wtd: string | null;
   wtp: string | null;
   act: string | null;
+  dayOffset: number; // 0=same day as ssd, 1=next day, 2=day after next
 }
 
 interface ParsedJourneyWithPoints {
@@ -154,6 +155,8 @@ function parseTimetableXml(
 
   parser.onclosetag = (name: string) => {
     if (name === "Journey" && currentJourney) {
+      // Compute day_offset for each calling point based on time wraps
+      computeDayOffsets(currentPoints);
       result.set(currentJourney.rid, {
         journey: currentJourney,
         points: currentPoints,
@@ -220,6 +223,56 @@ function parseRefXml(xmlContent: string): {
 
   parser.write(xmlContent).close();
   return { locations, tocs };
+}
+
+// ── Helper: compute day_offset for calling points ──────────────────────────────
+
+/**
+ * Parse "HH:MM" time string to minutes since midnight.
+ * Returns -1 for invalid/unparseable times.
+ */
+function parseTimeToMinutes(time: string | null): number {
+  if (!time) return -1;
+  const m = time.match(/^(\d{2}):(\d{2})$/);
+  if (!m) return -1;
+  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+}
+
+/**
+ * Compute day_offset for each calling point in a journey.
+ *
+ * Algorithm: scan calling points in sequence order. Track the previous
+ * time in minutes. When the current time is earlier than the previous time
+ * AND the previous time was in the evening (>= 20:00 / 1200 min),
+ * we've crossed midnight — increment day_offset.
+ *
+ * This handles:
+ * - Normal services: all day_offset = 0
+ * - Cross-midnight services: stops after midnight get day_offset = 1
+ * - Sleeper services: can get day_offset = 2 (e.g. depart 23:00, arrive 08:00 next-next day)
+ */
+function computeDayOffsets(points: ParsedCallingPoint[]): void {
+  let dayOffset = 0;
+  let prevMinutes = -1;
+
+  for (const pt of points) {
+    // Use working times (more precise) then public times
+    const time = pt.wtd || pt.ptd || pt.wta || pt.pta;
+    const currentMinutes = parseTimeToMinutes(time);
+
+    if (currentMinutes >= 0 && prevMinutes >= 0) {
+      // Time wrapped backwards from evening to early morning → crossed midnight
+      if (currentMinutes < prevMinutes && prevMinutes >= 1200) {
+        dayOffset++;
+      }
+    }
+
+    pt.dayOffset = dayOffset;
+
+    if (currentMinutes >= 0) {
+      prevMinutes = currentMinutes;
+    }
+  }
 }
 
 // ── Helper: read and decompress gzipped XML ───────────────────────────────────
@@ -406,6 +459,7 @@ async function seed() {
           wtd: pt.wtd || undefined,
           wtp: pt.wtp || undefined,
           act: pt.act || undefined,
+          dayOffset: pt.dayOffset,
           // Real-time columns are left null/undefined so they keep their
           // existing values on conflict or get defaults on new insert
         });
@@ -431,6 +485,7 @@ async function seed() {
             wtd: sql`EXCLUDED.wtd`,
             wtp: sql`EXCLUDED.wtp`,
             act: sql`EXCLUDED.act`,
+            dayOffset: sql`EXCLUDED.day_offset`,
             // NOTE: real-time columns (eta, etd, ata, atd, live_plat,
             // is_cancelled, delay_minutes, plat_is_suppressed, updated_at)
             // are deliberately NOT in the DO UPDATE SET so they persist.

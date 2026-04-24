@@ -5,6 +5,7 @@
  * data directly to the calling_points and service_rt tables.
  */
 
+import "./env.js";
 import postgres from "postgres";
 
 const connectionString = process.env.DATABASE_URL;

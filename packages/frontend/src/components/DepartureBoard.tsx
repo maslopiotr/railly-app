@@ -37,9 +37,15 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
   const [isRefreshing, setIsRefreshing] = useState(false);
   const touchStartY = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const PULL_THRESHOLD = 60;
 
   const loadBoard = useCallback(async () => {
+    // Abort any in-flight request
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
       setBoard(null);
       setIsLoading(true);
@@ -48,20 +54,32 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
         pastWindow: 10,
         type: activeTab,
         time: selectedTime || undefined,
+        signal: controller.signal,
       });
-      setBoard(data);
-      setError(null);
+      // Only update if this request wasn't aborted
+      if (!controller.signal.aborted) {
+        setBoard(data);
+        setError(null);
+      }
     } catch (err) {
+      // Ignore aborted requests
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      if (controller.signal.aborted) return;
       setError(err instanceof Error ? err.message : "Failed to load board");
     } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
+      if (!controller.signal.aborted) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
     }
   }, [station.crsCode, activeTab, selectedTime]);
 
-  // Load on mount and when tab changes
+  // Load on mount and when tab/time changes; abort on cleanup
   useEffect(() => {
     loadBoard();
+    return () => {
+      abortRef.current?.abort();
+    };
   }, [loadBoard]);
 
   // Pull-to-refresh handlers (mobile)

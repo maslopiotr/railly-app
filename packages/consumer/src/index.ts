@@ -23,9 +23,6 @@ const METRICS_INTERVAL_MS = parseInt(process.env.METRICS_INTERVAL_MS || "30000",
 const SESSION_TIMEOUT_MS = parseInt(process.env.KAFKA_SESSION_TIMEOUT_MS || "45000", 10);
 const HEARTBEAT_INTERVAL_MS = parseInt(process.env.KAFKA_HEARTBEAT_INTERVAL_MS || "3000", 10);
 
-// Max concurrent messages to process within a batch
-const CONCURRENCY = parseInt(process.env.CONSUMER_CONCURRENCY || "50", 10);
-
 // Heartbeat every N messages to prevent session timeout during long batches
 const HEARTBEAT_EVERY = parseInt(process.env.CONSUMER_HEARTBEAT_EVERY || "100", 10);
 
@@ -66,12 +63,18 @@ const consumer = kafka.consumer({
 // ── Graceful Shutdown ────────────────────────────────────────────────────────
 
 let isShuttingDown = false;
+let metricsInterval: ReturnType<typeof setInterval> | null = null;
 
 async function shutdown(signal: string): Promise<void> {
   if (isShuttingDown) return;
   isShuttingDown = true;
 
   console.log(`\n   🛑 Received ${signal}, shutting down gracefully...`);
+
+  if (metricsInterval) {
+    clearInterval(metricsInterval);
+    metricsInterval = null;
+  }
 
   try {
     await consumer.disconnect();
@@ -116,6 +119,7 @@ function startMetricsLogging(): ReturnType<typeof setInterval> {
 
 async function main(): Promise<void> {
   console.log("🚂 Railly Darwin Push Port Consumer");
+  console.log(`[RESTART] Consumer starting — PID: ${process.pid}, Time: ${new Date().toISOString()}`);
   console.log(`   Kafka broker: ${KAFKA_BROKER}`);
   console.log(`   Kafka topic: ${KAFKA_TOPIC}`);
   console.log(`   Consumer group: ${KAFKA_GROUP_ID}`);
@@ -162,16 +166,16 @@ async function main(): Promise<void> {
   });
 
   // Start metrics logging
-  const metricsInterval = startMetricsLogging();
+  metricsInterval = startMetricsLogging();
 
-  // Run the consumer
+  // Run the consumer with MANUAL commit for reliable offset tracking
   await consumer.run({
-    autoCommit: true,
-    autoCommitInterval: 5000,
-    eachBatchAutoResolve: true,
+    autoCommit: false, // We commit manually after successful processing
+    eachBatchAutoResolve: false,
     eachBatch: async ({
       batch,
       resolveOffset,
+      commitOffsetsIfNecessary,
       heartbeat,
       isRunning,
       isStale,
@@ -180,69 +184,102 @@ async function main(): Promise<void> {
         `📦 Batch — partition: ${batch.partition}, messages: ${batch.messages.length}`,
       );
 
-      // Process messages concurrently within the batch for throughput.
-      // We must resolve offsets in order, so we track completion per message
-      // and resolve offsets sequentially up to the latest contiguous processed message.
-      const processed = new Set<string>();
-      let lastResolvedOffset = batch.firstOffset() ?? "0";
+      // Track which offsets were successfully processed
+      // Using a Map so we can handle gaps correctly
+      const processedOffsets = new Map<number, boolean>(); // offset -> success
+
+      // Helper: commit the highest contiguous processed offset
+      const commitProcessed = async (): Promise<void> => {
+        // Find the highest contiguous offset from the start
+        const sortedOffsets = Array.from(processedOffsets.keys()).sort((a, b) => a - b);
+        let highestContiguous = -1;
+
+        for (let i = 0; i < sortedOffsets.length; i++) {
+          const expectedOffset = i === 0 ? sortedOffsets[0] : sortedOffsets[i - 1] + 1;
+          if (sortedOffsets[i] === expectedOffset) {
+            highestContiguous = sortedOffsets[i];
+          } else {
+            break; // Gap found — stop
+          }
+        }
+
+        if (highestContiguous >= 0) {
+          const offsetStr = String(highestContiguous);
+          await resolveOffset(offsetStr);
+          // Remove committed offsets from tracking to free memory
+          for (const offset of sortedOffsets) {
+            if (offset <= highestContiguous) {
+              processedOffsets.delete(offset);
+            }
+          }
+        }
+      };
 
       const processMessage = async (msg: typeof batch.messages[0]): Promise<void> => {
         if (!isRunning() || isStale()) return;
 
+        const offsetNum = Number(msg.offset);
+
         // Parse the message
         const parsed = parseDarwinMessage(msg.value);
         if (!parsed) {
-          processed.add(msg.offset);
+          // Silently skipped control messages — still mark as processed
+          processedOffsets.set(offsetNum, true);
           return;
         }
 
-        // Process the message
-        try {
-          await handleDarwinMessage(parsed);
-          processed.add(msg.offset);
-        } catch (err) {
-          console.error("   ❌ Handler error for offset", msg.offset, err);
-          // Don't mark as processed — offset won't be committed, Kafka will retry
-        }
-      };
+        // Process the message with retry for transient DB errors
+        let attempts = 0;
+        const maxAttempts = 3;
+        let lastError: Error | null = null;
 
-      // Process in concurrent chunks to avoid overwhelming the event loop
-      for (let i = 0; i < batch.messages.length; i += CONCURRENCY) {
-        const chunk = batch.messages.slice(i, i + CONCURRENCY);
-        await Promise.all(chunk.map((msg) => processMessage(msg)));
-
-        // Resolve offsets sequentially up to the latest contiguous processed message
-        // Sort offsets numerically to ensure sequential resolution
-        const sortedProcessed = Array.from(processed)
-          .map((o) => BigInt(o))
-          .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-
-        for (const offset of sortedProcessed) {
-          const offsetStr = offset.toString();
-          if (offsetStr <= lastResolvedOffset) continue;
-          // Only resolve if this offset is the next sequential one
-          const lastBig = BigInt(lastResolvedOffset);
-          if (offset === lastBig + BigInt(1)) {
-            await resolveOffset(offsetStr);
-            lastResolvedOffset = offsetStr;
-          } else {
-            break; // Gap in sequence — stop resolving
+        while (attempts < maxAttempts) {
+          try {
+            await handleDarwinMessage(parsed);
+            processedOffsets.set(offsetNum, true);
+            return; // Success
+          } catch (err) {
+            lastError = err instanceof Error ? err : new Error(String(err));
+            attempts++;
+            if (attempts < maxAttempts) {
+              const backoff = Math.min(100 * Math.pow(2, attempts), 2000);
+              console.warn(`   ⏳ Retry ${attempts}/${maxAttempts} for offset ${msg.offset} in ${backoff}ms:`, lastError.message);
+              await new Promise(r => setTimeout(r, backoff));
+            }
           }
         }
 
+        // All retries failed — mark as processed so we don't get stuck
+        // The handler's inner try/catch should have logged details
+        console.error(`   ❌ Giving up on offset ${msg.offset} after ${maxAttempts} attempts:`, lastError?.message);
+        processedOffsets.set(offsetNum, true); // Commit to move past it
+      };
+
+      // Process sequentially to avoid deadlocks on FOR UPDATE locks
+      // (schedule and TS for the same RID often arrive in the same batch)
+      let messagesSinceHeartbeat = 0;
+      for (const msg of batch.messages) {
+        await processMessage(msg);
+        messagesSinceHeartbeat++;
+
+        // Commit what we can after each message
+        await commitProcessed();
+
         // Heartbeat periodically during long batches
-        if (i % HEARTBEAT_EVERY === 0) {
+        if (messagesSinceHeartbeat >= HEARTBEAT_EVERY) {
           await heartbeat();
+          messagesSinceHeartbeat = 0;
         }
       }
 
-      // Final heartbeat for this batch
+      // Final commit for any remaining processed messages
+      await commitProcessed();
+      await commitOffsetsIfNecessary();
+
+      // Final heartbeat
       await heartbeat();
     },
   });
-
-  // Clean up metrics interval on exit (handled by shutdown)
-  clearInterval(metricsInterval);
 }
 
 main().catch((err) => {

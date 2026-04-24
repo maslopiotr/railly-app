@@ -24,7 +24,7 @@ const router = Router();
  * Get full service details by RID (Retail Identifier).
  * Returns complete calling pattern with real-time data from calling_points.
  */
-router.get("/:serviceId", async (req, res) => {
+router.get("/:serviceId", async (req, res, next) => {
   try {
     const rid = req.params.serviceId?.trim();
 
@@ -77,6 +77,8 @@ router.get("/:serviceId", async (req, res) => {
         isCancelled: callingPoints.isCancelled,
         platIsSuppressed: callingPoints.platIsSuppressed,
         delayMinutes: callingPoints.delayMinutes,
+        delayReason: callingPoints.delayReason,
+        cancelReason: callingPoints.cancelReason,
       })
       .from(callingPoints)
       .leftJoin(locationRef, eq(callingPoints.tpl, locationRef.tpl))
@@ -119,28 +121,39 @@ router.get("/:serviceId", async (req, res) => {
     // ── Build response ────────────────────────────────────────────────
     const callingPointsResponse = points
       .filter((cp) => cp.stopType !== "PP")
-      .map((cp) => ({
-        sequence: cp.sequence,
-        stopType: cp.stopType,
-        tpl: cp.tpl,
-        crs: cp.crs ?? null,
-        name: cp.name || cp.tpl,
-        plat: cp.plat ?? null,
-        pta: cp.pta ?? null,
-        ptd: cp.ptd ?? null,
-        wta: cp.wta ?? null,
-        wtd: cp.wtd ?? null,
-        wtp: cp.wtp ?? null,
-        act: cp.act ?? null,
-        // Real-time overlay from calling_points
-        eta: cp.eta ?? cp.pta ?? null,
-        etd: cp.etd ?? cp.ptd ?? null,
-        ata: cp.ata ?? null,
-        atd: cp.atd ?? null,
-        platformLive: cp.livePlat ?? null,
-        isCancelled: cp.isCancelled,
-        lateReason: rtState?.delayReason ?? null,
-      }));
+      .map((cp) => {
+        // Determine display times: real-time if available, else scheduled
+        const isCpCancelled = cp.isCancelled || (rtState?.isCancelled ?? false);
+        const displayEta = isCpCancelled ? "Cancelled" : (cp.eta ?? cp.pta ?? null);
+        const displayEtd = isCpCancelled ? "Cancelled" : (cp.etd ?? cp.ptd ?? null);
+
+        return {
+          sequence: cp.sequence,
+          stopType: cp.stopType,
+          tpl: cp.tpl,
+          crs: cp.crs ?? null,
+          name: cp.name || cp.tpl,
+          plat: cp.plat ?? null,
+          pta: cp.pta ?? null,
+          ptd: cp.ptd ?? null,
+          wta: cp.wta ?? null,
+          wtd: cp.wtd ?? null,
+          wtp: cp.wtp ?? null,
+          act: cp.act ?? null,
+          // Real-time overlay from calling_points
+          eta: displayEta,
+          etd: displayEtd,
+          ata: cp.ata ?? null,
+          atd: cp.atd ?? null,
+          platformLive: cp.livePlat ?? null,
+          isCancelled: cp.isCancelled,
+          // Per-CP reasons: calling_points first, fallback to service_rt
+          delayReason: cp.delayReason ?? rtState?.delayReason ?? null,
+          cancelReason: cp.cancelReason ?? rtState?.cancelReason ?? null,
+          // Computed delay for this calling point
+          delayMinutes: cp.delayMinutes ?? null,
+        };
+      });
 
     // Determine origin and destination from calling points
     const origin = points.find((p) => p.stopType === "OR" || p.stopType === "OPOR");
@@ -180,13 +193,7 @@ router.get("/:serviceId", async (req, res) => {
       generatedAt: new Date().toISOString(),
     });
   } catch (err) {
-    console.error("Service details fetch error:", err);
-    return res.status(500).json({
-      error: {
-        code: "INTERNAL_ERROR",
-        message: "Failed to fetch service details",
-      },
-    });
+    next(err);
   }
 });
 
