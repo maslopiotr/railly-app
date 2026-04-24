@@ -5,7 +5,7 @@ Build a self-hosted, real-time UK train companion app for commuters that provide
 
 ## Core Requirements
 1. **Live train tracking** — real-time position of trains including inbound services that form the user's train
-2. **Departure/arrival boards** — next trains at any station with platform data (Staff LDB API)
+2. **Departure/arrival boards** — next trains at any station with platform data (PP Timetable + Darwin Push Port)
 3. **Disruption alerts** — delay and cancellation notifications pushed to the user
 4. **Delay Repay screen** — identify eligible claims by comparing scheduled vs actual times
 5. **Price alerts** — notify users when cheap tickets are available for their commute

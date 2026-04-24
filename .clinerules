@@ -22,3 +22,36 @@ Memory resets between sessions. The Memory Bank is my only link to previous work
 Update memory bank when: discovering new patterns, after significant changes, on **update memory bank** request, or when context needs clarification. Keep files concise — delete outdated info, don't accumulate history.
 
 REMEMBER: After every memory reset, I begin completely fresh. The Memory Bank is my only link to previous work. It must be maintained with precision and clarity — my effectiveness depends entirely on its accuracy.
+
+## 1. Core Operational Directives (Non-Negotiable)
+- **Git Policy:** NEVER execute `git commit` or `git push` automatically. Always stop, output the proposed changes/message, and wait for manual user confirmation.
+- **UK English:** All code comments, documentation, and commit messages must use UK English (e.g., 'initialise', 'colour', 'centre').
+
+## 2. Coding Principles & Standards
+- **Clarity over Cleverness:** Prioritise code readability. If a function is complex, break it down rather than using one-liners.
+- **Performance:** Do not use vague terms like "optimise where possible." If an operation exceeds 100ms or involves heavy data processing, implement caching or batching and justify the approach.
+- **Error Handling:** Every external API call or database interaction must include explicit `try-catch` blocks or equivalent error-handling patterns. Do not leave promises or connections unhandled.
+
+## 3. Security & Data Integrity
+- **Database Safety:** Always use parameterized queries or ORM methods that prevent SQL injection. Never concatenate user input directly into query strings.
+- **Secrets Management:** Never hardcode API keys, credentials, or secrets in the codebase. Use `.env` files or secure vault lookups.
+- **Input Validation:** Validate all external inputs at the boundary. Use type-checking and schema validation for all incoming API request bodies.
+
+## 4. Interaction Protocol
+- **Constraint Compliance:** If a requested task conflicts with these rules, stop and highlight the conflict before proceeding.
+- **Ambiguity:** If a prompt is ambiguous (e.g., "make this look better"), ask for clarification regarding the desired outcome (e.g., "Are we optimising for performance, accessibility, or visual design?") before taking action.
+- **Plan Verification:** For any task involving structural changes (file architecture, database schemas), provide a brief plan *before* executing the first command.
+
+## 5. Living Documentation
+- Periodically review this file when onboarding new technologies or frameworks to ensure these rules reflect the current team standards.
+
+## 6. Long-Running Scripts
+- Estimate total runtime before execution (e.g., batch size × per-item processing time)
+- Log progress at regular intervals (every N items or every T seconds)
+- Sleep at ~10% of estimated runtime to preserve context window between sessions
+- Example: a 10-minute backfill → log every 30s, sleep at 60s intervals
+
+## 7. Debugging Protocol
+- Always verify with SQL queries first when the issue may involve data — avoid assumptions based on hallucination
+- For Darwin Push Port issues, inspect raw `darwin_events` before debugging handler logic (see `techContext.md` for example queries)
+- Project-specific debugging patterns and key file paths live in `memory-bank/techContext.md` → Debugging section

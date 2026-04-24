@@ -1,44 +1,7 @@
 ## Active
 
-### 🟠 Missing composite indexes for primary board query pattern
-**Date**: April 23, 2026
-**Severity**: High — Performance
-**File**: `packages/api/src/db/schema.ts`
-**Details**: The most frequent query is board lookup: `WHERE calling_points.crs = ? AND journeys.ssd IN (...)`. Current indexes are single-column only.
-
-**Fix**: ⏳ TO FIX
-
----
-
-### 🟠 `App.tsx` history corruption via `pushState` in `popstate` handler
-**Date**: April 23, 2026
-**Severity**: High — UX / Navigation
-**File**: `packages/frontend/src/App.tsx` (lines 208–238, 257–273)
-**Details**: `navigateTo` uses `window.history.pushState` inside the `popstate` handler and on initial page load, breaking browser Back/Forward buttons.
-
-**Fix**: ⏳ TO FIX
-
----
-
-### 🟠 `App.tsx` race condition in board fetches
-**Date**: April 23, 2026
-**Severity**: High — Data Consistency
-**File**: `packages/frontend/src/App.tsx`
-**Details**: Multiple `fetchBoard` calls can be in-flight simultaneously. Stale responses can overwrite newer data.
-
-**Fix**: ⏳ TO FIX
-
----
-
-### 🟡 Consumer `handleDeactivated` swallows DB errors silently
-**Date**: April 23, 2026
-**Severity**: Medium — Data Integrity
-**File**: `packages/consumer/src/handlers/index.ts`
-**Details**: `handleDeactivated` catches its own errors internally and logs them, but doesn't re-throw.
-
-**Fix**: ⏳ TO FIX
-
----
+### Critical bug - affecting calling points, where they show departure time from previous station
+For example 202604248706894. Another example is 202604248706894, where scheduled departure from Euston is 21:53 which has not happened yet at the time when I'm seeing this bug which is 21:42, but the euston board already shows this as delayed and real time departure as 22:05, which is the scheduled departure time for the next stop, which is Harrow & Wealdstone. Also, Harrow & Wealdstone shows EUS platform 5 as departure platform. Also somehow showing platform altered? Not sure why... plus, the last bug for this journey is that it says Hemel Hempstead Next stop, but the train hasn't left euston yet. The whole journey looks messy, with incorrect calling points.
 
 ### 🟠 Schedule deduplication race condition — older schedule can overwrite newer
 **Date**: April 23, 2026
@@ -85,16 +48,6 @@
 **Severity**: Low — Observability
 **File**: `packages/consumer/src/handlers/trainStatus.ts`
 **Details**: When a TS location is skipped, it's logged but not counted in metrics.
-
-**Fix**: ⏳ TO FIX
-
----
-
-### 🟡 `CallingPoints.tsx` uses browser local time, not UK time
-**Date**: April 23, 2026
-**Severity**: Medium — Data Correctness
-**File**: `packages/frontend/src/components/CallingPoints.tsx`
-**Details**: `now.getHours() * 60 + now.getMinutes()` uses the browser's local timezone. If the user is outside the UK, stop states will be wrong.
 
 **Fix**: ⏳ TO FIX
 

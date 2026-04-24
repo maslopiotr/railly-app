@@ -64,7 +64,7 @@ METRICS_INTERVAL_MS=30000
 |---------|------|----------|-------------|
 | `schedule` | `handlers/schedule.ts` | P0 | Upserts journeys + calling points with real-time preservation, dedup via `generated_at` |
 | `TS` | `handlers/trainStatus.ts` | P0 | Updates calling points by composite key `(tpl, pta, ptd)`, inserts VSTP stubs |
-| `deactivated` | `handlers/index.ts` | P0 | Sets `is_cancelled = true` on `service_rt` + `calling_points` |
+| `deactivated` | `handlers/index.ts` | P0 | Conditionally sets `is_cancelled = true` — checks for movement data first (Darwin `deactivated` ≠ cancelled) |
 | `OW` | `handlers/index.ts` (stub) | P1 | Logs only — Phase 2 implementation |
 | `association` | `handlers/index.ts` (stub) | P2 | Logs only — Phase 2 implementation |
 | `scheduleFormations` | `handlers/index.ts` (stub) | P2 | Logs only — Phase 2 implementation |
@@ -79,6 +79,35 @@ METRICS_INTERVAL_MS=30000
 - **Prometheus**: `/metrics` endpoint on consumer (messages/sec, lag, errors)
 - **Grafana**: Dashboard for Kafka lag, PostgreSQL health, consumer health
 - **Health checks**: Consumer exposes `/health` (Kafka connected, PostgreSQL connected)
+
+## Debugging
+Always verify with SQL queries first when the issue may involve data — avoid assumptions based on hallucination. Inspect raw `darwin_events` before debugging handler logic.
+
+### Key Queries
+```sql
+-- Check raw Darwin events for a specific service
+SELECT message_type, generated_at, processed_at
+  FROM darwin_events WHERE rid = '202604248708107' ORDER BY generated_at;
+
+-- Check calling points with real-time data for a service
+SELECT tpl, ptd_timetable, etd_pushport, atd_pushport, is_cancelled, delay_minutes
+  FROM calling_points WHERE journey_rid = '202604248708107' ORDER BY sequence;
+
+-- Check service real-time state
+SELECT rid, is_cancelled, cancel_reason, delay_reason, platform, generated_at
+  FROM service_rt WHERE rid = '202604248708107';
+
+-- Find recent errors
+SELECT * FROM darwin_errors ORDER BY created_at DESC LIMIT 20;
+```
+
+### Key File Paths
+- **Database**: PostgreSQL 17 in Docker (`postgres` container, `$DATABASE_URL`)
+- **Consumer entry**: `packages/consumer/src/index.ts` — Kafka listener, batch processing
+- **Consumer handlers**: `packages/consumer/src/handlers/` — schedule, trainStatus, deactivated
+- **Parser**: `packages/consumer/src/parser.ts` — Darwin JSON STOMP envelope parser
+- **Timetable seed**: `packages/api/src/db/seed-timetable.ts` — runs daily at 03:00
+- **Board query**: `packages/api/src/routes/boards.ts` — unified single-query board API
 
 ## Development Environment Notes
 - **Docker Desktop I/O**: PostgreSQL checkpoints may take 20s+ during host I/O contention (Time Machine, Spotlight). This is normal for Docker Desktop's virtualization layer and does not indicate production issues. Managed PostgreSQL or bare metal will not exhibit this.

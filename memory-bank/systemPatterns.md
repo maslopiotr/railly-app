@@ -13,7 +13,7 @@ Darwin Push Port Kafka → Consumer → PostgreSQL (real-time overlay)
 
 ## Data Flow
 - **Master record**: PP Timetable XML files → PostgreSQL `journeys` + `calling_points` tables (daily seed at 03:00)
-- **Real-time overlay**: Kafka → Consumer → PostgreSQL (`calling_points` eta/etd/ata/atd/live_plat, `service_rt` service-level state)
+- **Real-time overlay**: Kafka → Consumer → PostgreSQL (`calling_points` _pushport columns: `eta_pushport`/`etd_pushport`/`ata_pushport`/`atd_pushport`/`live_plat_pushport`, `service_rt` service-level state)
 - **Hot path**: API queries PostgreSQL joining `calling_points` + `journeys` + `service_rt` + `location_ref` in single query → Client
 - **Warm path**: API → PostgreSQL → Client (service detail with full calling pattern)
 - **Cold path**: API → PostgreSQL → Client (timetable/historical queries)
@@ -24,9 +24,9 @@ Darwin Push Port Kafka → Consumer → PostgreSQL (real-time overlay)
 2. Phase 1: Parse reference files (`_ref_v{n}.xml.gz`) for TIPLOC→CRS mapping + TOC names
 3. Phase 2: Parse timetable files (`_v{n}.xml.gz`) for journeys + calling points
 4. Upsert to PostgreSQL with `ON CONFLICT (rid) DO UPDATE` for journeys
-5. Upsert calling points with `ON CONFLICT (journey_rid, sequence) DO UPDATE` — only static columns updated, real-time columns preserved
+5. Upsert calling points with `ON CONFLICT (journey_rid, sequence) DO UPDATE` — only `_timetable` columns updated, `_pushport` columns preserved
 6. Delete stale calling points: `sequence NOT IN (current batch)` to remove old shifted stops
-7. Re-apply preserved real-time data by TIPLOC match (guarded by `updated_at <= preFetchTime`)
+7. Re-apply preserved real-time data by TIPLOC match (guarded by `ts_generated_at` timestamps)
 8. Filter to passenger services only (`isPassengerSvc !== "false"`)
 9. Daily cron: `seed` container runs at 03:00, seeded volume from SFTP-delivered files
 
@@ -35,8 +35,8 @@ Darwin Push Port Kafka → Consumer → PostgreSQL (real-time overlay)
 2. Filter by CRS, SSD range, passenger flag, time window, stop type, departures/arrivals
 3. Post-merge intelligent filter: grace minutes for delayed trains, strict pastWindow for departed/arrived
 4. For each service, build `HybridBoardService` with:
-   - Timetable base from `journeys` + `calling_points`
-   - Real-time overlay from `calling_points` (eta/etd/ata/atd/live_plat) + `service_rt` (is_cancelled, cancelReason, delayReason)
+   - Timetable base from `journeys` + `calling_points` (`_timetable` columns)
+   - Real-time overlay from `calling_points` (`_pushport` columns: `eta_pushport`/`etd_pushport`/`ata_pushport`/`atd_pushport`/`live_plat_pushport`) + `service_rt` (is_cancelled, cancelReason, delayReason)
 5. Sort by departure/arrival time
 6. `numRows` applied as `.slice(0, numRows)` after filtering (not as SQL LIMIT — filters run post-query)
 
@@ -44,7 +44,7 @@ Darwin Push Port Kafka → Consumer → PostgreSQL (real-time overlay)
 1. Query PostgreSQL for journey by RID
 2. Query all calling points for journey with `LEFT JOIN location_ref` for names
 3. Query `service_rt` for service-level state (isCancelled, cancelReason, delayReason)
-4. Per-CP: display "Cancelled" if cancelled, else real-time time (eta/etd) or scheduled (pta/ptd)
+4. Per-CP: display "Cancelled" if cancelled, else pushport time (`etd_pushport`/`eta_pushport`) or timetable time (`ptd_timetable`/`pta_timetable`)
 5. Per-CP delayReason/cancelReason/delayMinutes from calling_points with service_rt fallback
 
 ## PostgreSQL Data Model
@@ -60,7 +60,7 @@ status CHAR(1),                    -- P = permanent
 isPassenger BOOLEAN DEFAULT TRUE
 ```
 
-### Calling Points
+### Calling Points (source-separated schema)
 ```sql
 id SERIAL PRIMARY KEY,
 journey_rid VARCHAR(20) REFERENCES journeys(rid),
@@ -68,19 +68,21 @@ sequence INTEGER NOT NULL,
 stop_type VARCHAR(5) NOT NULL,     -- OR, DT, IP, PP, OPOR, OPIP, OPDT
 tpl VARCHAR(10) NOT NULL,          -- TIPLOC
 crs CHAR(3),                       -- CRS (nullable for junctions)
-plat VARCHAR(5),                   -- Booked platform
-pta CHAR(5), ptd CHAR(5),          -- Public times HH:MM
-wta VARCHAR(8), wtd VARCHAR(8), wtp VARCHAR(8),  -- Working times
-act VARCHAR(10),                   -- Activities
--- Real-time columns (updated by consumer)
-eta CHAR(5), etd CHAR(5),          -- Estimated times
-ata CHAR(5), atd CHAR(5),          -- Actual times
-live_plat VARCHAR(5),              -- Live platform
+source_timetable BOOLEAN DEFAULT TRUE,  -- true = seed data, false = Darwin-only
+-- Timetable columns (written by seed)
+plat_timetable VARCHAR(5),         -- Booked platform
+pta_timetable CHAR(5), ptd_timetable CHAR(5),  -- Public times HH:MM
+wta_timetable VARCHAR(8), wtd_timetable VARCHAR(8), wtp_timetable VARCHAR(8),  -- Working times
+-- Pushport columns (written by consumer)
+eta_pushport CHAR(5), etd_pushport CHAR(5),    -- Estimated times
+ata_pushport CHAR(5), atd_pushport CHAR(5),    -- Actual times
+live_plat_pushport VARCHAR(5),                  -- Live platform
+plat_is_suppressed BOOLEAN DEFAULT FALSE,
 is_cancelled BOOLEAN DEFAULT FALSE,
 delay_minutes INTEGER,
 delay_reason VARCHAR(100),         -- Per-location delay reason from TS
 cancel_reason VARCHAR(100),        -- Per-location cancel reason from schedule
-plat_is_suppressed BOOLEAN DEFAULT FALSE,
+ts_generated_at TIMESTAMP WITH TIME ZONE,  -- TS message timestamp for per-CP dedup
 updated_at TIMESTAMP WITH TIME ZONE
 -- UNIQUE(journey_rid, sequence)
 ```
@@ -96,7 +98,8 @@ is_cancelled BOOLEAN DEFAULT FALSE,
 cancel_reason VARCHAR(100),
 delay_reason VARCHAR(100),
 platform VARCHAR(5),
-generated_at TIMESTAMP WITH TIME ZONE,  -- Darwin message timestamp
+generated_at TIMESTAMP WITH TIME ZONE,       -- Schedule message timestamp (schedule dedup)
+ts_generated_at TIMESTAMP WITH TIME ZONE,     -- TS message timestamp (TS dedup)
 last_updated TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 ```
 
@@ -117,8 +120,8 @@ processed_at TIMESTAMP WITH TIME ZONE
 3. Route by message type: `schedule`, `TS`, `deactivated`, `OW`, `association`, etc.
 4. Per-message error isolation: each message wrapped in try/catch, one failure doesn't block others
 5. For each message:
-   a. **Deduplicate**: Compare `generatedAt` vs stored `service_rt.generated_at` (inside transaction with `FOR UPDATE`)
-   b. **Update PostgreSQL**: Direct SQL writes to `calling_points` and `service_rt`
+   a. **Deduplicate**: Schedule messages compare `generated_at`; TS messages compare `ts_generated_at` (inside transaction with `FOR UPDATE`)
+   b. **Update PostgreSQL**: Direct SQL writes to `_pushport` columns in `calling_points` and `service_rt`
    c. **Audit log**: Insert into `darwin_events` for every message
 6. Manual offset commit: `commitProcessed()` finds highest contiguous offset and commits
 7. Per-message retry: 3 attempts with exponential backoff before skipping
@@ -127,17 +130,19 @@ processed_at TIMESTAMP WITH TIME ZONE
 
 ### Deduplication (Transaction-Safe)
 ```ts
+// Schedule dedup — uses generated_at
 await sql.begin(async (tx) => {
-  // Lock the row to prevent race conditions
   const existing = await tx`
     SELECT generated_at FROM service_rt WHERE rid = ${rid} FOR UPDATE
   `;
-  // Skip if this message is older than what we've already processed
   if (existing[0]?.generated_at && new Date(existing[0].generated_at) >= new Date(generatedAt)) {
-    return;
+    return; // Skip older schedule message
   }
   // ... proceed with update
 });
+
+// TS dedup — uses ts_generated_at (separate from schedule's generated_at)
+// Each calling point checks its own ts_generated_at before overwriting
 ```
 
 ### Composite Key Location Matching
@@ -193,7 +198,9 @@ if (delay > 720) delay -= 1440;   // Scheduled is next day
 | **Redis** | **Eliminated from data path** | Not needed; PostgreSQL handles all reads and writes |
 | **Board source** | **PostgreSQL single query** | `calling_points` + `journeys` + `service_rt` + `location_ref` JOIN |
 | **Message types** | **All from day one** | Quality info for end users |
-| **Deduplication** | **`generatedAt` timestamp + `FOR UPDATE`** | Prevents race conditions in concurrent message processing |
+| **Deduplication** | **`generated_at` / `ts_generated_at` + `FOR UPDATE`** | Separate timestamps for schedule vs TS dedup; prevents race conditions |
+| **Source separation** | **`_timetable` / `_pushport` column suffixes** | Seed and consumer write to different columns; no overwrites; board shows source indicators |
+| **Deactivated handler** | **Conditional cancellation** | Checks for movement data before marking cancelled; Darwin `deactivated` ≠ cancelled |
 | **Monitoring** | **Prometheus + Grafana** | Free, self-hosted, Docker-friendly |
 | **Daily seed** | **Cron container at 03:00** | SFTP-delivered PP Timetable files processed nightly |
 | **Consumer SQL** | **postgres.js (raw)** | Performance for high-volume writes |
