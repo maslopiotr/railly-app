@@ -43,6 +43,13 @@
 - `packages/frontend/src/components/ServiceRow.tsx` — Platform source display
 
 ## Next Steps
+- **Phase 2 verification bugs** documented in `bugs/phase2-verification-findings.md`:
+  1. Platform "-3" bug — visible error, likely simple fix
+  2. "Expected XX:XX" for delayed trains — needs frontend implementation
+  3. Delay calculation on calling points — not showing delays
+  4. Service 202604248706842 cancellation — verify if correct
+  5. Scheduled vs real-time always same — API + frontend changes needed
+  6. Data quality re-verification — run SQL queries
+  7. Route legitimacy comparison with National Rail
 - Monitor `darwin_errors` for trends (should trend to zero)
-- Verify board accuracy against National Rail live
 - Consider Phase 3: full consumer rewrite with improved matching

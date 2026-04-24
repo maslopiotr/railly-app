@@ -17,9 +17,10 @@
 - **Fixed VSTP SSD derivation** (2026-04-24): `deriveSsdFromRid()` extracts date from RID when TS omits `ssd`. Prevents empty SSD in stubs.
 - **Schema migration** (2026-04-24): Added `ts_generated_at` to `calling_points` and `service_rt` + index.
 - **Phase 2: Source-separated schema** (2026-04-24): All columns renamed with `_timetable`/`_pushport` suffixes. `calling_points` table has parallel columns for both data sources. Consumer writes only `_pushport` cols, seed writes only `_timetable` cols. Frontend shows source indicators (confirmed/altered/suppressed/scheduled). Migration `0005_source_separation.sql` with backfills.
+- **Board accuracy fix** (2026-04-24): Removed "missing locations" insert from trainStatus.ts that was appending Darwin route waypoints as new CP rows (2,513 contaminated journeys). Added `source_timetable=true` filter to board query. Fixed 73,555 wrong CRS codes. Deleted 1,012,441 phantom/orphan CP rows. Results: EUS 75→58, KGX 75→40, Avanti VT CPs 161→16.
 
 ## What's Left
-- Apply migration `0005_source_separation.sql` to production DB
-- Monitor `darwin_errors` for deadlock/FK violation trends (should trend to zero)
-- Verify board/service detail accuracy against National Rail
+- Add `(journey_rid, tpl)` UNIQUE constraint to prevent future duplicate TIPLOC entries
+- Investigate `source_timetable=true` contamination in schedule/seed
+- Monitor `darwin_errors` for trends
 - Build dashboard query for unresolved errors
