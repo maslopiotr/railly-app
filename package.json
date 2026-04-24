@@ -7,6 +7,7 @@
     "packages/*"
   ],
   "scripts": {
+    "docker:ps": "docker ps --format \"table {{.Names}}\\t{{.Status}}\" 2>&1",
     "rebuildall": "npm run build && npm run docker:rebuild",
     "build": "npm run build --workspaces",
     "docker:rebuild": "docker compose up -d --build",
