@@ -261,18 +261,42 @@ function incrementType(type: string): void {
 
 async function handleDeactivated(rid: string): Promise<void> {
   await sql.begin(async (tx) => {
-    await tx`
-      UPDATE service_rt
-      SET is_cancelled = true, last_updated = NOW()
-      WHERE rid = ${rid}
-    `;
-    await tx`
-      UPDATE calling_points
-      SET is_cancelled = true
+    // deactivated means the service is removed from the active Darwin set.
+    // This happens when a service completes its journey OR is cancelled.
+    // We should NOT assume cancelled — cancellation is set by schedule/TS messages.
+    // Only mark is_cancelled if the service has no actual movement (ata/atd) data,
+    // which would indicate it never ran.
+    const movementData = await tx`
+      SELECT COUNT(*) as cp_count,
+        COUNT(*) FILTER (WHERE ata_pushport IS NOT NULL OR atd_pushport IS NOT NULL) as moved
+      FROM calling_points
       WHERE journey_rid = ${rid}
     `;
+    const hasMovement = movementData.length > 0 && Number(movementData[0].moved) > 0;
+
+    if (!hasMovement) {
+      // No actual times recorded — service likely never ran, mark as cancelled
+      await tx`
+        UPDATE service_rt
+        SET is_cancelled = true, last_updated = NOW()
+        WHERE rid = ${rid}
+      `;
+      await tx`
+        UPDATE calling_points
+        SET is_cancelled = true
+        WHERE journey_rid = ${rid}
+      `;
+      console.log(`   🗑️ Deactivated (no movement, marking cancelled): ${rid}`);
+    } else {
+      // Service ran (has actual times) — just update last_updated
+      await tx`
+        UPDATE service_rt
+        SET last_updated = NOW()
+        WHERE rid = ${rid}
+      `;
+      console.log(`   🗑️ Deactivated (completed journey): ${rid}`);
+    }
   });
-  console.log(`   🗑️ Deactivated: ${rid}`);
 }
 
 // ── Station Message handler (P1) ──────────────────────────────────────────────

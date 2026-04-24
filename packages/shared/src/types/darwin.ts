@@ -115,6 +115,18 @@ export interface DarwinTrainStatus {
   locations: DarwinTSLocation[];
 }
 
+/** Nested time info in Darwin TS location (arr/dep/pass sub-objects) */
+export interface DarwinTSTimeInfo {
+  et?: string; // Estimated time
+  wet?: string; // Working estimated time
+  at?: string; // Actual time
+  atClass?: string; // Actual time classification (e.g. "Automatic")
+  src?: string; // Source (e.g. "Darwin", "TD", "CIS")
+  srcInst?: string; // Source instance (e.g. "at08")
+  etmin?: string; // Earliest estimated time
+  etmax?: string; // Latest estimated time
+}
+
 /** A location within a Train Status message */
 export interface DarwinTSLocation {
   tpl: string;
@@ -127,11 +139,16 @@ export interface DarwinTSLocation {
   platIsSuppressed?: boolean; // Platform suppressed from public display
   platSourcedFromTIPLOC?: boolean; // Platform sourced from TIPLOC
   platformIsChanged?: boolean; // Platform has changed from booked
-  ata?: string; // Actual time arrived
-  atd?: string; // Actual time departed
-  et?: string; // Estimated time (arrival or departure)
-  eta?: string; // Estimated time of arrival
-  etd?: string; // Estimated time of departure
+  // ── Nested time objects (raw Darwin format, extracted by parser) ──
+  arr?: DarwinTSTimeInfo; // Arrival estimates/actuals
+  dep?: DarwinTSTimeInfo; // Departure estimates/actuals
+  pass?: DarwinTSTimeInfo; // Passing estimates/actuals
+  // ── Flattened time fields (populated by parser from nested + flat et) ──
+  ata?: string; // Actual time arrived (from arr.at)
+  atd?: string; // Actual time departed (from dep.at or pass.at)
+  et?: string; // Estimated time (flat, arrival or departure)
+  eta?: string; // Estimated time of arrival (from arr.et)
+  etd?: string; // Estimated time of departure (from dep.et or pass.et)
   etMin?: string; // Earliest estimated time
   etMax?: string; // Latest estimated time
   uncertainDelay?: boolean; // Delay is uncertain

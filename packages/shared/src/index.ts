@@ -11,6 +11,7 @@ export type {
   DarwinAssocService,
   DarwinTrainStatus as DarwinTS,
   DarwinTSLocation,
+  DarwinTSTimeInfo,
   DarwinStationMessage,
   DarwinTrainAlert,
   DarwinTrainOrder,

@@ -1,55 +1,47 @@
 # Active Context
 
 ## Current Focus
-**Board accuracy fixes deployed and verified.** See `bugs/investigation-board-accuracy.md` for full investigation.
+**Critical Darwin parser bug fixed: nested arr/dep/pass objects not extracted.**
+
+### Bug Discovery (2026-04-24)
+Service 202604248708107 (W08107) showed as "cancelled" on RealTimeTrains despite having completed its journey. Investigation of raw `darwin_events` revealed:
+
+1. **Parser bug**: Darwin TS messages nest estimates/actuals in `arr`, `dep`, `pass` sub-objects (e.g. `arr.et`, `dep.at`), but the parser only extracted the flat `l.et` field. Result: ALL `_pushport` columns (eta/etd/ata/atd) were NULL for every service — no real-time data was ever stored.
+
+2. **Deactivated handler bug**: `handleDeactivated` unconditionally set `is_cancelled = true`, but Darwin `deactivated` means "service removed from active set" (completed OR cancelled), not specifically cancelled. With no pushport data to indicate movement, all completed services were incorrectly marked cancelled.
 
 ### Fixes Implemented
-1. ✅ Removed "missing locations" insert from trainStatus.ts — TS handler now only UPDATEs existing CP rows
-2. ✅ Board query filters by `source_timetable = true` for service discovery
-3. ✅ Deleted 1,012,441 phantom CP rows (darwin-only non-PP + orphans)
-4. ✅ Fixed 73,555 wrong CRS codes using `location_ref` table
-5. ✅ Consumer rebuilt and deployed
+1. ✅ **Parser** (`parser.ts`): Extract `arr.et` → `eta`, `arr.at` → `ata`, `dep.et` → `etd`, `dep.at` → `atd`, `pass.et` → `etd` (fallback), `pass.at` → `atd` (fallback)
+2. ✅ **Types** (`darwin.ts`): Added `DarwinTSTimeInfo` interface + `arr`/`dep`/`pass` fields to `DarwinTSLocation`
+3. ✅ **Deactivated handler** (`index.ts`): Now checks for actual movement data before marking as cancelled
+4. ✅ **DB cleanup**: Cleared 8,323 incorrect `is_cancelled` flags on `service_rt` + 183,440 on `calling_points`
+5. ✅ Consumer rebuilt and deployed — pushport columns now populating correctly
 
-### Results
-| Metric | Before | After |
-|---|---|---|
-| EUS service count | 75 | 58 |
-| KGX service count | ~75 | 40 |
-| Calling points (Avanti VT) | 161 | 16 |
-| Calling points (Grand Central) | 74 | 8 |
-| Phantom CP rows | 15,941 | 788 (VSTP only) |
-| Wrong CRS codes | 55,883 | 0 |
-| Orphan rows | 2,452 | 0 |
+### Verification
+After deploy, `calling_points` now shows real-time data:
+- `eta_pushport`/`etd_pushport` populated from `arr.et`/`dep.et`
+- `ata_pushport`/`atd_pushport` populated from `arr.at`/`dep.at`
+- `delay_minutes` calculated correctly (e.g. 23 min delay at STEVNGE)
+- `is_cancelled = false` for running/completed services
 
-### Remaining Issues
-- CRS codes in seed data are wrong for some TIPLOCs (fixed in DB via location_ref, but seed will re-insert wrong CRS on reseed)
-- Schedule handler may still create `source_timetable=true` contamination for wrong services
-- No `(journey_rid, tpl)` UNIQUE constraint yet
-- Schedule handler doesn't delete old CPs on refresh
+### Previous Fixes (still valid)
+- Board query filters by `source_timetable = true`
+- TS handler only UPDATEs existing CP rows
+- CRS codes fixed via `location_ref`
+- Phantom CP rows deleted
 
 ## Key Files Modified
-- `packages/api/drizzle/0005_source_separation.sql` — Migration
-- `packages/api/src/db/schema.ts` — Drizzle schema
-- `packages/shared/src/types/board.ts` — HybridCallingPoint, HybridBoardService
-- `packages/shared/src/types/timetable.ts` — TimetableCallingPoint
-- `packages/shared/src/types/darwin.ts` — DarwinTSLocation.confirmed
-- `packages/api/src/db/seed-timetable.ts` — Writes _timetable columns only
-- `packages/api/src/routes/boards.ts` — Source-priority platform/time logic
-- `packages/api/src/routes/services.ts` — Source-priority service detail
-- `packages/api/src/routes/timetable.ts` — Reads _timetable columns
-- `packages/consumer/src/handlers/schedule.ts` — Writes _timetable columns
-- `packages/consumer/src/handlers/trainStatus.ts` — Writes _pushport columns only
-- `packages/frontend/src/components/CallingPoints.tsx` — Platform source badges
-- `packages/frontend/src/components/ServiceRow.tsx` — Platform source display
+- `packages/shared/src/types/darwin.ts` — DarwinTSTimeInfo + arr/dep/pass on DarwinTSLocation
+- `packages/shared/src/index.ts` — Export DarwinTSTimeInfo
+- `packages/consumer/src/parser.ts` — Extract nested arr/dep/pass time objects
+- `packages/consumer/src/handlers/index.ts` — handleDeactivated checks movement data
 
 ## Next Steps
 - **Phase 2 verification bugs** documented in `bugs/phase2-verification-findings.md`:
   1. Platform "-3" bug — visible error, likely simple fix
-  2. "Expected XX:XX" for delayed trains — needs frontend implementation
-  3. Delay calculation on calling points — not showing delays
-  4. Service 202604248706842 cancellation — verify if correct
-  5. Scheduled vs real-time always same — API + frontend changes needed
-  6. Data quality re-verification — run SQL queries
-  7. Route legitimacy comparison with National Rail
-- Monitor `darwin_errors` for trends (should trend to zero)
-- Consider Phase 3: full consumer rewrite with improved matching
+  2. "Expected XX:XX" for delayed trains — now pushport data exists, needs frontend
+  3. Delay calculation — now working (delay_minutes populated)
+  4. Scheduled vs real-time display — now pushport data exists, needs frontend
+  5. Data quality re-verification — run SQL queries
+- Historical TS data still missing for today's earlier services (parser fix only applies going forward)
+- Monitor `darwin_errors` for trends

@@ -160,6 +160,47 @@ export function parseDarwinMessage(raw: Buffer | string | null): DarwinMessage |
             }
             normalizePlatform(l);
 
+            // ── Extract from nested arr/dep/pass objects ────────────────────
+            // Darwin TS messages nest estimates/actuals in sub-objects:
+            //   arr: { et: "17:07", at: "17:05", src: "Darwin" }
+            //   dep: { et: "17:08", at: "17:06", src: "Darwin" }
+            //   pass: { et: "17:02", at: "17:05", src: "TD" }
+            // These must be flattened to eta/etd/ata/atd for the handler.
+
+            // Extract arrival estimates/actuals from arr
+            if (l.arr && typeof l.arr === "object") {
+              const arr = l.arr as Record<string, unknown>;
+              if (arr.et && typeof arr.et === "string" && arr.et.trim()) {
+                l.eta = arr.et.trim();
+              }
+              if (arr.at && typeof arr.at === "string" && arr.at.trim()) {
+                l.ata = arr.at.trim();
+              }
+            }
+
+            // Extract departure estimates/actuals from dep
+            if (l.dep && typeof l.dep === "object") {
+              const dep = l.dep as Record<string, unknown>;
+              if (dep.et && typeof dep.et === "string" && dep.et.trim()) {
+                l.etd = dep.et.trim();
+              }
+              if (dep.at && typeof dep.at === "string" && dep.at.trim()) {
+                l.atd = dep.at.trim();
+              }
+            }
+
+            // Extract passing estimates/actuals from pass
+            // For PP locations, pass.et/pass.at are the only times available
+            if (l.pass && typeof l.pass === "object") {
+              const pass = l.pass as Record<string, unknown>;
+              if (pass.et && typeof pass.et === "string" && pass.et.trim()) {
+                if (!l.etd) l.etd = pass.et.trim();
+              }
+              if (pass.at && typeof pass.at === "string" && pass.at.trim()) {
+                if (!l.atd) l.atd = pass.at.trim();
+              }
+            }
+
             // Map Darwin's generic `et` field to the correct specific field.
             // Darwin sends `et` when the location only has one meaningful time.
             // Use isPass/isOrigin/isDestination to determine which:
