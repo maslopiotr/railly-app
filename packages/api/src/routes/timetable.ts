@@ -95,15 +95,15 @@ router.get("/:crs/schedule", async (req, res, next) => {
       // Exclude passing points — only show stops
       sql`${callingPoints.stopType} NOT IN ('PP')`,
       // Exclude rows without any public time
-      sql`(${callingPoints.pta} IS NOT NULL OR ${callingPoints.ptd} IS NOT NULL)`,
+      sql`(${callingPoints.ptaTimetable} IS NOT NULL OR ${callingPoints.ptdTimetable} IS NOT NULL)`,
     ];
 
     // Apply time filters at DB level
     if (timeFrom) {
-      conditions.push(sql`${callingPoints.ptd} IS NOT NULL AND ${callingPoints.ptd} >= ${timeFrom}`);
+      conditions.push(sql`${callingPoints.ptdTimetable} IS NOT NULL AND ${callingPoints.ptdTimetable} >= ${timeFrom}`);
     }
     if (timeTo) {
-      conditions.push(sql`${callingPoints.ptd} IS NOT NULL AND ${callingPoints.ptd} <= ${timeTo}`);
+      conditions.push(sql`${callingPoints.ptdTimetable} IS NOT NULL AND ${callingPoints.ptdTimetable} <= ${timeTo}`);
     }
 
     // Query: find calling points at this CRS for the given date,
@@ -117,9 +117,9 @@ router.get("/:crs/schedule", async (req, res, next) => {
         toc: journeys.toc,
         tocName: tocRef.tocName,
         trainCat: journeys.trainCat,
-        pta: callingPoints.pta,
-        ptd: callingPoints.ptd,
-        plat: callingPoints.plat,
+        pta: callingPoints.ptaTimetable,
+        ptd: callingPoints.ptdTimetable,
+        plat: callingPoints.platTimetable,
         stopType: callingPoints.stopType,
         tpl: callingPoints.tpl,
       })
@@ -127,7 +127,7 @@ router.get("/:crs/schedule", async (req, res, next) => {
       .innerJoin(journeys, eq(callingPoints.journeyRid, journeys.rid))
       .leftJoin(tocRef, eq(journeys.toc, tocRef.toc))
       .where(and(...conditions))
-      .orderBy(asc(callingPoints.ptd), asc(callingPoints.pta))
+      .orderBy(asc(callingPoints.ptdTimetable), asc(callingPoints.ptaTimetable))
       .limit(limit);
 
     // Get origin and destination for each journey
@@ -195,9 +195,9 @@ router.get("/:crs/schedule", async (req, res, next) => {
         toc: r.toc,
         tocName: r.tocName,
         trainCat: r.trainCat,
-        pta: r.pta,
-        ptd: r.ptd,
-        plat: r.plat,
+        ptaTimetable: r.pta,
+        ptdTimetable: r.ptd,
+        platTimetable: r.plat,
         origin: {
           crs: endpoints?.originCrs || null,
           name: endpoints?.originName || null,
@@ -261,12 +261,12 @@ router.get("/:rid", async (req, res, next) => {
         stopType: callingPoints.stopType,
         tpl: callingPoints.tpl,
         crs: callingPoints.crs,
-        plat: callingPoints.plat,
-        pta: callingPoints.pta,
-        ptd: callingPoints.ptd,
-        wta: callingPoints.wta,
-        wtd: callingPoints.wtd,
-        wtp: callingPoints.wtp,
+        plat: callingPoints.platTimetable,
+        pta: callingPoints.ptaTimetable,
+        ptd: callingPoints.ptdTimetable,
+        wta: callingPoints.wtaTimetable,
+        wtd: callingPoints.wtdTimetable,
+        wtp: callingPoints.wtpTimetable,
         act: callingPoints.act,
       })
       .from(callingPoints)
@@ -306,12 +306,12 @@ router.get("/:rid", async (req, res, next) => {
         tpl: p.tpl,
         crs: p.crs || loc?.crs || null,
         name: loc?.name || null,
-        plat: p.plat || null,
-        pta: p.pta || null,
-        ptd: p.ptd || null,
-        wta: p.wta || null,
-        wtd: p.wtd || null,
-        wtp: p.wtp || null,
+        platTimetable: p.plat || null,
+        ptaTimetable: p.pta || null,
+        ptdTimetable: p.ptd || null,
+        wtaTimetable: p.wta || null,
+        wtdTimetable: p.wtd || null,
+        wtpTimetable: p.wtp || null,
         act: p.act || null,
       };
     });

@@ -53,23 +53,23 @@ function computeDelay(scheduled: string | null, estimated: string | null, actual
 }
 
 /** Platform badge for service detail — same styling as board row but larger */
-function PlatformBadge({ platform, platformLive, platformSource }: {
-  platform: string | null;
+function PlatformBadge({ platformTimetable, platformLive, platformSource }: {
+  platformTimetable: string | null;
   platformLive: string | null;
   platformSource: PlatformSource;
 }) {
-  if (!platform && !platformLive) {
+  if (!platformTimetable && !platformLive) {
     return <span className="platform platform-none text-lg px-3 py-1">—</span>;
   }
 
   switch (platformSource) {
     case "confirmed":
-      return <span className="platform platform-confirmed text-lg px-3 py-1">{platformLive}</span>;
+      return <span className="platform platform-confirmed text-lg px-3 py-1">{platformLive || platformTimetable}</span>;
 
     case "altered":
       return (
         <span className="platform platform-altered text-lg px-3 py-1">
-          <span className="platform-booked">{platform}</span>
+          <span className="platform-booked">{platformTimetable}</span>
           <span className="platform-arrow">→</span>
           <span className="platform-live">{platformLive}</span>
         </span>
@@ -87,10 +87,10 @@ function PlatformBadge({ platform, platformLive, platformSource }: {
       return <span className="platform platform-expected text-lg px-3 py-1">—</span>;
 
     case "scheduled":
-      return <span className="platform platform-scheduled text-lg px-3 py-1">{platform}</span>;
+      return <span className="platform platform-scheduled text-lg px-3 py-1">{platformTimetable}</span>;
 
     default:
-      return <span className="platform text-lg px-3 py-1">{platformLive || platform}</span>;
+      return <span className="platform text-lg px-3 py-1">{platformLive || platformTimetable}</span>;
   }
 }
 
@@ -170,7 +170,7 @@ export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefres
           {/* Platform badge */}
           <div className="shrink-0">
             <PlatformBadge
-              platform={service.platform}
+              platformTimetable={service.platformTimetable}
               platformLive={service.platformLive}
               platformSource={service.platformSource}
             />
@@ -189,9 +189,9 @@ export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefres
           <strong>Delayed {delay} min:</strong> {service.delayReason}
         </div>
       )}
-      {service.platformSource === "altered" && service.platformLive && service.platform !== service.platformLive && (
+      {service.platformSource === "altered" && service.platformLive && service.platformTimetable !== service.platformLive && (
         <div className="mx-4 mt-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-300 text-sm">
-          Platform altered from {service.platform} to {service.platformLive}
+          Platform altered from {service.platformTimetable} to {service.platformLive}
         </div>
       )}
       {service.adhocAlerts?.map((alert, i) => (

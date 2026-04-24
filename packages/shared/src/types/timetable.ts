@@ -9,12 +9,12 @@ export interface TimetableCallingPoint {
   tpl: string;
   crs: string | null;
   name: string | null;
-  plat: string | null;
-  pta: string | null; // Public arrival time HH:MM
-  ptd: string | null; // Public departure time HH:MM
-  wta: string | null; // Working arrival time
-  wtd: string | null; // Working departure time
-  wtp: string | null; // Working passing time
+  platTimetable: string | null;
+  ptaTimetable: string | null; // Public arrival time HH:MM
+  ptdTimetable: string | null; // Public departure time HH:MM
+  wtaTimetable: string | null; // Working arrival time
+  wtdTimetable: string | null; // Working departure time
+  wtpTimetable: string | null; // Working passing time
   act: string | null; // Activities
 }
 
@@ -40,9 +40,9 @@ export interface TimetableServiceSummary {
   tocName: string | null;
   trainCat: string | null;
   /** The calling point at this station */
-  pta: string | null;
-  ptd: string | null;
-  plat: string | null;
+  ptaTimetable: string | null;
+  ptdTimetable: string | null;
+  platTimetable: string | null;
   /** Destination name and CRS */
   destination: { crs: string | null; name: string | null };
   /** Origin name and CRS */

@@ -125,7 +125,7 @@ function determineCurrentLocation(
 ): CurrentLocation | null {
   let lastDepartedIndex = -1;
   for (let i = 0; i < callingPoints.length; i++) {
-    if (callingPoints[i].atd) {
+    if (callingPoints[i].atdPushport) {
       lastDepartedIndex = i;
     }
   }
@@ -136,14 +136,14 @@ function determineCurrentLocation(
       tpl: nextCp.tpl,
       crs: nextCp.crs,
       name: nextCp.name,
-      status: nextCp.ata ? "at_platform" : "approaching",
+      status: nextCp.ataPushport ? "at_platform" : "approaching",
     };
   }
 
   if (
     callingPoints.length > 0 &&
-    callingPoints[0].ata &&
-    !callingPoints[0].atd
+    callingPoints[0].ataPushport &&
+    !callingPoints[0].atdPushport
   ) {
     const cp = callingPoints[0];
     return {
@@ -274,10 +274,10 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
     // ── Build SQL time filter using day_offset ─────────────────────────
     // wall_clock_minutes = days_from_today * 1440 + time_minutes
     // where days_from_today = (ssd_date + day_offset) - today_date
-    // This replaces all per-SSD time window logic with a single condition.
-    const timeField = boardType === "arrivals" ? callingPoints.pta : callingPoints.ptd;
+    // Uses cp.ssd (denormalized) instead of joining to journeys.ssd
+    const timeField = boardType === "arrivals" ? callingPoints.ptaTimetable : callingPoints.ptdTimetable;
     const wallMinutesSql = sql<number>`
-      (EXTRACT(EPOCH FROM (${journeys.ssd}::date + ${callingPoints.dayOffset} * INTERVAL '1 day') - ${todayStr}::date) / 86400)::integer * 1440
+      (EXTRACT(EPOCH FROM (COALESCE(${callingPoints.ssd}, ${journeys.ssd})::date + ${callingPoints.dayOffset} * INTERVAL '1 day') - ${todayStr}::date) / 86400)::integer * 1440
       + EXTRACT(HOUR FROM ${timeField}::time) * 60
       + EXTRACT(MINUTE FROM ${timeField}::time)
     `;
@@ -299,20 +299,25 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         stopType: callingPoints.stopType,
         tpl: callingPoints.tpl,
         crs: callingPoints.crs,
-        plat: callingPoints.plat,
-        pta: callingPoints.pta,
-        ptd: callingPoints.ptd,
-        wta: callingPoints.wta,
-        wtd: callingPoints.wtd,
-        wtp: callingPoints.wtp,
+        cpSsd: callingPoints.ssd,
+        sourceTimetable: callingPoints.sourceTimetable,
+        sourceDarwin: callingPoints.sourceDarwin,
+        // Timetable columns
+        platTimetable: callingPoints.platTimetable,
+        ptaTimetable: callingPoints.ptaTimetable,
+        ptdTimetable: callingPoints.ptdTimetable,
+        wtaTimetable: callingPoints.wtaTimetable,
+        wtdTimetable: callingPoints.wtdTimetable,
+        wtpTimetable: callingPoints.wtpTimetable,
         act: callingPoints.act,
         dayOffset: callingPoints.dayOffset,
-        // Real-time columns
-        eta: callingPoints.eta,
-        etd: callingPoints.etd,
-        ata: callingPoints.ata,
-        atd: callingPoints.atd,
-        livePlat: callingPoints.livePlat,
+        // Push Port columns
+        etaPushport: callingPoints.etaPushport,
+        etdPushport: callingPoints.etdPushport,
+        ataPushport: callingPoints.ataPushport,
+        atdPushport: callingPoints.atdPushport,
+        platPushport: callingPoints.platPushport,
+        platSource: callingPoints.platSource,
         isCancelled: callingPoints.isCancelled,
         delayMinutes: callingPoints.delayMinutes,
         delayReason: callingPoints.delayReason,
@@ -336,16 +341,17 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       .where(
         and(
           eq(callingPoints.crs, crs),
+          eq(callingPoints.sourceTimetable, true),
           inArray(journeys.ssd, ssds),
           eq(journeys.isPassenger, true),
           sql`${callingPoints.stopType} != 'PP'`,
           boardType === "arrivals"
-            ? sql`${callingPoints.pta} IS NOT NULL`
-            : sql`${callingPoints.ptd} IS NOT NULL`,
+            ? sql`${callingPoints.ptaTimetable} IS NOT NULL`
+            : sql`${callingPoints.ptdTimetable} IS NOT NULL`,
           timeFilter,
         ),
       )
-      .orderBy(asc(wallMinutesSql), asc(callingPoints.pta));
+      .orderBy(asc(wallMinutesSql), asc(callingPoints.ptaTimetable));
 
     if (scheduledResults.length === 0) {
       return res.json({
@@ -415,21 +421,27 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         stopType: callingPoints.stopType,
         tpl: callingPoints.tpl,
         crs: callingPoints.crs,
-        plat: callingPoints.plat,
-        pta: callingPoints.pta,
-        ptd: callingPoints.ptd,
-        wta: callingPoints.wta,
-        wtd: callingPoints.wtd,
-        wtp: callingPoints.wtp,
+        cpSsd: callingPoints.ssd,
+        sourceTimetable: callingPoints.sourceTimetable,
+        sourceDarwin: callingPoints.sourceDarwin,
+        // Timetable columns
+        platTimetable: callingPoints.platTimetable,
+        ptaTimetable: callingPoints.ptaTimetable,
+        ptdTimetable: callingPoints.ptdTimetable,
+        wtaTimetable: callingPoints.wtaTimetable,
+        wtdTimetable: callingPoints.wtdTimetable,
+        wtpTimetable: callingPoints.wtpTimetable,
         act: callingPoints.act,
         dayOffset: callingPoints.dayOffset,
-        name: locationRef.name,
-        // Real-time columns
-        eta: callingPoints.eta,
-        etd: callingPoints.etd,
-        ata: callingPoints.ata,
-        atd: callingPoints.atd,
-        livePlat: callingPoints.livePlat,
+        cpName: callingPoints.name,
+        locName: locationRef.name,
+        // Push Port columns
+        etaPushport: callingPoints.etaPushport,
+        etdPushport: callingPoints.etdPushport,
+        ataPushport: callingPoints.ataPushport,
+        atdPushport: callingPoints.atdPushport,
+        platPushport: callingPoints.platPushport,
+        platSource: callingPoints.platSource,
         isCancelled: callingPoints.isCancelled,
         platIsSuppressed: callingPoints.platIsSuppressed,
       })
@@ -457,33 +469,34 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
     const filteredResults = scheduledResults.filter((entry) => {
       const hasRealtime =
         entry.serviceRtRid != null ||
-        entry.eta != null ||
-        entry.etd != null ||
-        entry.ata != null ||
-        entry.atd != null;
+        entry.etaPushport != null ||
+        entry.etdPushport != null ||
+        entry.ataPushport != null ||
+        entry.atdPushport != null;
 
       const schedMinutes = parseTimeToMinutes(
-        boardType === "arrivals" ? entry.pta : entry.ptd
+        boardType === "arrivals" ? entry.ptaTimetable : entry.ptdTimetable
       );
       if (schedMinutes === null) return false;
 
       // Compute wall-clock minutes using day_offset
-      // daysFromToday = (ssd + dayOffset) - today
-      const ssdDate = new Date(entry.rid.slice(0, 4) + "-" + entry.rid.slice(4, 6) + "-" + entry.rid.slice(6, 8) + "T12:00:00Z");
+      // Use cp.ssd (denormalized) with fallback to RID-derived SSD
+      const ssdStr = entry.cpSsd || (entry.rid.length >= 8 ? `${entry.rid.slice(0,4)}-${entry.rid.slice(4,6)}-${entry.rid.slice(6,8)}` : todayStr);
+      const ssdDate = new Date(ssdStr + "T12:00:00Z");
       const todayDate = new Date(todayStr + "T12:00:00Z");
       const daysFromToday = Math.round((ssdDate.getTime() - todayDate.getTime()) / 86400000) + entry.dayOffset;
       const wallMinutes = daysFromToday * 1440 + schedMinutes;
 
       // Already departed from this station — only show within pastWindow, no grace
-      const alreadyDeparted = entry.atd != null;
+      const alreadyDeparted = entry.atdPushport != null;
       // Already arrived at this station (arrivals view) — only show within pastWindow
-      const alreadyArrived = boardType === "arrivals" && entry.ata != null;
+      const alreadyArrived = boardType === "arrivals" && entry.ataPushport != null;
 
       if (hasRealtime) {
         const rtTime =
           boardType === "arrivals"
-            ? (entry.ata || entry.eta)
-            : (entry.atd || entry.etd || entry.eta);
+            ? (entry.ataPushport || entry.etaPushport)
+            : (entry.atdPushport || entry.etdPushport || entry.etaPushport);
         const rtMinutes = rtTime
           ? parseTimeToMinutes(rtTime)
           : null;
@@ -515,9 +528,9 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       const callingPattern = callingPatternMap.get(rid) || [];
 
       const platformChanged =
-        entry.livePlat != null &&
-        entry.plat != null &&
-        entry.livePlat !== entry.plat;
+        entry.platPushport != null &&
+        entry.platTimetable != null &&
+        entry.platPushport !== entry.platTimetable;
 
       const isCancelled =
         entry.isCancelled || entry.rtIsCancelled || false;
@@ -526,11 +539,11 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
 
       const hasRealtime =
         entry.serviceRtRid != null ||
-        entry.eta != null ||
-        entry.etd != null ||
-        entry.ata != null ||
-        entry.atd != null ||
-        entry.livePlat != null;
+        entry.etaPushport != null ||
+        entry.etdPushport != null ||
+        entry.ataPushport != null ||
+        entry.atdPushport != null ||
+        entry.platPushport != null;
 
       let eta: string | null = null;
       let etd: string | null = null;
@@ -539,32 +552,35 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         eta = "Cancelled";
         etd = "Cancelled";
       } else {
-        eta = entry.eta ?? entry.pta ?? null;
-        etd = entry.etd ?? entry.ptd ?? null;
+        eta = entry.etaPushport ?? entry.ptaTimetable ?? null;
+        etd = entry.etdPushport ?? entry.ptdTimetable ?? null;
       }
 
-      const platformSource = getPlatformSource(
-        entry.plat,
-        entry.livePlat,
-        platformChanged,
-        entry.platIsSuppressed,
-      );
-      // platform stays as the booked platform; platformLive is the live one
-      const displayPlatform = entry.plat;
-      const livePlatform = entry.livePlat;
+      // Use platSource from DB if available, otherwise compute from platform values
+      const platformSource = entry.platSource
+        ? (entry.platSource as "confirmed" | "altered" | "suppressed" | "expected" | "scheduled")
+        : getPlatformSource(
+            entry.platTimetable,
+            entry.platPushport,
+            platformChanged,
+            entry.platIsSuppressed,
+          );
+      // platformTimetable is the booked platform; platPushport is the live one
+      const displayPlatform = entry.platTimetable;
+      const livePlatform = entry.platPushport;
 
       const delayMinutes = computeDelayMinutes(
-        entry.ptd || entry.pta,
+        entry.ptdTimetable || entry.ptaTimetable,
         eta || etd,
-        entry.ata || entry.atd,
+        entry.ataPushport || entry.atdPushport,
       );
       let trainStatus = determineTrainStatus(
         isCancelled,
         hasRealtime,
         eta,
-        entry.ata,
-        entry.atd,
-        entry.ptd || entry.pta,
+        entry.ataPushport,
+        entry.atdPushport,
+        entry.ptdTimetable || entry.ptaTimetable,
       );
 
       const cpList: HybridCallingPoint[] = callingPattern
@@ -572,21 +588,26 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         .map((cp) => ({
           tpl: cp.tpl,
           crs: cp.crs ?? null,
-          name: cp.name || cp.tpl,
+          name: cp.cpName || cp.locName || cp.tpl,
           stopType: cp.stopType,
-          plat: cp.plat ?? null,
-          pta: cp.pta ?? null,
-          ptd: cp.ptd ?? null,
-          wta: cp.wta ?? null,
-          wtd: cp.wtd ?? null,
-          wtp: cp.wtp ?? null,
-          act: cp.act ?? null,
           dayOffset: cp.dayOffset ?? 0,
-          eta: cp.eta ?? null,
-          etd: cp.etd ?? null,
-          ata: cp.ata ?? null,
-          atd: cp.atd ?? null,
-          platformLive: cp.livePlat ?? null,
+          sourceTimetable: cp.sourceTimetable ?? false,
+          sourceDarwin: cp.sourceDarwin ?? false,
+          // Timetable data
+          platTimetable: cp.platTimetable ?? null,
+          ptaTimetable: cp.ptaTimetable ?? null,
+          ptdTimetable: cp.ptdTimetable ?? null,
+          wtaTimetable: cp.wtaTimetable ?? null,
+          wtdTimetable: cp.wtdTimetable ?? null,
+          wtpTimetable: cp.wtpTimetable ?? null,
+          act: cp.act ?? null,
+          // Push Port data
+          etaPushport: cp.etaPushport ?? null,
+          etdPushport: cp.etdPushport ?? null,
+          ataPushport: cp.ataPushport ?? null,
+          atdPushport: cp.atdPushport ?? null,
+          platPushport: cp.platPushport ?? null,
+          platSource: cp.platSource ?? null,
           isCancelled: cp.isCancelled,
           delayReason: null,
           cancelReason: null,
@@ -612,9 +633,9 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         toc: entry.toc || null,
         tocName: entry.tocName || null,
         trainCat: entry.trainCat || null,
-        sta: entry.pta || null,
-        std: entry.ptd || null,
-        platform: displayPlatform,
+        sta: entry.ptaTimetable || null,
+        std: entry.ptdTimetable || null,
+        platformTimetable: displayPlatform,
         origin: {
           crs: endpoints?.origin?.crs ?? null,
           name:
@@ -629,6 +650,8 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         },
         callingPoints: cpList,
         serviceType: "train",
+        sourceTimetable: entry.sourceTimetable ?? true,
+        sourceDarwin: entry.sourceDarwin ?? false,
         hasRealtime,
         eta,
         etd,
@@ -645,8 +668,8 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         delayMinutes,
         trainStatus,
         currentLocation,
-        actualArrival: entry.ata || null,
-        actualDeparture: entry.atd || null,
+        actualArrival: entry.ataPushport || null,
+        actualDeparture: entry.atdPushport || null,
       });
     }
 

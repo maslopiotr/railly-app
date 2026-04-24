@@ -64,10 +64,11 @@ interface ParsedLocationRef {
   toc: string | null;
 }
 
-// ── File discovery & sorting ──────────────────────────────────────────────────
+// ── File discovery — only latest version per day ─────────────────────────────
 
 interface TimetableFile {
   filename: string;
+  ssd: string;
   version: number;
   isRef: boolean;
 }
@@ -78,21 +79,38 @@ function discoverFiles(): { refFiles: TimetableFile[]; ttFiles: TimetableFile[] 
   const parsed: TimetableFile[] = [];
   for (const f of files) {
     const refMatch = f.match(/_ref_v(\d+)\.xml\.gz$/);
-    const ttMatch = f.match(/_v(\d+)\.xml\.gz$/);
+    const ttMatch = f.match(/PPTimetable_(\d{8})\d+_v(\d+)\.xml\.gz$/);
 
     if (refMatch) {
-      parsed.push({ filename: f, version: parseInt(refMatch[1]), isRef: true });
+      // Reference files: pick latest version per day
+      const ssdMatch = f.match(/PPTimetable_(\d{8})/);
+      const ssd = ssdMatch ? ssdMatch[1] : "unknown";
+      parsed.push({ filename: f, ssd, version: parseInt(refMatch[1]), isRef: true });
     } else if (ttMatch) {
-      parsed.push({ filename: f, version: parseInt(ttMatch[1]), isRef: false });
+      parsed.push({ filename: f, ssd: ttMatch[1], version: parseInt(ttMatch[2]), isRef: false });
     }
   }
 
-  const refFiles = parsed
-    .filter((f) => f.isRef)
-    .sort((a, b) => a.version - b.version);
-  const ttFiles = parsed
-    .filter((f) => !f.isRef)
-    .sort((a, b) => a.version - b.version);
+  // For ref files: pick latest version per SSD
+  const refBySsd = new Map<string, TimetableFile>();
+  for (const f of parsed.filter((f) => f.isRef)) {
+    const existing = refBySsd.get(f.ssd);
+    if (!existing || f.version > existing.version) {
+      refBySsd.set(f.ssd, f);
+    }
+  }
+
+  // For timetable files: pick latest version per SSD
+  const ttBySsd = new Map<string, TimetableFile>();
+  for (const f of parsed.filter((f) => !f.isRef)) {
+    const existing = ttBySsd.get(f.ssd);
+    if (!existing || f.version > existing.version) {
+      ttBySsd.set(f.ssd, f);
+    }
+  }
+
+  const refFiles = [...refBySsd.values()].sort((a, b) => a.version - b.version);
+  const ttFiles = [...ttBySsd.values()].sort((a, b) => a.version - b.version);
 
   return { refFiles, ttFiles };
 }
@@ -245,11 +263,6 @@ function parseTimeToMinutes(time: string | null): number {
  * time in minutes. When the current time is earlier than the previous time
  * AND the previous time was in the evening (>= 20:00 / 1200 min),
  * we've crossed midnight — increment day_offset.
- *
- * This handles:
- * - Normal services: all day_offset = 0
- * - Cross-midnight services: stops after midnight get day_offset = 1
- * - Sleeper services: can get day_offset = 2 (e.g. depart 23:00, arrive 08:00 next-next day)
  */
 function computeDayOffsets(points: ParsedCallingPoint[]): void {
   let dayOffset = 0;
@@ -286,11 +299,11 @@ function readGzXml(filePath: string): string {
 // ── Main seed function ────────────────────────────────────────────────────────
 
 async function seed() {
-  console.log("🚂 Seeding timetable data from PPTimetable...");
+  console.log("🚂 Seeding timetable data from PPTimetable (upsert mode)...");
   console.log(`   Data directory: ${DATA_DIR}`);
 
   const { refFiles, ttFiles } = discoverFiles();
-  console.log(`   Found ${refFiles.length} reference files, ${ttFiles.length} timetable files`);
+  console.log(`   Found ${refFiles.length} reference files (latest only), ${ttFiles.length} timetable files (latest only per day)`);
 
   // ── Phase 1: Reference data ──────────────────────────────────────────────
   console.log("\n📋 Phase 1: Reference data (TIPLOC→CRS, TOC names)...");
@@ -375,10 +388,12 @@ async function seed() {
   // ── Phase 2: Timetable data ──────────────────────────────────────────────
   console.log("\n📋 Phase 2: Timetable journeys and calling points...");
 
-  // Build TIPLOC→CRS lookup from location refs for resolving v4-v7 ftl fields
+  // Build TIPLOC→CRS and TIPLOC→name lookups from location refs
   const tplToCrs = new Map<string, string | null>();
+  const tplToName = new Map<string, string | null>();
   for (const [tpl, loc] of allLocations) {
     tplToCrs.set(tpl, loc.crs);
+    tplToName.set(tpl, loc.name);
   }
 
   let totalJourneys = 0;
@@ -402,7 +417,7 @@ async function seed() {
 
     console.log(`     → ${passengerJourneys.size} passenger journeys`);
 
-    // Upsert journeys in batches
+    // Upsert journeys in batches — only update timetable columns, preserve Darwin data
     const journeyRows: NewJourney[] = [];
     for (const [, data] of passengerJourneys) {
       journeyRows.push({
@@ -414,10 +429,12 @@ async function seed() {
         trainCat: data.journey.trainCat || undefined,
         status: data.journey.status || undefined,
         isPassenger: data.journey.isPassenger,
+        sourceTimetable: true,
+        // sourceDarwin is NOT set here — preserve existing value from consumer
       });
     }
 
-    const JOURNEY_BATCH = 500;
+    const JOURNEY_BATCH = 5000;
     for (let i = 0; i < journeyRows.length; i += JOURNEY_BATCH) {
       const batch = journeyRows.slice(i, i + JOURNEY_BATCH);
       await db
@@ -433,40 +450,62 @@ async function seed() {
             trainCat: sql`EXCLUDED.train_cat`,
             status: sql`EXCLUDED.status`,
             isPassenger: sql`EXCLUDED.is_passenger`,
+            sourceTimetable: sql`true`,
+            // source_darwin is deliberately NOT updated — preserve consumer value
           },
         });
+      if (i % 20000 === 0) {
+        console.log(
+          `     Journeys: ${Math.min(i + JOURNEY_BATCH, journeyRows.length)}/${journeyRows.length}`,
+        );
+      }
     }
 
-    // Upsert calling points with real-time preservation
-    // ON CONFLICT only updates static columns — real-time columns (eta, etd,
-    // ata, atd, live_plat, delay_minutes, plat_is_suppressed, updated_at)
-    // are preserved from Darwin Push Port.
+    // Mark existing calling points as potentially stale for this batch of journeys
+    const rids = [...passengerJourneys.keys()];
+    const RID_BATCH = 500;
+    for (let i = 0; i < rids.length; i += RID_BATCH) {
+      const batch = rids.slice(i, i + RID_BATCH);
+      await db
+        .update(callingPoints)
+        .set({ sourceTimetable: false })
+        .where(sql`${callingPoints.journeyRid} IN (${sql.join(batch.map(r => sql`${r}`), sql`, `)})`);
+    }
+
+    // Upsert calling points — only update _timetable columns, preserve _pushport columns
     const pointRows: NewCallingPoint[] = [];
     for (const [rid, data] of passengerJourneys) {
+      const ssd = data.journey.ssd;
       for (const pt of data.points) {
         const crs = tplToCrs.get(pt.tpl) || null;
+        const name = tplToName.get(pt.tpl) || null;
 
         pointRows.push({
           journeyRid: rid,
           sequence: pt.sequence,
+          ssd: ssd,
           stopType: pt.stopType,
           tpl: pt.tpl,
           crs: crs || undefined,
-          plat: pt.plat || undefined,
-          pta: pt.pta || undefined,
-          ptd: pt.ptd || undefined,
-          wta: pt.wta || undefined,
-          wtd: pt.wtd || undefined,
-          wtp: pt.wtp || undefined,
+          name: name || undefined,
+          sourceTimetable: true,
+          // sourceDarwin is NOT set here — preserve existing value from consumer
+          // -- Timetable columns --
+          platTimetable: pt.plat || undefined,
+          ptaTimetable: pt.pta || undefined,
+          ptdTimetable: pt.ptd || undefined,
+          wtaTimetable: pt.wta || undefined,
+          wtdTimetable: pt.wtd || undefined,
+          wtpTimetable: pt.wtp || undefined,
           act: pt.act || undefined,
           dayOffset: pt.dayOffset,
-          // Real-time columns are left null/undefined so they keep their
-          // existing values on conflict or get defaults on new insert
+          // -- Push Port columns are left undefined so they keep their
+          // existing values on conflict or get defaults on new insert --
         });
       }
     }
 
-    const POINT_BATCH = 1000;
+    const POINT_BATCH = 5000;
     for (let i = 0; i < pointRows.length; i += POINT_BATCH) {
       const batch = pointRows.slice(i, i + POINT_BATCH);
       await db
@@ -475,22 +514,33 @@ async function seed() {
         .onConflictDoUpdate({
           target: [callingPoints.journeyRid, callingPoints.sequence],
           set: {
+            ssd: sql`EXCLUDED.ssd`,
             stopType: sql`EXCLUDED.stop_type`,
             tpl: sql`EXCLUDED.tpl`,
             crs: sql`EXCLUDED.crs`,
-            plat: sql`EXCLUDED.plat`,
-            pta: sql`EXCLUDED.pta`,
-            ptd: sql`EXCLUDED.ptd`,
-            wta: sql`EXCLUDED.wta`,
-            wtd: sql`EXCLUDED.wtd`,
-            wtp: sql`EXCLUDED.wtp`,
+            name: sql`EXCLUDED.name`,
+            sourceTimetable: sql`true`,
+            // Only update _timetable columns, preserve _pushport columns
+            platTimetable: sql`EXCLUDED.plat_timetable`,
+            ptaTimetable: sql`EXCLUDED.pta_timetable`,
+            ptdTimetable: sql`EXCLUDED.ptd_timetable`,
+            wtaTimetable: sql`EXCLUDED.wta_timetable`,
+            wtdTimetable: sql`EXCLUDED.wtd_timetable`,
+            wtpTimetable: sql`EXCLUDED.wtp_timetable`,
             act: sql`EXCLUDED.act`,
             dayOffset: sql`EXCLUDED.day_offset`,
-            // NOTE: real-time columns (eta, etd, ata, atd, live_plat,
-            // is_cancelled, delay_minutes, plat_is_suppressed, updated_at)
-            // are deliberately NOT in the DO UPDATE SET so they persist.
+            // NOTE: _pushport columns (eta_pushport, etd_pushport, ata_pushport,
+            // atd_pushport, plat_pushport, plat_source, is_cancelled, delay_minutes,
+            // delay_reason, cancel_reason, plat_is_suppressed, updated_at,
+            // ts_generated_at, source_darwin) are deliberately NOT in the
+            // DO UPDATE SET so they persist from Darwin Push Port.
           },
         });
+      if (i % 50000 === 0) {
+        console.log(
+          `     Calling points: ${Math.min(i + POINT_BATCH, pointRows.length)}/${pointRows.length}`,
+        );
+      }
     }
 
     totalJourneys += passengerJourneys.size;
@@ -498,6 +548,15 @@ async function seed() {
     console.log(
       `     ✅ ${passengerJourneys.size} journeys, ${pointRows.length} calling points`,
     );
+  }
+
+  // ── Cleanup: remove stale calling points (no timetable AND no Darwin source) ──
+  const deleted = await db
+    .delete(callingPoints)
+    .where(sql`${callingPoints.sourceTimetable} = false AND ${callingPoints.sourceDarwin} = false`)
+    .returning({ id: callingPoints.id });
+  if (deleted.length > 0) {
+    console.log(`   🧹 Cleaned up ${deleted.length} stale calling points (no source)`);
   }
 
   // ── Verification ─────────────────────────────────────────────────────────
@@ -514,8 +573,15 @@ async function seed() {
   const tocCount = await db
     .select({ count: sql<number>`count(*)` })
     .from(tocRef);
+  const sourceStats = await db
+    .select({
+      timetable: sql<number>`count(*) filter (where source_timetable = true)`,
+      darwin: sql<number>`count(*) filter (where source_darwin = true)`,
+      both: sql<number>`count(*) filter (where source_timetable = true and source_darwin = true)`,
+    })
+    .from(journeys);
 
-  console.log(`   Journeys: ${journeyCount[0].count}`);
+  console.log(`   Journeys: ${journeyCount[0].count} (timetable: ${sourceStats[0].timetable}, darwin: ${sourceStats[0].darwin}, both: ${sourceStats[0].both})`);
   console.log(`   Calling points: ${pointCount[0].count}`);
   console.log(`   Location refs: ${locCount[0].count}`);
   console.log(`   TOC refs: ${tocCount[0].count}`);

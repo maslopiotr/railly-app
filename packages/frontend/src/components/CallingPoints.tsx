@@ -61,7 +61,7 @@ function normalizeCallingPointTimes(points: HybridCallingPoint[]): number[] {
   let prevMinutes = -1;
 
   for (const cp of points) {
-    const effectiveTime = cp.etd || cp.eta || cp.ptd || cp.pta;
+    const effectiveTime = cp.etdPushport || cp.etaPushport || cp.ptdTimetable || cp.ptaTimetable;
     const raw = timeToMinutes(effectiveTime);
 
     if (raw === null) {
@@ -104,13 +104,13 @@ function calculateDelay(scheduled: string | null, estimated: string | null, actu
 type StopState = "past" | "current" | "future";
 
 function determineStopState(
-  ata: string | null,
-  atd: string | null,
+  ataPushport: string | null,
+  atdPushport: string | null,
   normalizedTime: number,
   isFirstUpcoming: boolean,
   nowMinutes: number
 ): StopState {
-  if (ata || atd) return "past";
+  if (ataPushport || atdPushport) return "past";
   if (normalizedTime <= nowMinutes) return "past";
   if (isFirstUpcoming) return "current";
   return "future";
@@ -118,16 +118,16 @@ function determineStopState(
 
 /** Platform badge component for a calling point */
 function PlatformBadge({
-  plat,
-  platformLive,
+  platTimetable,
+  platPushport,
   isPast,
 }: {
-  plat: string | null;
-  platformLive: string | null;
+  platTimetable: string | null;
+  platPushport: string | null;
   isPast: boolean;
 }) {
-  const bookedPlat = plat?.trim() || null;
-  const livePlat = platformLive?.trim() || null;
+  const bookedPlat = platTimetable?.trim() || null;
+  const livePlat = platPushport?.trim() || null;
   const displayPlat = livePlat || bookedPlat;
 
   if (!displayPlat) return null;
@@ -189,28 +189,28 @@ function CheckIcon() {
 function CallingPointRow({
   name,
   crs,
-  pta,
-  ptd,
-  eta,
-  etd,
-  ata,
-  atd,
-  plat,
-  platformLive,
+  ptaTimetable,
+  ptdTimetable,
+  etaPushport,
+  etdPushport,
+  ataPushport,
+  atdPushport,
+  platTimetable,
+  platPushport,
   isCancelled,
   stopState,
   isLast,
 }: {
   name: string | null;
   crs: string | null;
-  pta: string | null;
-  ptd: string | null;
-  eta: string | null;
-  etd: string | null;
-  ata: string | null;
-  atd: string | null;
-  plat: string | null;
-  platformLive: string | null;
+  ptaTimetable: string | null;
+  ptdTimetable: string | null;
+  etaPushport: string | null;
+  etdPushport: string | null;
+  ataPushport: string | null;
+  atdPushport: string | null;
+  platTimetable: string | null;
+  platPushport: string | null;
   isCancelled: boolean;
   stopState: StopState;
   isLast: boolean;
@@ -220,16 +220,16 @@ function CallingPointRow({
 
   const isCurrent = stopState === "current";
   const isPast = stopState === "past";
-  const visited = !!ata || !!atd;
-
+  const visited = !!ataPushport || !!atdPushport;
+  
   // Determine which times to show: prefer departure times, fall back to arrival
-  const hasDeparture = ptd !== null || etd !== null || atd !== null;
-  const scheduled = formatTime(hasDeparture ? ptd : pta);
-  const estimated = formatTime(hasDeparture ? etd : eta);
-  const actual = formatTime(hasDeparture ? atd : ata);
+  const hasDeparture = ptdTimetable !== null || etdPushport !== null || atdPushport !== null;
+  const scheduled = formatTime(hasDeparture ? ptdTimetable : ptaTimetable);
+  const estimated = formatTime(hasDeparture ? etdPushport : etaPushport);
+  const actual = formatTime(hasDeparture ? atdPushport : ataPushport);
 
   // Delay: use actual vs scheduled, or estimated vs scheduled
-  const delay = calculateDelay(hasDeparture ? ptd : pta, estimated, actual);
+  const delay = calculateDelay(hasDeparture ? ptdTimetable : ptaTimetable, estimated, actual);
 
   return (
     <div className={`flex items-start gap-3 group ${isCurrent ? "current-stop" : ""}`}>
@@ -282,7 +282,7 @@ function CallingPointRow({
             )}
           </span>
           <div className="flex items-center gap-2 shrink-0">
-            <PlatformBadge plat={plat} platformLive={platformLive} isPast={isPast} />
+            <PlatformBadge platTimetable={platTimetable} platPushport={platPushport} isPast={isPast} />
             <span className="text-[11px] font-mono text-slate-600">{displayCrs}</span>
           </div>
         </div>
@@ -326,7 +326,7 @@ function CallingPointRow({
               {/* Visited status text */}
               {actual && (
                 <span className="text-[10px] text-green-400/80">
-                  {atd ? "Departed" : "Arrived"}
+                  {atdPushport ? "Departed" : "Arrived"}
                 </span>
               )}
             </>
@@ -360,7 +360,7 @@ export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
   for (let i = 0; i < displayPoints.length; i++) {
     const cp = displayPoints[i];
     if (cp.stopType === "PP") continue;
-    if (cp.ata || cp.atd) continue;
+    if (cp.ataPushport || cp.atdPushport) continue;
     if (normalizedTimes[i] > nowMinutes) {
       firstUpcomingIndex = i;
       break;
@@ -380,8 +380,8 @@ export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
         const isFirstUpcoming = i === firstUpcomingIndex;
 
         const stopState = determineStopState(
-          cp.ata,
-          cp.atd,
+          cp.ataPushport,
+          cp.atdPushport,
           normalizedTimes[i],
           isFirstUpcoming,
           nowMinutes
@@ -398,14 +398,14 @@ export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
             key={`${cp.tpl}-${i}`}
             name={cp.name}
             crs={cp.crs}
-            pta={cp.pta}
-            ptd={cp.ptd}
-            eta={cp.eta}
-            etd={cp.etd}
-            ata={cp.ata}
-            atd={cp.atd}
-            plat={cp.plat}
-            platformLive={cp.platformLive}
+            ptaTimetable={cp.ptaTimetable}
+            ptdTimetable={cp.ptdTimetable}
+            etaPushport={cp.etaPushport}
+            etdPushport={cp.etdPushport}
+            ataPushport={cp.ataPushport}
+            atdPushport={cp.atdPushport}
+            platTimetable={cp.platTimetable}
+            platPushport={cp.platPushport}
             isCancelled={cp.isCancelled}
             stopState={finalState}
             isLast={i === displayPoints.length - 1}

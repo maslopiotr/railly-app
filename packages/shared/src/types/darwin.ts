@@ -143,6 +143,7 @@ export interface DarwinTSLocation {
   tplSuppressed?: boolean; // TIPLOC suppressed from public display
   detachFront?: number; // Coaches to detach from front
   detachRear?: number; // Coaches to detach from rear
+  confirmed?: boolean; // Platform confirmed (from train describer)
 }
 
 // ── Association (P2) ───────────────────────────────────────────────────────

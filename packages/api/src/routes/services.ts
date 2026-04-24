@@ -60,20 +60,24 @@ router.get("/:serviceId", async (req, res, next) => {
         stopType: callingPoints.stopType,
         tpl: callingPoints.tpl,
         crs: callingPoints.crs,
-        plat: callingPoints.plat,
-        pta: callingPoints.pta,
-        ptd: callingPoints.ptd,
-        wta: callingPoints.wta,
-        wtd: callingPoints.wtd,
-        wtp: callingPoints.wtp,
+        platTimetable: callingPoints.platTimetable,
+        ptaTimetable: callingPoints.ptaTimetable,
+        ptdTimetable: callingPoints.ptdTimetable,
+        wtaTimetable: callingPoints.wtaTimetable,
+        wtdTimetable: callingPoints.wtdTimetable,
+        wtpTimetable: callingPoints.wtpTimetable,
         act: callingPoints.act,
-        name: locationRef.name,
-        // Real-time columns
-        eta: callingPoints.eta,
-        etd: callingPoints.etd,
-        ata: callingPoints.ata,
-        atd: callingPoints.atd,
-        livePlat: callingPoints.livePlat,
+        cpName: callingPoints.name,
+        locName: locationRef.name,
+        sourceTimetable: callingPoints.sourceTimetable,
+        sourceDarwin: callingPoints.sourceDarwin,
+        platSource: callingPoints.platSource,
+        // Push Port columns
+        etaPushport: callingPoints.etaPushport,
+        etdPushport: callingPoints.etdPushport,
+        ataPushport: callingPoints.ataPushport,
+        atdPushport: callingPoints.atdPushport,
+        platPushport: callingPoints.platPushport,
         isCancelled: callingPoints.isCancelled,
         platIsSuppressed: callingPoints.platIsSuppressed,
         delayMinutes: callingPoints.delayMinutes,
@@ -111,11 +115,11 @@ router.get("/:serviceId", async (req, res, next) => {
 
     const hasRealtime = rtState != null || points.some(
       (p) =>
-        p.eta != null ||
-        p.etd != null ||
-        p.ata != null ||
-        p.atd != null ||
-        p.livePlat != null,
+        p.etaPushport != null ||
+        p.etdPushport != null ||
+        p.ataPushport != null ||
+        p.atdPushport != null ||
+        p.platPushport != null,
     );
 
     // ── Build response ────────────────────────────────────────────────
@@ -124,28 +128,32 @@ router.get("/:serviceId", async (req, res, next) => {
       .map((cp) => {
         // Determine display times: real-time if available, else scheduled
         const isCpCancelled = cp.isCancelled || (rtState?.isCancelled ?? false);
-        const displayEta = isCpCancelled ? "Cancelled" : (cp.eta ?? cp.pta ?? null);
-        const displayEtd = isCpCancelled ? "Cancelled" : (cp.etd ?? cp.ptd ?? null);
+        const displayEta = isCpCancelled ? "Cancelled" : (cp.etaPushport ?? cp.ptaTimetable ?? null);
+        const displayEtd = isCpCancelled ? "Cancelled" : (cp.etdPushport ?? cp.ptdTimetable ?? null);
 
         return {
           sequence: cp.sequence,
           stopType: cp.stopType,
           tpl: cp.tpl,
           crs: cp.crs ?? null,
-          name: cp.name || cp.tpl,
-          plat: cp.plat ?? null,
-          pta: cp.pta ?? null,
-          ptd: cp.ptd ?? null,
-          wta: cp.wta ?? null,
-          wtd: cp.wtd ?? null,
-          wtp: cp.wtp ?? null,
+          name: cp.cpName || cp.locName || cp.tpl,
+          sourceTimetable: cp.sourceTimetable ?? false,
+          sourceDarwin: cp.sourceDarwin ?? false,
+          // Timetable data
+          platTimetable: cp.platTimetable ?? null,
+          ptaTimetable: cp.ptaTimetable ?? null,
+          ptdTimetable: cp.ptdTimetable ?? null,
+          wtaTimetable: cp.wtaTimetable ?? null,
+          wtdTimetable: cp.wtdTimetable ?? null,
+          wtpTimetable: cp.wtpTimetable ?? null,
           act: cp.act ?? null,
-          // Real-time overlay from calling_points
-          eta: displayEta,
-          etd: displayEtd,
-          ata: cp.ata ?? null,
-          atd: cp.atd ?? null,
-          platformLive: cp.livePlat ?? null,
+          // Push Port data
+          etaPushport: displayEta,
+          etdPushport: displayEtd,
+          ataPushport: cp.ataPushport ?? null,
+          atdPushport: cp.atdPushport ?? null,
+          platPushport: cp.platPushport ?? null,
+          platSource: cp.platSource ?? null,
           isCancelled: cp.isCancelled,
           // Per-CP reasons: calling_points first, fallback to service_rt
           delayReason: cp.delayReason ?? rtState?.delayReason ?? null,
@@ -180,13 +188,13 @@ router.get("/:serviceId", async (req, res, next) => {
       origin: origin
         ? {
             crs: origin.crs ?? null,
-            name: origin.name || origin.tpl,
+            name: origin.cpName || origin.locName || origin.tpl,
           }
         : null,
       destination: destination
         ? {
             crs: destination.crs ?? null,
-            name: destination.name || destination.tpl,
+            name: destination.cpName || destination.locName || destination.tpl,
           }
         : null,
       callingPoints: callingPointsResponse,

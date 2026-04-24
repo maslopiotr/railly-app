@@ -41,23 +41,23 @@ function isCancelled(et: string | null | undefined): boolean {
 }
 
 /** Render platform badge with source-based styling */
-function PlatformBadge({ platform, platformLive, platformSource }: {
-  platform: string | null;
+function PlatformBadge({ platformTimetable, platformLive, platformSource }: {
+  platformTimetable: string | null;
   platformLive: string | null;
   platformSource: PlatformSource;
 }) {
-  if (!platform && !platformLive) {
+  if (!platformTimetable && !platformLive) {
     return <span className="platform platform-none">—</span>;
   }
 
   switch (platformSource) {
     case "confirmed":
-      return <span className="platform platform-confirmed">{platformLive}</span>;
+      return <span className="platform platform-confirmed">{platformLive || platformTimetable}</span>;
 
     case "altered":
       return (
         <span className="platform platform-altered">
-          <span className="platform-booked">{platform}</span>
+          <span className="platform-booked">{platformTimetable}</span>
           <span className="platform-arrow">→</span>
           <span className="platform-live">{platformLive}</span>
         </span>
@@ -75,10 +75,10 @@ function PlatformBadge({ platform, platformLive, platformSource }: {
       return <span className="platform platform-expected">—</span>;
 
     case "scheduled":
-      return <span className="platform platform-scheduled">{platform}</span>;
+      return <span className="platform platform-scheduled">{platformTimetable}</span>;
 
     default:
-      return <span className="platform">{platformLive || platform}</span>;
+      return <span className="platform">{platformLive || platformTimetable}</span>;
   }
 }
 
@@ -211,7 +211,7 @@ export function ServiceRow({ service, isArrival, stationCrs, onSelect }: Service
         {/* Platform */}
         <div className="w-20 shrink-0 flex justify-center">
           <PlatformBadge
-            platform={service.platform}
+            platformTimetable={service.platformTimetable}
             platformLive={service.platformLive}
             platformSource={service.platformSource}
           />

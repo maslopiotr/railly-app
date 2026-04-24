@@ -52,6 +52,8 @@ export const journeys = pgTable(
     trainCat: varchar("train_cat", { length: 5 }), // e.g. "XX", "OO", "BR"
     status: char("status", { length: 1 }), // "P" = permanent, etc.
     isPassenger: boolean("is_passenger").default(true).notNull(),
+    sourceTimetable: boolean("source_timetable").default(false).notNull(),
+    sourceDarwin: boolean("source_darwin").default(false).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   },
   (table) => [
@@ -80,29 +82,34 @@ export const callingPoints = pgTable(
       .notNull()
       .references(() => journeys.rid, { onDelete: "cascade" }),
     sequence: integer("sequence").notNull(), // Order within journey
+    ssd: char("ssd", { length: 10 }), // Denormalized from journeys for direct querying
     stopType: varchar("stop_type", { length: 5 }).notNull(), // OR, DT, IP, PP, OPOR, OPIP, OPDT
     tpl: varchar("tpl", { length: 10 }).notNull(), // TIPLOC code
     crs: char("crs", { length: 3 }), // CRS code (from location_ref lookup)
-    // -- Static: from PP Timetable (seeded daily) --
-    plat: varchar("plat", { length: 5 }), // Booked platform
-    pta: char("pta", { length: 5 }), // Public arrival time HH:MM
-    ptd: char("ptd", { length: 5 }), // Public departure time HH:MM
-    wta: varchar("wta", { length: 8 }), // Working arrival time
-    wtd: varchar("wtd", { length: 8 }), // Working departure time
-    wtp: varchar("wtp", { length: 8 }), // Working passing time
+    name: varchar("name", { length: 255 }), // Location name (denormalized from location_ref)
+    sourceTimetable: boolean("source_timetable").default(false).notNull(), // Has PPTimetable data
+    sourceDarwin: boolean("source_darwin").default(false).notNull(), // Has Darwin data
+    // -- Timetable columns (PPTimetable only, seeded daily) --
+    platTimetable: varchar("plat_timetable", { length: 5 }), // Booked platform
+    ptaTimetable: char("pta_timetable", { length: 5 }), // Public arrival time HH:MM
+    ptdTimetable: char("ptd_timetable", { length: 5 }), // Public departure time HH:MM
+    wtaTimetable: varchar("wta_timetable", { length: 8 }), // Working arrival time
+    wtdTimetable: varchar("wtd_timetable", { length: 8 }), // Working departure time
+    wtpTimetable: varchar("wtp_timetable", { length: 8 }), // Working passing time
     act: varchar("act", { length: 10 }), // Activities (TB, TF, T, etc.)
-    // -- Real-time: from Darwin Push Port (updated live) --
-    eta: char("eta", { length: 5 }), // Estimated arrival HH:MM
-    etd: char("etd", { length: 5 }), // Estimated departure HH:MM
-    ata: char("ata", { length: 5 }), // Actual arrival HH:MM
-    atd: char("atd", { length: 5 }), // Actual departure HH:MM
-    livePlat: varchar("live_plat", { length: 5 }), // Live platform from Darwin
+    dayOffset: integer("day_offset").default(0).notNull(), // 0=same day as ssd, 1=next day, 2=day after
+    // -- Push Port columns (Darwin only, updated live) --
+    etaPushport: char("eta_pushport", { length: 5 }), // Estimated arrival HH:MM
+    etdPushport: char("etd_pushport", { length: 5 }), // Estimated departure HH:MM
+    ataPushport: char("ata_pushport", { length: 5 }), // Actual arrival HH:MM
+    atdPushport: char("atd_pushport", { length: 5 }), // Actual departure HH:MM
+    platPushport: varchar("plat_pushport", { length: 5 }), // Live platform from Darwin
+    platSource: varchar("plat_source", { length: 10 }), // confirmed/altered/suppressed/etc
     isCancelled: boolean("is_cancelled").default(false).notNull(),
     delayMinutes: integer("delay_minutes"), // Computed delay vs scheduled
     delayReason: varchar("delay_reason", { length: 100 }), // Per-location delay reason from TS
     cancelReason: varchar("cancel_reason", { length: 100 }), // Per-location cancel reason from schedule
     platIsSuppressed: boolean("plat_is_suppressed").default(false).notNull(),
-    dayOffset: integer("day_offset").default(0).notNull(), // 0=same day as ssd, 1=next day, 2=day after
     updatedAt: timestamp("updated_at", { withTimezone: true }), // Last Darwin message
     tsGeneratedAt: timestamp("ts_generated_at", { withTimezone: true }), // Last TS message timestamp (for dedup)
   },
@@ -120,6 +127,9 @@ export const callingPoints = pgTable(
       table.journeyRid,
       table.stopType,
     ),
+    // New indexes for direct date querying
+    index("idx_calling_points_ssd").on(table.ssd),
+    index("idx_calling_points_ssd_dayoffset").on(table.ssd, table.dayOffset),
   ],
 );
 
@@ -141,6 +151,8 @@ export const serviceRt = pgTable(
     cancelReason: varchar("cancel_reason", { length: 100 }),
     delayReason: varchar("delay_reason", { length: 100 }),
     platform: varchar("platform", { length: 5 }), // Live platform at origin/head
+    sourceTimetable: boolean("source_timetable").default(false).notNull(),
+    sourceDarwin: boolean("source_darwin").default(false).notNull(),
     generatedAt: timestamp("generated_at", { withTimezone: true }), // Schedule message timestamp (for schedule dedup)
     tsGeneratedAt: timestamp("ts_generated_at", { withTimezone: true }), // TS message timestamp (for TS dedup)
     lastUpdated: timestamp("last_updated", { withTimezone: true }).defaultNow(),

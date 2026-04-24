@@ -1,30 +1,48 @@
 # Active Context
 
 ## Current Focus
-Phase 2 complete — day_offset cross-midnight fix + frontend race condition fixes
+**Board accuracy fixes deployed and verified.** See `bugs/investigation-board-accuracy.md` for full investigation.
 
-## Recent Changes (Phase 2)
-1. **day_offset column** added to `calling_points` table — computes wall-clock date per stop
-2. **Board query rewritten** — uses `day_offset` for wall-clock date filtering instead of fragile per-SSD time window logic
-3. **Seed logic** — `computeDayOffsets()` scans calling points in sequence, increments day_offset when time wraps from evening (≥20:00) to morning
-4. **Consumer handlers** — both `schedule.ts` and `trainStatus.ts` now include day_offset in INSERT/UPSERT
-5. **Shared types** — `HybridCallingPoint` now includes `dayOffset: number`
-6. **Frontend AbortController** — `fetchBoard()`, `DepartureBoard`, `App.tsx` all support AbortSignal for race condition prevention
-7. **App.tsx history fix** — popstate handler no longer calls `navigateTo`/`pushState` (was corrupting browser history); uses `replaceState` when URL needs fixing
-8. **LiveClock UK timezone** — `toLocaleTimeString` now uses `timeZone: "Europe/London"`
+### Fixes Implemented
+1. ✅ Removed "missing locations" insert from trainStatus.ts — TS handler now only UPDATEs existing CP rows
+2. ✅ Board query filters by `source_timetable = true` for service discovery
+3. ✅ Deleted 1,012,441 phantom CP rows (darwin-only non-PP + orphans)
+4. ✅ Fixed 73,555 wrong CRS codes using `location_ref` table
+5. ✅ Consumer rebuilt and deployed
+
+### Results
+| Metric | Before | After |
+|---|---|---|
+| EUS service count | 75 | 58 |
+| KGX service count | ~75 | 40 |
+| Calling points (Avanti VT) | 161 | 16 |
+| Calling points (Grand Central) | 74 | 8 |
+| Phantom CP rows | 15,941 | 788 (VSTP only) |
+| Wrong CRS codes | 55,883 | 0 |
+| Orphan rows | 2,452 | 0 |
+
+### Remaining Issues
+- CRS codes in seed data are wrong for some TIPLOCs (fixed in DB via location_ref, but seed will re-insert wrong CRS on reseed)
+- Schedule handler may still create `source_timetable=true` contamination for wrong services
+- No `(journey_rid, tpl)` UNIQUE constraint yet
+- Schedule handler doesn't delete old CPs on refresh
 
 ## Key Files Modified
-- `packages/shared/src/types/board.ts` — HybridCallingPoint.dayOffset
-- `packages/api/src/routes/boards.ts` — wall-clock SQL using day_offset
-- `packages/api/src/db/schema.ts` — day_offset column (already existed)
-- `packages/api/src/db/seed-timetable.ts` — computeDayOffsets() (already existed)
-- `packages/consumer/src/handlers/schedule.ts` — day_offset in INSERT + computeDayOffsets
-- `packages/consumer/src/handlers/trainStatus.ts` — day_offset in missing location INSERT
-- `packages/frontend/src/api/boards.ts` — signal?: AbortSignal
-- `packages/frontend/src/components/DepartureBoard.tsx` — AbortController
-- `packages/frontend/src/App.tsx` — AbortController + history fix + UK clock
+- `packages/api/drizzle/0005_source_separation.sql` — Migration
+- `packages/api/src/db/schema.ts` — Drizzle schema
+- `packages/shared/src/types/board.ts` — HybridCallingPoint, HybridBoardService
+- `packages/shared/src/types/timetable.ts` — TimetableCallingPoint
+- `packages/shared/src/types/darwin.ts` — DarwinTSLocation.confirmed
+- `packages/api/src/db/seed-timetable.ts` — Writes _timetable columns only
+- `packages/api/src/routes/boards.ts` — Source-priority platform/time logic
+- `packages/api/src/routes/services.ts` — Source-priority service detail
+- `packages/api/src/routes/timetable.ts` — Reads _timetable columns
+- `packages/consumer/src/handlers/schedule.ts` — Writes _timetable columns
+- `packages/consumer/src/handlers/trainStatus.ts` — Writes _pushport columns only
+- `packages/frontend/src/components/CallingPoints.tsx` — Platform source badges
+- `packages/frontend/src/components/ServiceRow.tsx` — Platform source display
 
 ## Next Steps
-- Monitor for cross-midnight edge cases (especially around BST/GMT changes)
-- Consider adding day_offset to Drizzle migration system (currently manual ALTER TABLE)
-- Test VSTP service day_offset inference in consumer
+- Monitor `darwin_errors` for trends (should trend to zero)
+- Verify board accuracy against National Rail live
+- Consider Phase 3: full consumer rewrite with improved matching

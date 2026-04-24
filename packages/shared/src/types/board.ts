@@ -22,33 +22,40 @@ export interface HybridCallingPoint {
   name: string | null;
   /** Stop type: OR=origin, DT=terminus, IP=intermediate, PP=passing point */
   stopType: string;
-  /** Booked platform from timetable */
-  plat: string | null;
-  /** Public scheduled arrival (HH:MM) */
-  pta: string | null;
-  /** Public scheduled departure (HH:MM) */
-  ptd: string | null;
-  /** Working arrival time (operational) */
-  wta: string | null;
-  /** Working departure time (operational) */
-  wtd: string | null;
-  /** Working passing time */
-  wtp: string | null;
-  /** Activities at this location */
-  act: string | null;
   /** Day offset from SSD: 0=same day, 1=next day, 2=day after (for cross-midnight) */
   dayOffset: number;
-  // ── LDBWS overlay (null if no real-time data) ──
-  /** Estimated arrival (from LDBWS) */
-  eta: string | null;
-  /** Estimated departure (from LDBWS) */
-  etd: string | null;
-  /** Actual arrival time (from Push Port, future) */
-  ata: string | null;
-  /** Actual departure time (from Push Port, future) */
-  atd: string | null;
-  /** Live platform (if altered from booked) */
-  platformLive: string | null;
+  /** Whether this calling point has PPTimetable data */
+  sourceTimetable: boolean;
+  /** Whether this calling point has Darwin Push Port data */
+  sourceDarwin: boolean;
+  // ── Timetable data (from PPTimetable) ──
+  /** Booked platform from timetable */
+  platTimetable: string | null;
+  /** Public scheduled arrival (HH:MM) */
+  ptaTimetable: string | null;
+  /** Public scheduled departure (HH:MM) */
+  ptdTimetable: string | null;
+  /** Working arrival time (operational) */
+  wtaTimetable: string | null;
+  /** Working departure time (operational) */
+  wtdTimetable: string | null;
+  /** Working passing time */
+  wtpTimetable: string | null;
+  /** Activities at this location */
+  act: string | null;
+  // ── Push Port data (from Darwin) ──
+  /** Estimated arrival (HH:MM) */
+  etaPushport: string | null;
+  /** Estimated departure (HH:MM) */
+  etdPushport: string | null;
+  /** Actual arrival time (HH:MM) */
+  ataPushport: string | null;
+  /** Actual departure time (HH:MM) */
+  atdPushport: string | null;
+  /** Live platform from Darwin */
+  platPushport: string | null;
+  /** Platform source: confirmed/altered/suppressed/etc */
+  platSource: string | null;
   /** Is this stop cancelled? */
   isCancelled: boolean;
   /** Delay reason for this calling point */
@@ -85,7 +92,7 @@ export interface HybridBoardService {
   /** Scheduled departure from this station (HH:MM) */
   std: string | null;
   /** Booked platform from timetable */
-  platform: string | null;
+  platformTimetable: string | null;
   /** Origin info */
   origin: { crs: string | null; name: string | null };
   /** Destination info */
@@ -95,6 +102,11 @@ export interface HybridBoardService {
   /** Service type */
   serviceType: ServiceType;
 
+  // ── Source indicators ──
+  /** Whether this service has PPTimetable data */
+  sourceTimetable: boolean;
+  /** Whether this service has Darwin Push Port data */
+  sourceDarwin: boolean;
   // ── LDBWS overlay (null/absent when no real-time data) ──
   /** Whether LDBWS real-time data exists for this service */
   hasRealtime: boolean;

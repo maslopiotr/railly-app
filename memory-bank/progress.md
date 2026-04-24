@@ -16,11 +16,10 @@
 - **Fixed `generated_at` corruption** (2026-04-24): TS handler no longer touches `service_rt.generated_at`. Separate `ts_generated_at` column for TS dedup.
 - **Fixed VSTP SSD derivation** (2026-04-24): `deriveSsdFromRid()` extracts date from RID when TS omits `ssd`. Prevents empty SSD in stubs.
 - **Schema migration** (2026-04-24): Added `ts_generated_at` to `calling_points` and `service_rt` + index.
+- **Phase 2: Source-separated schema** (2026-04-24): All columns renamed with `_timetable`/`_pushport` suffixes. `calling_points` table has parallel columns for both data sources. Consumer writes only `_pushport` cols, seed writes only `_timetable` cols. Frontend shows source indicators (confirmed/altered/suppressed/scheduled). Migration `0005_source_separation.sql` with backfills.
 
 ## What's Left
-- Apply migration `0003_ts_deduplication.sql` to production DB
+- Apply migration `0005_source_separation.sql` to production DB
 - Monitor `darwin_errors` for deadlock/FK violation trends (should trend to zero)
 - Verify board/service detail accuracy against National Rail
 - Build dashboard query for unresolved errors
-- **Fix board query cross-midnight services (Phase 2)** ✅ — Uses day_offset for wall-clock date filtering
-- **Fix App.tsx race conditions in board fetches (Phase 2)** ✅ — AbortController on all fetch paths
