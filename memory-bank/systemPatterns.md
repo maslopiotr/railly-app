@@ -145,12 +145,13 @@ await sql.begin(async (tx) => {
 // Each calling point checks its own ts_generated_at before overwriting
 ```
 
-### Composite Key Location Matching
-TS messages don't include sequence numbers. Match by `(tpl, pta, ptd)` composite key:
-- Exact match (tpl + pta + ptd): score 100
-- Partial match (one time matches): score 75
-- Same hour match: score 50
-- Position-based fallback: score 10
+### Calling Point Sequence Ordering
+Darwin schedule `locations` array orders IPs first, then PPs — NOT chronologically. PPTimetable XML uses chronological order. The schedule handler MUST sort locations by time (`wtd || ptd || wtp || wta || pta`) before assigning sequence numbers. This ensures alignment with PPTimetable seed data and correct TS matching.
+
+When sequence numbers change after re-sorting, the schedule handler uses DELETE+INSERT instead of ON CONFLICT upsert (which would corrupt data by overwriting old sequence 0 with new sequence 0's TIPLOC). Existing `_timetable` and `_pushport` data is preserved via TIPLOC-based matching before deletion and re-applied after insertion.
+
+### TS Location Matching
+TS messages don't include sequence numbers. Match by TIPLOC on non-PP stops, with time-based disambiguation for circular trips (same TIPLOC visited twice). Compare TS location's planned time (`wtd || ptd || wta || pta`) against DB timetable time to find the closest match within 60 minutes.
 
 ### Midnight-Safe Delay Calculation
 ```ts
@@ -183,6 +184,7 @@ if (delay > 720) delay -= 1440;   // Scheduled is next day
 - Kafka SASL_SSL: credentials via environment variables, never committed
 
 ## Key Decisions
+
 | Decision | Choice | Why |
 |----------|--------|-----|
 | Frontend | Vite + React | No Next.js cost/complexity |

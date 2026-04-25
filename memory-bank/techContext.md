@@ -83,6 +83,10 @@ METRICS_INTERVAL_MS=30000
 ## Debugging
 Always verify with SQL queries first when the issue may involve data — avoid assumptions based on hallucination. Inspect raw `darwin_events` before debugging handler logic.
 
+``` terminal
+docker exec -i railly-app-postgres-1 psql -U railly -d railly -c "SELECT message_type, generated_at, processed_at FROM darwin_events WHERE rid = '202604248706894' ORDER BY generated_at DESC LIMIT 20;
+```
+
 ### Key Queries
 ```sql
 -- Check raw Darwin events for a specific service

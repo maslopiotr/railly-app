@@ -2,6 +2,17 @@
 
 ## Active
 
+### For deleted ones, how do we handle those?
+
+### Critical bug - seed takes a lot of RAM memory
+
+Timetable seed takes a lot of RAM memory, and long time to process and seems like its processing all files every single day. We should add logic to only process files that were updated/altered on the day (within last 12 hours or so, to only capture daily transfers)
+
+### Service 202604258705565 shows duplicate calling stations
+Euston (first departure station) and Crewe (last arrival station). Calling point arrival times are messed up. Is this because I've re-run seed again and it added calling points or is there a problem with Darwin messages being processed?
+
+### Service 202604257602247 shows duplicate calling stations
+
 ### Critical bug - affecting calling points, where they show departure time from previous station
 For example 202604248706894. Another example is 202604248706894, where scheduled departure from Euston is 21:53 which has not happened yet at the time when I'm seeing this bug which is 21:42, but the euston board already shows this as delayed and real time departure as 22:05, which is the scheduled departure time for the next stop, which is Harrow & Wealdstone. Also, Harrow & Wealdstone shows EUS platform 5 as departure platform. Also somehow showing platform altered? Not sure why... plus, the last bug for this journey is that it says Hemel Hempstead Next stop, but the train hasn't left euston yet. The whole journey looks messy, with incorrect calling points.
 
@@ -13,16 +24,18 @@ However, there's one edge case: for __VSTP/ad-hoc services__ (Darwin-only stubs)
 Do pta/ptd/wta/wtd from TS need new columns? As potentially they could be different, and we might want to write some logic on what to show to the users, especially if they have different values than PPTimetable.
 
 Nested arr/dep/pass sub-fields (parsed from sub-objects)
-Field	Count	Currently Parsed?	Action
-et	2544	✅ → eta/etd	—
-at	385	✅ → ata/atd	—
-wet	247	❌ Not stored	Later: working estimated time
-src	2920	❌ Not stored	Later: estimate source
-atClass	385	❌ Not stored	Later: actual time classification
-etmin/etmax	42	❌ Not stored	Later: estimate range
-delayed	51	❌ Not stored	Later: uncertain delay flag
-srcInst	61	❌ Not stored	Later: source instance
-etUnknown	2	❌ Not stored	Later: unknown estimate (very rare)
+
+| Field | Count | Currently Parsed? | Action |
+| :--- | ---: | :--- | :--- |
+| et | 2544 | ✅ → eta/etd | — |
+| at | 385 | ✅ → ata/atd | — |
+| wet | 247 | ❌ Not stored | Later: working estimated time |
+| src | 2920 | ❌ Not stored | Later: estimate source |
+| atClass | 385 | ❌ Not stored | Later: actual time classification |
+| etmin/etmax | 42 | ❌ Not stored | Later: estimate range |
+| delayed | 51 | ❌ Not stored | Later: uncertain delay flag |
+| srcInst | 61 | ❌ Not stored | Later: source instance |
+| etUnknown | 2 | ❌ Not stored | Later: unknown estimate (very rare) |
 
 ### 🟠 Schedule deduplication race condition — older schedule can overwrite newer
 
@@ -209,36 +222,36 @@ PostgreSQL Database directory appears to contain a database; Skipping initializa
 2026-04-25 15:40:22.014 UTC [1369] ERROR:  invalid input syntax for type json
 2026-04-25 15:40:22.014 UTC [1369] DETAIL:  Token ""pl" is invalid.
 2026-04-25 15:40:22.014 UTC [1369] CONTEXT:  JSON data, line 1: ...s":{"et":"22:05","src":"Darwin"},"length":"8","pl
-	parallel worker
+parallel worker
 2026-04-25 15:40:22.014 UTC [1369] STATEMENT:  WITH locations AS (SELECT jsonb_array_elements(raw_json::jsonb->'TS'->0->'locations') as loc FROM darwin_events WHERE message_type = 'TS' AND processed_at IS NOT NULL) SELECT DISTINCT key FROM locations, jsonb_object_keys(loc) as key ORDER BY key;
 2026-04-25 15:40:22.033 UTC [1] LOG:  background worker "parallel worker" (PID 1371) exited with exit code 1
 2026-04-25 15:41:26.819 UTC [1449] ERROR:  cannot call jsonb_object_keys on an array
 2026-04-25 15:41:26.819 UTC [1449] STATEMENT:  
-	WITH schedules AS (
-	  SELECT jsonb_array_elements(raw_json::jsonb->'schedule') as sched
-	  FROM darwin_events 
-	  WHERE message_type = 'schedule' AND processed_at IS NOT NULL
-	  ORDER BY generated_at DESC LIMIT 50
-	),
-	locations AS (
-	  SELECT jsonb_array_elements(
-	    COALESCE(sched->'locations', '[]'::jsonb)
-	  ) as loc
-	  FROM schedules
-	)
-	SELECT DISTINCT key 
-	FROM locations, jsonb_object_keys(loc) as key
-	ORDER BY key;
-	
+WITH schedules AS (
+  SELECT jsonb_array_elements(raw_json::jsonb->'schedule') as sched
+  FROM darwin_events 
+  WHERE message_type = 'schedule' AND processed_at IS NOT NULL
+  ORDER BY generated_at DESC LIMIT 50
+),
+locations AS (
+  SELECT jsonb_array_elements(
+    COALESCE(sched->'locations', '[]'::jsonb)
+  ) as loc
+  FROM schedules
+)
+SELECT DISTINCT key 
+FROM locations, jsonb_object_keys(loc) as key
+ORDER BY key;
+
 2026-04-25 15:41:56.864 UTC [1494] ERROR:  invalid input syntax for type json
 2026-04-25 15:41:56.864 UTC [1494] DETAIL:  Token ""main" is invalid.
 2026-04-25 15:41:56.864 UTC [1494] CONTEXT:  JSON data, line 1: ...ociation":[{"tiploc":"PBRO","category":"NP","main
 2026-04-25 15:41:56.864 UTC [1494] STATEMENT:  
-	SELECT raw_json::jsonb->'schedule'->0->'locations'->0 as sample_loc
-	FROM darwin_events 
-	WHERE message_type = 'schedule' AND processed_at IS NOT NULL
-	ORDER BY generated_at DESC LIMIT 1;
-	
+SELECT raw_json::jsonb->'schedule'->0->'locations'->0 as sample_loc
+FROM darwin_events 
+WHERE message_type = 'schedule' AND processed_at IS NOT NULL
+ORDER BY generated_at DESC LIMIT 1;
+
 2026-04-25 15:42:09.269 UTC [1514] ERROR:  invalid input syntax for type json
 2026-04-25 15:42:09.269 UTC [1514] DETAIL:  Token ""et" is invalid.
 2026-04-25 15:42:09.269 UTC [1514] CONTEXT:  JSON data, line 1: ...d":"17:33","pta":"17:31","ptd":"17:33","arr":{"et
@@ -251,82 +264,82 @@ PostgreSQL Database directory appears to contain a database; Skipping initializa
 2026-04-25 15:42:09.287 UTC [1] LOG:  background worker "parallel worker" (PID 1517) exited with exit code 1
 2026-04-25 15:42:35.773 UTC [1561] ERROR:  cannot extract elements from an object
 2026-04-25 15:42:35.773 UTC [1561] STATEMENT:  
-	WITH schedules AS (
-	  SELECT jsonb_array_elements(raw_json::jsonb->'schedule') as sched
-	  FROM darwin_events 
-	  WHERE message_type = 'schedule' AND processed_at IS NOT NULL
-	  ORDER BY generated_at DESC LIMIT 50
-	),
-	all_locs AS (
-	  SELECT jsonb_array_elements(COALESCE(sched->'OR', '[]'::jsonb)) as loc FROM schedules
-	  UNION ALL
-	  SELECT jsonb_array_elements(COALESCE(sched->'IP', '[]'::jsonb)) as loc FROM schedules
-	  UNION ALL
-	  SELECT jsonb_array_elements(COALESCE(sched->'PP', '[]'::jsonb)) as loc FROM schedules
-	  UNION ALL
-	  SELECT jsonb_array_elements(COALESCE(sched->'DT', '[]'::jsonb)) as loc FROM schedules
-	  UNION ALL
-	  SELECT jsonb_array_elements(COALESCE(sched->'OPOR', '[]'::jsonb)) as loc FROM schedules
-	  UNION ALL
-	  SELECT jsonb_array_elements(COALESCE(sched->'OPIP', '[]'::jsonb)) as loc FROM schedules
-	  UNION ALL
-	  SELECT jsonb_array_elements(COALESCE(sched->'OPDT', '[]'::jsonb)) as loc FROM schedules
-	)
-	SELECT DISTINCT key 
-	FROM all_locs, jsonb_object_keys(loc) as key
-	ORDER BY key;
-	
+WITH schedules AS (
+  SELECT jsonb_array_elements(raw_json::jsonb->'schedule') as sched
+  FROM darwin_events 
+  WHERE message_type = 'schedule' AND processed_at IS NOT NULL
+  ORDER BY generated_at DESC LIMIT 50
+),
+all_locs AS (
+  SELECT jsonb_array_elements(COALESCE(sched->'OR', '[]'::jsonb)) as loc FROM schedules
+  UNION ALL
+  SELECT jsonb_array_elements(COALESCE(sched->'IP', '[]'::jsonb)) as loc FROM schedules
+  UNION ALL
+  SELECT jsonb_array_elements(COALESCE(sched->'PP', '[]'::jsonb)) as loc FROM schedules
+  UNION ALL
+  SELECT jsonb_array_elements(COALESCE(sched->'DT', '[]'::jsonb)) as loc FROM schedules
+  UNION ALL
+  SELECT jsonb_array_elements(COALESCE(sched->'OPOR', '[]'::jsonb)) as loc FROM schedules
+  UNION ALL
+  SELECT jsonb_array_elements(COALESCE(sched->'OPIP', '[]'::jsonb)) as loc FROM schedules
+  UNION ALL
+  SELECT jsonb_array_elements(COALESCE(sched->'OPDT', '[]'::jsonb)) as loc FROM schedules
+)
+SELECT DISTINCT key 
+FROM all_locs, jsonb_object_keys(loc) as key
+ORDER BY key;
+
 2026-04-25 15:42:50.656 UTC [1582] ERROR:  invalid input syntax for type json
 2026-04-25 15:42:50.656 UTC [1582] DETAIL:  Token ""rde" is invalid.
 2026-04-25 15:42:50.656 UTC [1582] CONTEXT:  JSON data, line 1: ...topType":"PP"},{"tpl":"BENTON","wtp":"19:45","rde
 2026-04-25 15:42:50.656 UTC [1582] STATEMENT:  
-	WITH schedules AS (
-	  SELECT jsonb_array_elements(raw_json::jsonb->'schedule') as sched
-	  FROM darwin_events 
-	  WHERE message_type = 'schedule' AND processed_at IS NOT NULL
-	  ORDER BY generated_at DESC LIMIT 50
-	),
-	all_locs AS (
-	  -- Single object locations (OR, DT, OPOR, OPDT)
-	  SELECT sched->'OR' as loc FROM schedules WHERE sched->'OR' IS NOT NULL
-	  UNION ALL
-	  SELECT sched->'DT' as loc FROM schedules WHERE sched->'DT' IS NOT NULL
-	  UNION ALL
-	  SELECT sched->'OPOR' as loc FROM schedules WHERE sched->'OPOR' IS NOT NULL
-	  UNION ALL
-	  SELECT sched->'OPDT' as loc FROM schedules WHERE sched->'OPDT' IS NOT NULL
-	  UNION ALL
-	  -- Array locations (IP, PP, OPIP)
-	  SELECT jsonb_array_elements(sched->'IP') as loc FROM schedules WHERE jsonb_typeof(sched->'IP') = 'array'
-	  UNION ALL
-	  SELECT jsonb_array_elements(sched->'PP') as loc FROM schedules WHERE jsonb_typeof(sched->'PP') = 'array'
-	  UNION ALL
-	  SELECT jsonb_array_elements(sched->'OPIP') as loc FROM schedules WHERE jsonb_typeof(sched->'OPIP') = 'array'
-	)
-	SELECT DISTINCT key 
-	FROM all_locs, jsonb_object_keys(loc) as key
-	ORDER BY key;
-	
+WITH schedules AS (
+  SELECT jsonb_array_elements(raw_json::jsonb->'schedule') as sched
+  FROM darwin_events 
+  WHERE message_type = 'schedule' AND processed_at IS NOT NULL
+  ORDER BY generated_at DESC LIMIT 50
+),
+all_locs AS (
+  -- Single object locations (OR, DT, OPOR, OPDT)
+  SELECT sched->'OR' as loc FROM schedules WHERE sched->'OR' IS NOT NULL
+  UNION ALL
+  SELECT sched->'DT' as loc FROM schedules WHERE sched->'DT' IS NOT NULL
+  UNION ALL
+  SELECT sched->'OPOR' as loc FROM schedules WHERE sched->'OPOR' IS NOT NULL
+  UNION ALL
+  SELECT sched->'OPDT' as loc FROM schedules WHERE sched->'OPDT' IS NOT NULL
+  UNION ALL
+  -- Array locations (IP, PP, OPIP)
+  SELECT jsonb_array_elements(sched->'IP') as loc FROM schedules WHERE jsonb_typeof(sched->'IP') = 'array'
+  UNION ALL
+  SELECT jsonb_array_elements(sched->'PP') as loc FROM schedules WHERE jsonb_typeof(sched->'PP') = 'array'
+  UNION ALL
+  SELECT jsonb_array_elements(sched->'OPIP') as loc FROM schedules WHERE jsonb_typeof(sched->'OPIP') = 'array'
+)
+SELECT DISTINCT key 
+FROM all_locs, jsonb_object_keys(loc) as key
+ORDER BY key;
+
 2026-04-25 15:44:01.806 UTC [1694] ERROR:  invalid input syntax for type json
 2026-04-25 15:44:01.806 UTC [1694] DETAIL:  Token ""main" is invalid.
 2026-04-25 15:44:01.806 UTC [1694] CONTEXT:  JSON data, line 1: ...ociation":[{"tiploc":"PBRO","category":"NP","main
 2026-04-25 15:44:01.806 UTC [1694] STATEMENT:  
-	SELECT COUNT(*), 
-	  COUNT(CASE WHEN raw_json ~ '^\s*\{' THEN 1 END) as starts_with_brace,
-	  COUNT(CASE WHEN raw_json::jsonb IS NOT NULL THEN 1 END) as valid_json
-	FROM darwin_events 
-	WHERE message_type = 'schedule' AND processed_at IS NOT NULL;
-	
+SELECT COUNT(*), 
+  COUNT(CASE WHEN raw_json ~ '^\s*\{' THEN 1 END) as starts_with_brace,
+  COUNT(CASE WHEN raw_json::jsonb IS NOT NULL THEN 1 END) as valid_json
+FROM darwin_events 
+WHERE message_type = 'schedule' AND processed_at IS NOT NULL;
+
 2026-04-25 15:44:36.254 UTC [27] LOG:  checkpoint complete: wrote 2302 buffers (14.1%); 0 WAL file(s) added, 0 removed, 6 recycled; write=269.899 s, sync=0.142 s, total=270.083 s; sync files=40, longest=0.068 s, average=0.004 s; distance=94285 kB, estimate=116713 kB; lsn=10/1A463778, redo lsn=10/154B9E20
 2026-04-25 15:44:42.550 UTC [1745] ERROR:  invalid input syntax for type json
 2026-04-25 15:44:42.550 UTC [1745] DETAIL:  Token ""main" is invalid.
 2026-04-25 15:44:42.550 UTC [1745] CONTEXT:  JSON data, line 1: ...ociation":[{"tiploc":"PBRO","category":"NP","main
 2026-04-25 15:44:42.550 UTC [1745] STATEMENT:  
-	SELECT id, LENGTH(raw_json), LEFT(raw_json, 300)
-	FROM darwin_events 
-	WHERE message_type = 'schedule' AND processed_at IS NOT NULL AND raw_json::jsonb IS NOT NULL
-	ORDER BY generated_at DESC LIMIT 5;
-	
+SELECT id, LENGTH(raw_json), LEFT(raw_json, 300)
+FROM darwin_events 
+WHERE message_type = 'schedule' AND processed_at IS NOT NULL AND raw_json::jsonb IS NOT NULL
+ORDER BY generated_at DESC LIMIT 5;
+
 2026-04-25 15:45:06.288 UTC [27] LOG:  checkpoint starting: time
 2026-04-25 15:45:36.545 UTC [1820] ERROR:  invalid input syntax for type json
 2026-04-25 15:45:36.545 UTC [1820] DETAIL:  Token ""Da" is invalid.
@@ -340,76 +353,76 @@ PostgreSQL Database directory appears to contain a database; Skipping initializa
 2026-04-25 15:45:36.565 UTC [1] LOG:  background worker "parallel worker" (PID 1821) exited with exit code 1
 2026-04-25 15:46:04.622 UTC [1869] ERROR:  cannot call json_object_keys on an array
 2026-04-25 15:46:04.622 UTC [1869] STATEMENT:  
-	-- Try using ::json instead of ::jsonb, and extract location keys
-	WITH schedules AS (
-	  SELECT json_array_elements(raw_json::json->'schedule') as sched
-	  FROM darwin_events 
-	  WHERE message_type = 'schedule' AND processed_at IS NOT NULL
-	  ORDER BY generated_at DESC LIMIT 50
-	),
-	all_locs AS (
-	  SELECT sched->'OR' as loc FROM schedules WHERE sched->>'OR' IS NOT NULL
-	  UNION ALL
-	  SELECT sched->'DT' as loc FROM schedules WHERE sched->>'DT' IS NOT NULL
-	  UNION ALL
-	  SELECT sched->'OPOR' as loc FROM schedules WHERE sched->>'OPOR' IS NOT NULL
-	  UNION ALL
-	  SELECT sched->'OPDT' as loc FROM schedules WHERE sched->>'OPDT' IS NOT NULL
-	  UNION ALL
-	  SELECT json_array_elements(sched->'IP') as loc FROM schedules WHERE json_typeof(sched->'IP') = 'array'
-	  UNION ALL
-	  SELECT json_array_elements(sched->'PP') as loc FROM schedules WHERE json_typeof(sched->'PP') = 'array'
-	  UNION ALL
-	  SELECT json_array_elements(sched->'OPIP') as loc FROM schedules WHERE json_typeof(sched->'OPIP') = 'array'
-	)
-	SELECT DISTINCT key 
-	FROM all_locs, json_object_keys(loc) as key
-	ORDER BY key;
-	
+-- Try using ::json instead of ::jsonb, and extract location keys
+WITH schedules AS (
+  SELECT json_array_elements(raw_json::json->'schedule') as sched
+  FROM darwin_events 
+  WHERE message_type = 'schedule' AND processed_at IS NOT NULL
+  ORDER BY generated_at DESC LIMIT 50
+),
+all_locs AS (
+  SELECT sched->'OR' as loc FROM schedules WHERE sched->>'OR' IS NOT NULL
+  UNION ALL
+  SELECT sched->'DT' as loc FROM schedules WHERE sched->>'DT' IS NOT NULL
+  UNION ALL
+  SELECT sched->'OPOR' as loc FROM schedules WHERE sched->>'OPOR' IS NOT NULL
+  UNION ALL
+  SELECT sched->'OPDT' as loc FROM schedules WHERE sched->>'OPDT' IS NOT NULL
+  UNION ALL
+  SELECT json_array_elements(sched->'IP') as loc FROM schedules WHERE json_typeof(sched->'IP') = 'array'
+  UNION ALL
+  SELECT json_array_elements(sched->'PP') as loc FROM schedules WHERE json_typeof(sched->'PP') = 'array'
+  UNION ALL
+  SELECT json_array_elements(sched->'OPIP') as loc FROM schedules WHERE json_typeof(sched->'OPIP') = 'array'
+)
+SELECT DISTINCT key 
+FROM all_locs, json_object_keys(loc) as key
+ORDER BY key;
+
 2026-04-25 15:47:47.116 UTC [2007] ERROR:  invalid input syntax for type json
 2026-04-25 15:47:47.116 UTC [2007] DETAIL:  Token ""stopTy" is invalid.
 2026-04-25 15:47:47.116 UTC [2007] CONTEXT:  JSON data, line 1: ...":"PP"},{"tpl":"REST403","wtp":"21:49:30","stopTy
 2026-04-25 15:47:47.116 UTC [2007] STATEMENT:  
-	-- Use a larger sample and also check for all possible location keys in schedule-level objects
-	WITH schedules AS (
-	  SELECT json_array_elements(raw_json::json->'schedule') as sched
-	  FROM darwin_events 
-	  WHERE message_type = 'schedule' AND processed_at IS NOT NULL
-	  ORDER BY generated_at DESC LIMIT 500
-	),
-	all_locs AS (
-	  SELECT sched->'OR' as loc FROM schedules WHERE json_typeof(sched->'OR') = 'object'
-	  UNION ALL
-	  SELECT sched->'OPOR' as loc FROM schedules WHERE json_typeof(sched->'OPOR') = 'object'
-	  UNION ALL
-	  SELECT json_array_elements(sched->'OR') as loc FROM schedules WHERE json_typeof(sched->'OR') = 'array'
-	  UNION ALL
-	  SELECT json_array_elements(sched->'IP') as loc FROM schedules WHERE json_typeof(sched->'IP') = 'array'
-	  UNION ALL
-	  SELECT json_array_elements(sched->'PP') as loc FROM schedules WHERE json_typeof(sched->'PP') = 'array'
-	  UNION ALL
-	  SELECT json_array_elements(sched->'DT') as loc FROM schedules WHERE json_typeof(sched->'DT') = 'array'
-	  UNION ALL
-	  SELECT json_array_elements(sched->'OPOR') as loc FROM schedules WHERE json_typeof(sched->'OPOR') = 'array'
-	  UNION ALL
-	  SELECT json_array_elements(sched->'OPIP') as loc FROM schedules WHERE json_typeof(sched->'OPIP') = 'array'
-	  UNION ALL
-	  SELECT json_array_elements(sched->'OPDT') as loc FROM schedules WHERE json_typeof(sched->'OPDT') = 'array'
-	  UNION ALL
-	  SELECT sched->'IP' as loc FROM schedules WHERE json_typeof(sched->'IP') = 'object'
-	  UNION ALL
-	  SELECT sched->'PP' as loc FROM schedules WHERE json_typeof(sched->'PP') = 'object'
-	  UNION ALL
-	  SELECT sched->'DT' as loc FROM schedules WHERE json_typeof(sched->'DT') = 'object'
-	  UNION ALL
-	  SELECT sched->'OPIP' as loc FROM schedules WHERE json_typeof(sched->'OPIP') = 'object'
-	  UNION ALL
-	  SELECT sched->'OPDT' as loc FROM schedules WHERE json_typeof(sched->'OPDT') = 'object'
-	)
-	SELECT DISTINCT key 
-	FROM all_locs, json_object_keys(loc) as key
-	ORDER BY key;
-	
+-- Use a larger sample and also check for all possible location keys in schedule-level objects
+WITH schedules AS (
+  SELECT json_array_elements(raw_json::json->'schedule') as sched
+  FROM darwin_events 
+  WHERE message_type = 'schedule' AND processed_at IS NOT NULL
+  ORDER BY generated_at DESC LIMIT 500
+),
+all_locs AS (
+  SELECT sched->'OR' as loc FROM schedules WHERE json_typeof(sched->'OR') = 'object'
+  UNION ALL
+  SELECT sched->'OPOR' as loc FROM schedules WHERE json_typeof(sched->'OPOR') = 'object'
+  UNION ALL
+  SELECT json_array_elements(sched->'OR') as loc FROM schedules WHERE json_typeof(sched->'OR') = 'array'
+  UNION ALL
+  SELECT json_array_elements(sched->'IP') as loc FROM schedules WHERE json_typeof(sched->'IP') = 'array'
+  UNION ALL
+  SELECT json_array_elements(sched->'PP') as loc FROM schedules WHERE json_typeof(sched->'PP') = 'array'
+  UNION ALL
+  SELECT json_array_elements(sched->'DT') as loc FROM schedules WHERE json_typeof(sched->'DT') = 'array'
+  UNION ALL
+  SELECT json_array_elements(sched->'OPOR') as loc FROM schedules WHERE json_typeof(sched->'OPOR') = 'array'
+  UNION ALL
+  SELECT json_array_elements(sched->'OPIP') as loc FROM schedules WHERE json_typeof(sched->'OPIP') = 'array'
+  UNION ALL
+  SELECT json_array_elements(sched->'OPDT') as loc FROM schedules WHERE json_typeof(sched->'OPDT') = 'array'
+  UNION ALL
+  SELECT sched->'IP' as loc FROM schedules WHERE json_typeof(sched->'IP') = 'object'
+  UNION ALL
+  SELECT sched->'PP' as loc FROM schedules WHERE json_typeof(sched->'PP') = 'object'
+  UNION ALL
+  SELECT sched->'DT' as loc FROM schedules WHERE json_typeof(sched->'DT') = 'object'
+  UNION ALL
+  SELECT sched->'OPIP' as loc FROM schedules WHERE json_typeof(sched->'OPIP') = 'object'
+  UNION ALL
+  SELECT sched->'OPDT' as loc FROM schedules WHERE json_typeof(sched->'OPDT') = 'object'
+)
+SELECT DISTINCT key 
+FROM all_locs, json_object_keys(loc) as key
+ORDER BY key;
+
 2026-04-25 15:48:02.432 UTC [27] LOG:  checkpoint complete: wrote 139 buffers (0.8%); 0 WAL file(s) added, 0 removed, 5 recycled; write=175.898 s, sync=0.213 s, total=176.144 s; sync files=43, longest=0.040 s, average=0.005 s; distance=90952 kB, estimate=114137 kB; lsn=10/1E660C40, redo lsn=10/1AD8BE58
 2026-04-25 15:49:26.044 UTC [2114] ERROR:  cannot call jsonb_object_keys on a scalar
 2026-04-25 15:49:26.044 UTC [2114] STATEMENT:  WITH locations AS (SELECT jsonb_array_elements(raw_json::jsonb->'TS'->0->'locations') as loc FROM darwin_events WHERE message_type = 'TS' AND processed_at IS NOT NULL AND LENGTH(raw_json) < 19990) SELECT DISTINCT key FROM locations, jsonb_object_keys(loc->'arr') as key ORDER BY key;
@@ -426,58 +439,58 @@ PostgreSQL Database directory appears to contain a database; Skipping initializa
 2026-04-25 15:50:07.653 UTC [2205] STATEMENT:  WITH locations AS (SELECT jsonb_array_elements(raw_json::jsonb->'TS'->0->'locations') as loc FROM darwin_events WHERE message_type = 'TS' AND processed_at IS NOT NULL AND LENGTH(raw_json) < 19990 LIMIT 5000) SELECT 'arr' as field, DISTINCT jsonb_typeof(loc->'arr') as jtype FROM locations WHERE loc ? 'arr';
 2026-04-25 15:50:15.446 UTC [2221] ERROR:  cannot call json_object_keys on an array
 2026-04-25 15:50:15.446 UTC [2221] STATEMENT:  
-	-- Check keys inside the 'locations' array for schedules that have it
-	WITH valid_schedules AS (
-	  SELECT id, raw_json
-	  FROM darwin_events 
-	  WHERE message_type = 'schedule' AND processed_at IS NOT NULL
-	  ORDER BY generated_at DESC LIMIT 100
-	),
-	parsed AS (
-	  SELECT id, raw_json::json as j
-	  FROM valid_schedules
-	  WHERE LENGTH(raw_json) < 11000
-	),
-	sched_array AS (
-	  SELECT id, json_array_elements(j->'schedule') as sched
-	  FROM parsed
-	),
-	loc_entries AS (
-	  SELECT json_array_elements(sched->'locations') as loc
-	  FROM sched_array
-	  WHERE json_typeof(sched->'locations') = 'array'
-	)
-	SELECT DISTINCT key
-	FROM loc_entries, json_object_keys(loc) as key
-	ORDER BY key;
-	
+-- Check keys inside the 'locations' array for schedules that have it
+WITH valid_schedules AS (
+  SELECT id, raw_json
+  FROM darwin_events
+  WHERE message_type = 'schedule' AND processed_at IS NOT NULL
+  ORDER BY generated_at DESC LIMIT 100
+),
+parsed AS (
+  SELECT id, raw_json::json as j
+  FROM valid_schedules
+  WHERE LENGTH(raw_json) < 11000
+),
+sched_array AS (
+  SELECT id, json_array_elements(j->'schedule') as sched
+  FROM parsed
+),
+loc_entries AS (
+  SELECT json_array_elements(sched->'locations') as loc
+  FROM sched_array
+  WHERE json_typeof(sched->'locations') = 'array'
+)
+SELECT DISTINCT key
+FROM loc_entries, json_object_keys(loc) as key
+ORDER BY key;
+
 2026-04-25 15:50:52.537 UTC [2264] ERROR:  cannot call json_object_keys on an array
 2026-04-25 15:50:52.537 UTC [2264] STATEMENT:  
-	-- Get keys from the 'locations' array objects
-	WITH valid_schedules AS (
-	  SELECT id, raw_json
-	  FROM darwin_events 
-	  WHERE message_type = 'schedule' AND processed_at IS NOT NULL
-	  ORDER BY generated_at DESC LIMIT 100
-	),
-	parsed AS (
-	  SELECT id, raw_json::json as j
-	  FROM valid_schedules
-	  WHERE LENGTH(raw_json) < 11000
-	),
-	sched_array AS (
-	  SELECT id, json_array_elements(j->'schedule') as sched
-	  FROM parsed
-	),
-	loc_entries AS (
-	  SELECT json_array_elements(sched->'locations') as loc
-	  FROM sched_array
-	  WHERE json_typeof(sched->'locations') = 'array'
-	)
-	SELECT DISTINCT key
-	FROM loc_entries, json_object_keys(loc) as key
-	ORDER BY key;
-	
+-- Get keys from the 'locations' array objects
+WITH valid_schedules AS (
+  SELECT id, raw_json
+  FROM darwin_events
+  WHERE message_type = 'schedule' AND processed_at IS NOT NULL
+  ORDER BY generated_at DESC LIMIT 100
+),
+parsed AS (
+  SELECT id, raw_json::json as j
+  FROM valid_schedules
+  WHERE LENGTH(raw_json) < 11000
+),
+sched_array AS (
+  SELECT id, json_array_elements(j->'schedule') as sched
+  FROM parsed
+),
+loc_entries AS (
+  SELECT json_array_elements(sched->'locations') as loc
+  FROM sched_array
+  WHERE json_typeof(sched->'locations') = 'array'
+)
+SELECT DISTINCT key
+FROM loc_entries, json_object_keys(loc) as key
+ORDER BY key;
+
 2026-04-25 15:51:44.884 UTC [2333] ERROR:  cannot call jsonb_object_keys on a scalar
 2026-04-25 15:51:44.884 UTC [2333] STATEMENT:  WITH locations AS (SELECT jsonb_array_elements(raw_json::jsonb->'TS'->0->'locations') as loc FROM darwin_events WHERE message_type = 'TS' AND processed_at IS NOT NULL AND LENGTH(raw_json) < 19990 LIMIT 5000) SELECT DISTINCT key FROM locations, jsonb_object_keys(loc->'arr') as key WHERE loc ? 'arr' ORDER BY key;
 2026-04-25 15:54:02.789 UTC [27] LOG:  checkpoint complete: wrote 175 buffers (1.1%); 0 WAL file(s) added, 1 removed, 4 recycled; write=235.706 s, sync=0.074 s, total=235.856 s; sync files=45, longest=0.010 s, average=0.002 s; distance=78287 kB, estimate=110552 kB; lsn=10/23D2E738, redo lsn=10/1F9FFCA8

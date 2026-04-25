@@ -23,11 +23,29 @@
 - **Deactivated handler fix** (2026-04-24): `handleDeactivated` wrongly set `is_cancelled=true` for all deactivated services. Darwin `deactivated` means "removed from active set" (completed OR cancelled). Now checks for actual movement data before marking cancelled. Cleared 8,323 incorrect cancellations from DB.
 - Added `DarwinTSTimeInfo` type for nested arr/dep/pass objects in `DarwinTSLocation`.
 
+- **Calling points sequence ordering fix** (2026-04-24): Darwin schedule `locations` array orders IPs first then PPs — NOT chronologically. PPTimetable uses chronological order. This mismatch caused sequence numbers to misalign, resulting in wrong departure times, platforms, and "next stop" data. Three changes:
+  1. `schedule.ts`: Sort locations chronologically by time before assigning sequence numbers; use DELETE+INSERT instead of ON CONFLICT upsert (which corrupts data when sequence numbers change); preserve `_timetable` and `_pushport` columns via TIPLOC-based matching
+  2. `trainStatus.ts`: Add time-based matching for circular trips (same TIPLOC visited twice); compare TS planned time against DB timetable time to disambiguate
+  3. `seed-timetable.ts`: Changed to 0-indexed sequences (matching Darwin) and DELETE+INSERT pattern (matching Darwin handler approach)
+
+- **Seed duplicate calling points fix** (2026-04-25): Seed used 1-indexed sequences while Darwin used 0-indexed. ON CONFLICT by `(journey_rid, sequence)` created duplicate rows when sequences didn't match. Seed's UPDATE also overwrote wrong rows (e.g., Euston's timetable data with Harrow's tpl). Fix: Changed seed to DELETE+INSERT pattern with pushport data preservation via TIPLOC matching, and 0-indexed sequences. Deleted 31,860 duplicate rows from DB.
+
+- **Platform source fix** (2026-04-25): Darwin `plat.conf` means "confirmed by train describer", NOT "platform changed". Parser now correctly extracts platform number from empty-key `{"": "2"}` instead of using `conf` as fallback. New `platSource` logic: suppressed > confirmed/altered (with timetable comparison) > default. Added `plat_confirmed`, `plat_from_td`, `suppr`, `length_pushport`, `detach_front` columns.
+
+- **Cancellation handling fix** (2026-04-25): Multiple gaps in cancellation data flow:
+  1. Parser didn't extract service-level `isCancelled` from Darwin TS messages
+  2. String booleans (`can="true"`) not converted to actual booleans — strict `=== true` checks failed
+  3. Schedule handler wrongly treated `qtrain`/`deleted` as cancelled (Q-train = runs as required, not cancelled)
+  4. TS handler didn't propagate service-level cancellation to `service_rt`
+  5. Board API calling points had `cancelReason`/`delayReason`/`delayMinutes` hardcoded to `null`
+  
+  Fixes: Added `toBool()` helper in parser, extract service-level `isCancelled`/`cancelReason`/`delayReason` from TS, propagate to `service_rt` with `CASE WHEN` (once cancelled, stays cancelled), fixed schedule to only use `can === true`, added cancel/delay data to board API calling points response.
+
 ## What's Left
-- Add `(journey_rid, tpl)` UNIQUE constraint to prevent future duplicate TIPLOC entries
-- Investigate `source_timetable=true` contamination in schedule/seed
+- Platforms suprressed - Some stations, like Euston, surpress platforms in PPTimetable files. Then, the platform gets announced via Darwin about 5 minutes before departure, and then gets surpressed again. We might want to fix for that.
 - Monitor `darwin_errors` for trends
 - Build dashboard query for unresolved errors
 - Frontend: Show "Expected XX:XX" when etd ≠ std (pushport data now available)
 - Frontend: Fix platform "-3" bug
-- Frontend: Show delay minutes on calling points (data now available)
+- Frontend: Show delay minutes and cancellation status on calling points (data now available in API responses)
+- Frontend: Show cancel reasons when services are cancelled

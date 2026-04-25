@@ -104,10 +104,17 @@ export function parseDarwinMessage(raw: Buffer | string | null): DarwinMessage |
   };
 
   /**
-   * Extract platform string and suppression flags from Darwin's `plat` field.
+   * Extract platform string and flags from Darwin's `plat` field.
    * Darwin sends `plat` as either:
    *   - a string: "plat": "6"
    *   - an object: "plat": {"platsup": "true", "platsrc": "A", "conf": "true", "": "2"}
+   *
+   * Darwin plat object attributes:
+   *   platsup    — "true" if platform is suppressed from public display
+   *   cisPlatsup — "true" if CIS has suppressed the platform
+   *   platsrc    — "A" = from TIPLOC/train describer, "C" = CIS, "D" = Darwin
+   *   conf       — "true" if platform is confirmed by train describer
+   *   ""         — (empty key) the platform number string
    */
   const normalizePlatform = (loc: Record<string, unknown>): void => {
     const plat = loc.plat;
@@ -116,25 +123,34 @@ export function parseDarwinMessage(raw: Buffer | string | null): DarwinMessage |
     if (typeof plat === "string") {
       loc.platform = plat;
       loc.platIsSuppressed = false;
+      loc.platSourcedFromTIPLOC = false;
+      loc.confirmed = false;
     } else if (typeof plat === "object" && plat !== null) {
       const p = plat as Record<string, unknown>;
-      // Platform value is in the empty-string key or the "conf" field
-      const platValue =
-        p[""] !== undefined
-          ? String(p[""])
-          : p.conf !== undefined && p.platsrc
-            ? String(p.conf)
-            : undefined;
-      if (platValue) {
+      // Platform value is in the empty-string key (e.g. {"": "2"})
+      // Do NOT use conf as a fallback — conf is "true"/"false" for confirmation, not the platform number
+      const platValue = p[""] !== undefined ? String(p[""]) : undefined;
+      if (platValue && platValue !== "true" && platValue !== "false") {
         loc.platform = platValue;
       }
       loc.platIsSuppressed =
         p.platsup === "true" || p.cisPlatsup === "true";
       loc.platSourcedFromTIPLOC = p.platsrc === "A";
-      loc.platformIsChanged = p.conf === "true";
+      // Darwin conf = "true" means platform confirmed by train describer
+      loc.confirmed = p.conf === "true";
     }
 
     delete loc.plat;
+  };
+
+  /**
+   * Convert Darwin string booleans to actual booleans.
+   * Darwin sends "true"/"false" as strings; we need proper booleans.
+   */
+  const toBool = (v: unknown): boolean | undefined => {
+    if (v === true || v === "true" || v === 1 || v === "1") return true;
+    if (v === false || v === "false" || v === 0 || v === "0") return false;
+    return undefined;
   };
 
   // Normalise nested arrays inside TS and schedule messages
@@ -142,6 +158,30 @@ export function parseDarwinMessage(raw: Buffer | string | null): DarwinMessage |
     return items.map((item) => {
       if (typeof item !== "object" || item === null) return item;
       const ts = item as Record<string, unknown>;
+
+      // ── Service-level cancellation ────────────────────────────────
+      // Darwin TS messages can have isCancelled at the top level
+      if (ts.isCancelled !== undefined) {
+        ts.isCancelled = toBool(ts.isCancelled) ?? false;
+      }
+      // Service-level lateReason/cancelReason
+      if (ts.lateReason !== undefined) {
+        const lr = ts.lateReason as Record<string, unknown>;
+        if (lr) {
+          ts.delayReason = lr;
+          if (lr.reasontext !== undefined) ts.delayReasonText = String(lr.reasontext);
+          if (lr.code !== undefined) ts.delayReasonCode = Number(lr.code);
+        }
+      }
+      if (ts.cancelReason !== undefined) {
+        const cr = ts.cancelReason as Record<string, unknown>;
+        if (cr) {
+          ts.cancelReason = cr;
+          if (cr.reasontext !== undefined) ts.cancelReasonText = String(cr.reasontext);
+          if (cr.code !== undefined) ts.cancelReasonCode = Number(cr.code);
+        }
+      }
+
       if (ts.Location !== undefined && !Array.isArray(ts.Location)) {
         ts.Location = [ts.Location];
       }
@@ -158,6 +198,13 @@ export function parseDarwinMessage(raw: Buffer | string | null): DarwinMessage |
             if (!l.tpl) {
               console.warn("   ⚠️ TS location missing tpl (raw):", JSON.stringify(l).slice(0, 200));
             }
+            // Convert string booleans for TS location fields
+            if (l.cancelled !== undefined) l.cancelled = toBool(l.cancelled) ?? false;
+            if (l.suppr !== undefined) l.suppr = toBool(l.suppr) ?? false;
+            if (l.isOrigin !== undefined) l.isOrigin = toBool(l.isOrigin) ?? false;
+            if (l.isDestination !== undefined) l.isDestination = toBool(l.isDestination) ?? false;
+            if (l.isPass !== undefined) l.isPass = toBool(l.isPass) ?? false;
+
             normalizePlatform(l);
 
             // ── Extract from nested arr/dep/pass objects ────────────────────
@@ -246,6 +293,21 @@ export function parseDarwinMessage(raw: Buffer | string | null): DarwinMessage |
     return items.map((item) => {
       if (typeof item !== "object" || item === null) return item;
       const sched = item as Record<string, unknown>;
+
+      // ── Schedule-level cancellation ──────────────────────────────
+      // Darwin sends can="true" (string) — convert to boolean
+      if (sched.can !== undefined) {
+        sched.can = toBool(sched.can) ?? false;
+      }
+      // Schedule-level isPassengerSvc (string boolean)
+      if (sched.isPassengerSvc !== undefined) {
+        sched.isPassengerSvc = toBool(sched.isPassengerSvc) ?? true;
+      }
+      // Schedule-level deleted flag
+      if (sched.deleted !== undefined) {
+        sched.deleted = toBool(sched.deleted) ?? false;
+      }
+
       // Darwin schedule locations can be: OR, IP (array), PP (array), DT
       // We need to collect them into a unified locations array with stopType
       if (!sched.locations && (sched.OR || sched.IP || sched.PP || sched.DT)) {

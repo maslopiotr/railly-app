@@ -158,17 +158,17 @@ function determineCurrentLocation(
 }
 
 /**
- * Determine platform source indicator.
+ * Determine platform source indicator (fallback when DB platSource is null).
+ * The TS handler now computes platSource correctly using Darwin flags:
+ *   - suppressed > confirmed/altered > default comparison
+ * This fallback is only used for timetable-only entries with no Darwin data.
  */
 function getPlatformSource(
   bookedPlat: string | null,
   livePlat: string | null,
-  platformChanged: boolean,
-  platIsSuppressed: boolean,
 ): "confirmed" | "altered" | "suppressed" | "expected" | "scheduled" {
   if (!livePlat && !bookedPlat) return "expected";
-  if (platIsSuppressed && livePlat) return "suppressed";
-  if (platformChanged && livePlat) return "altered";
+  if (livePlat && bookedPlat && livePlat !== bookedPlat) return "altered";
   if (livePlat) return "confirmed";
   if (bookedPlat) return "scheduled";
   return "expected";
@@ -443,6 +443,9 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         platPushport: callingPoints.platPushport,
         platSource: callingPoints.platSource,
         isCancelled: callingPoints.isCancelled,
+        delayMinutes: callingPoints.delayMinutes,
+        delayReason: callingPoints.delayReason,
+        cancelReason: callingPoints.cancelReason,
         platIsSuppressed: callingPoints.platIsSuppressed,
       })
       .from(callingPoints)
@@ -527,11 +530,6 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       const endpoints = endpointMap.get(rid);
       const callingPattern = callingPatternMap.get(rid) || [];
 
-      const platformChanged =
-        entry.platPushport != null &&
-        entry.platTimetable != null &&
-        entry.platPushport !== entry.platTimetable;
-
       const isCancelled =
         entry.isCancelled || entry.rtIsCancelled || false;
       const cancelReason = entry.rtCancelReason || null;
@@ -562,8 +560,6 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         : getPlatformSource(
             entry.platTimetable,
             entry.platPushport,
-            platformChanged,
-            entry.platIsSuppressed,
           );
       // platformTimetable is the booked platform; platPushport is the live one
       const displayPlatform = entry.platTimetable;
@@ -609,9 +605,9 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
           platPushport: cp.platPushport ?? null,
           platSource: cp.platSource ?? null,
           isCancelled: cp.isCancelled,
-          delayReason: null,
-          cancelReason: null,
-          delayMinutes: null,
+          delayReason: cp.delayReason ?? null,
+          cancelReason: cp.cancelReason ?? null,
+          delayMinutes: cp.delayMinutes ?? null,
         }));
 
       const currentLocation = determineCurrentLocation(cpList);

@@ -32,8 +32,13 @@ interface CpUpdate {
   atdPushport: string | null;
   platPushport: string | null;
   platSource: string | null;
+  platConfirmed: boolean;
+  platFromTd: boolean;
   isCancelled: boolean;
   platIsSuppressed: boolean;
+  suppr: boolean;
+  lengthPushport: string | null;
+  detachFront: boolean;
   updatedAt: string;
   delayMinutes: number | null;
   delayReason: string | null;
@@ -311,7 +316,7 @@ export async function handleTrainStatus(
   ts: DarwinTS,
   generatedAt: string,
 ): Promise<void> {
-  const { rid, uid, ssd, trainId } = ts;
+  const { rid, uid, ssd, trainId, isCancelled: svcCancelled, cancelReason, delayReason: svcDelayReason } = ts;
 
   if (!rid) {
     console.warn("   ⚠️ TS message missing RID — skipping");
@@ -321,6 +326,16 @@ export async function handleTrainStatus(
   const tsUid = uid || "";
   const tsSsd = ssd || deriveSsdFromRid(rid) || "";
   const tsTrainId = trainId || "";
+
+  // Extract cancel reason text from Darwin structure
+  const cancelReasonText = (cancelReason as Record<string, unknown> | undefined)?.reasontext as string | undefined
+    ?? (cancelReason as Record<string, unknown> | undefined)?.code as string | undefined
+    ?? (ts as unknown as Record<string, unknown>).cancelReasonText as string | undefined
+    ?? null;
+  const delayReasonText = (svcDelayReason as Record<string, unknown> | undefined)?.reasontext as string | undefined
+    ?? (svcDelayReason as Record<string, unknown> | undefined)?.code as string | undefined
+    ?? (ts as unknown as Record<string, unknown>).delayReasonText as string | undefined
+    ?? null;
 
   // Darwin sometimes sends a single location as an object instead of an array
   const locations = toArray(ts.locations);
@@ -391,25 +406,36 @@ export async function handleTrainStatus(
         const platPushport = loc.platform?.trim() || null;
 
         // Determine platform source:
-        // - "confirmed": Darwin explicitly confirmed OR platform matches timetable
-        // - "suppressed": Darwin marked platform as suppressed
-        // - "altered": platform differs from timetable
+        // Priority: suppressed > confirmed/altered > default comparison
         // - null: no platform data from Darwin
+        // - "suppressed": Darwin marked platform as suppressed (may change)
+        // - "confirmed": Platform confirmed by train describer OR matches timetable
+        // - "altered": Platform differs from timetable
         let platSource: string | null = null;
+        const platConfirmed = loc.confirmed === true;
+        const platFromTd = loc.platSourcedFromTIPLOC === true;
         if (platPushport) {
-          if (loc.confirmed === true) {
-            platSource = "confirmed";
-          } else if (loc.platIsSuppressed === true) {
+          if (loc.platIsSuppressed === true) {
             platSource = "suppressed";
-          } else {
-            // Compare against timetable platform to determine if altered or confirmed
+          } else if (platConfirmed || platFromTd) {
+            // Confirmed by train describer — but check if it differs from timetable
             const existingRow = (existingRows as unknown as Array<{ sequence: number; plat_timetable: string | null }>)
               .find((r) => r.sequence === sequence);
             const bookedPlat = existingRow?.plat_timetable?.trim() || null;
-            if (bookedPlat && platPushport === bookedPlat) {
-              platSource = "confirmed"; // Platform matches timetable — it's confirmed, not altered
+            if (bookedPlat && platPushport !== bookedPlat) {
+              platSource = "altered"; // Confirmed BUT different from timetable
             } else {
-              platSource = "altered"; // Platform differs from timetable (or no timetable data)
+              platSource = "confirmed"; // Confirmed and matches timetable (or no timetable platform)
+            }
+          } else {
+            // No special flags — compare against timetable
+            const existingRow = (existingRows as unknown as Array<{ sequence: number; plat_timetable: string | null }>)
+              .find((r) => r.sequence === sequence);
+            const bookedPlat = existingRow?.plat_timetable?.trim() || null;
+            if (bookedPlat && platPushport !== bookedPlat) {
+              platSource = "altered"; // Differs from timetable
+            } else {
+              platSource = "confirmed"; // Matches timetable or no timetable platform
             }
           }
         }
@@ -434,8 +460,13 @@ export async function handleTrainStatus(
           atdPushport,
           platPushport,
           platSource,
+          platConfirmed,
+          platFromTd,
           isCancelled: loc.cancelled === true,
           platIsSuppressed: loc.platIsSuppressed === true,
+          suppr: loc.suppr === true,
+          lengthPushport: loc.length?.trim() || null,
+          detachFront: loc.detachFront === true,
           updatedAt: generatedAt,
           delayMinutes,
           delayReason: ((loc as unknown as Record<string, unknown>).delayReason as string | null) ?? null,
@@ -446,9 +477,11 @@ export async function handleTrainStatus(
       await tx`
         INSERT INTO service_rt (
           rid, uid, ssd, train_id,
+          is_cancelled, cancel_reason, delay_reason,
           ts_generated_at, source_darwin, last_updated
         ) VALUES (
           ${rid}, ${tsUid}, ${tsSsd}, ${tsTrainId},
+          ${svcCancelled === true}, ${cancelReasonText}, ${delayReasonText},
           ${generatedAt}::timestamp with time zone, true, NOW()
         )
         ON CONFLICT (rid) DO UPDATE SET
@@ -457,6 +490,9 @@ export async function handleTrainStatus(
           train_id = EXCLUDED.train_id,
           ts_generated_at = EXCLUDED.ts_generated_at,
           source_darwin = true,
+          is_cancelled = CASE WHEN EXCLUDED.is_cancelled THEN TRUE ELSE service_rt.is_cancelled END,
+          cancel_reason = COALESCE(EXCLUDED.cancel_reason, service_rt.cancel_reason),
+          delay_reason = COALESCE(EXCLUDED.delay_reason, service_rt.delay_reason),
           last_updated = NOW()
       `;
 
@@ -486,8 +522,13 @@ export async function handleTrainStatus(
             atd_pushport = ${cp.atdPushport},
             plat_pushport = ${cp.platPushport},
             plat_source = ${cp.platSource},
+            plat_confirmed = ${cp.platConfirmed},
+            plat_from_td = ${cp.platFromTd},
             is_cancelled = ${cp.isCancelled},
             plat_is_suppressed = ${cp.platIsSuppressed},
+            suppr = ${cp.suppr},
+            length_pushport = ${cp.lengthPushport},
+            detach_front = ${cp.detachFront},
             delay_minutes = ${cp.delayMinutes},
             delay_reason = ${cp.delayReason},
             source_darwin = true,

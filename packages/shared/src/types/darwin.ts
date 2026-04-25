@@ -112,6 +112,9 @@ export interface DarwinTrainStatus {
   uid?: string;
   ssd?: string;
   trainId?: string; // May differ from schedule (e.g. VSTP)
+  isCancelled?: boolean; // Service-level cancellation
+  cancelReason?: DarwinDisruptionReason; // Service-level cancel reason
+  delayReason?: DarwinDisruptionReason; // Service-level delay reason
   locations: DarwinTSLocation[];
 }
 
@@ -135,10 +138,11 @@ export interface DarwinTSLocation {
   wtp?: string; // Working time passing
   pta?: string; // Public time arrival
   ptd?: string; // Public time departure
+  // ── Platform fields (from Darwin plat element, parsed by normalizePlatform) ──
   platform?: string; // Platform number
-  platIsSuppressed?: boolean; // Platform suppressed from public display
-  platSourcedFromTIPLOC?: boolean; // Platform sourced from TIPLOC
-  platformIsChanged?: boolean; // Platform has changed from booked
+  platIsSuppressed?: boolean; // Platform suppressed from public display (platsup/cisPlatsup)
+  platSourcedFromTIPLOC?: boolean; // Platform sourced from TIPLOC/train describer (platsrc="A")
+  confirmed?: boolean; // Platform confirmed by train describer (plat.conf="true")
   // ── Nested time objects (raw Darwin format, extracted by parser) ──
   arr?: DarwinTSTimeInfo; // Arrival estimates/actuals
   dep?: DarwinTSTimeInfo; // Departure estimates/actuals
@@ -157,10 +161,10 @@ export interface DarwinTSLocation {
   isOrigin?: boolean;
   isDestination?: boolean;
   isPass?: boolean; // Passing point (no stop)
-  tplSuppressed?: boolean; // TIPLOC suppressed from public display
-  detachFront?: number; // Coaches to detach from front
+  suppr?: boolean; // Stop suppressed from public display entirely
+  length?: string; // Train length in coaches
+  detachFront?: boolean; // Front coaches detach at this stop
   detachRear?: number; // Coaches to detach from rear
-  confirmed?: boolean; // Platform confirmed (from train describer)
 }
 
 // ── Association (P2) ───────────────────────────────────────────────────────

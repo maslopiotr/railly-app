@@ -104,12 +104,17 @@ export const callingPoints = pgTable(
     ataPushport: char("ata_pushport", { length: 5 }), // Actual arrival HH:MM
     atdPushport: char("atd_pushport", { length: 5 }), // Actual departure HH:MM
     platPushport: varchar("plat_pushport", { length: 5 }), // Live platform from Darwin
-    platSource: varchar("plat_source", { length: 10 }), // confirmed/altered/suppressed/etc
+    platSource: varchar("plat_source", { length: 10 }), // confirmed/altered/suppressed/etc (derived)
+    platConfirmed: boolean("plat_confirmed").default(false).notNull(), // Platform confirmed by train describer (Darwin conf)
+    platFromTd: boolean("plat_from_td").default(false).notNull(), // Platform sourced from TIPLOC/train describer (Darwin platsrc="A")
     isCancelled: boolean("is_cancelled").default(false).notNull(),
     delayMinutes: integer("delay_minutes"), // Computed delay vs scheduled
     delayReason: varchar("delay_reason", { length: 100 }), // Per-location delay reason from TS
     cancelReason: varchar("cancel_reason", { length: 100 }), // Per-location cancel reason from schedule
     platIsSuppressed: boolean("plat_is_suppressed").default(false).notNull(),
+    suppr: boolean("suppr").default(false).notNull(), // Stop suppressed from public display entirely
+    lengthPushport: varchar("length_pushport", { length: 10 }), // Train length in coaches
+    detachFront: boolean("detach_front").default(false).notNull(), // Front coaches detach at this stop
     updatedAt: timestamp("updated_at", { withTimezone: true }), // Last Darwin message
     tsGeneratedAt: timestamp("ts_generated_at", { withTimezone: true }), // Last TS message timestamp (for dedup)
   },

@@ -1,34 +1,35 @@
 # Active Context
 
 ## Current Focus
-**Phase 2: Frontend verification and display of real-time data.** Backend data pipeline is now solid — pushport columns are populating correctly. Focus shifts to making the frontend surface this data.
+**Seed duplicate calling points bug fix completed.** The PPTimetable seed now uses 0-indexed sequences and DELETE+INSERT pattern, eliminating duplicate calling points.
 
-### Phase 2 Verification Bugs (see `bugs/phase2-verification-findings.md`)
-1. **Platform "-3" bug** — visible error, likely simple fix
-2. **"Expected XX:XX" for delayed trains** — pushport data now available (`etd_pushport`/`eta_pushport`), needs frontend display logic
-3. **Delay minutes** — `delay_minutes` now calculated correctly in DB, needs frontend rendering
-4. **Scheduled vs real-time display** — source-separated columns allow showing timetable time vs actual time, needs frontend
-5. **Data quality re-verification** — run SQL queries to confirm data integrity
+### Seed Duplicate Calling Points Fix (2026-04-25)
+**Root cause**: Seed used 1-indexed sequences while Darwin handler used 0-indexed. ON CONFLICT by `(journey_rid, sequence)` treated these as different rows, creating duplicates. When sequences misaligned, the seed's UPDATE overwrote the WRONG rows (e.g., Euston's timetable data with Harrow's tpl).
 
-### Completed: Critical Backend Fixes (2026-04-24)
-- ✅ Parser bug fixed: nested `arr`/`dep`/`pass` objects now extracted correctly
-- ✅ Deactivated handler fixed: conditional cancellation based on movement data
-- ✅ Source-separated schema: `_timetable`/`_pushport` column suffixes prevent overwrites
-- ✅ TS deduplication: `ts_generated_at` prevents old TS from overwriting newer data
-- ✅ Historical backfill: 92% of services now have pushport time data
-- ✅ DB cleanup: 8,323 incorrect cancellations cleared from `service_rt`, 183,440 from `calling_points`
+**Data impact**: 10,499 journeys with 36,211 duplicate rows; 9,912 pure duplicates (same tpl + stop_type).
+
+**Fix applied** (1 file + one-time SQL cleanup):
+1. **`packages/api/src/db/seed-timetable.ts`** — Changed from ON CONFLICT upsert to DELETE+INSERT pattern:
+   - 0-indexed sequences (matching Darwin handler)
+   - Preserves pushport data by fetching into memory before DELETE, then re-applying by TIPLOC matching
+   - Ordered matching for circular trips (same TIPLOC visited twice)
+   - Removed stale marking and cleanup steps (no longer needed)
+2. **One-time SQL**: Deleted 31,860 duplicate calling point rows, keeping rows with `source_darwin=true`
+
+### Previous Fixes (2026-04-25)
+- **Cancellation handling**: Service-level `isCancelled`/`cancelReason`/`delayReason` flows correctly
+- **Platform source**: suppressed > confirmed/altered > default comparison
+- **Calling points sequence**: Darwin schedule locations sorted chronologically; time-based matching for circular trips
 
 ## Key Files
-- **Consumer parser**: `packages/consumer/src/parser.ts` — Darwin JSON STOMP envelope, nested arr/dep/pass extraction
-- **Consumer handlers**: `packages/consumer/src/handlers/` — schedule, trainStatus, deactivated
-- **API board query**: `packages/api/src/routes/boards.ts` — unified single-query board with source separation
-- **Frontend board**: `packages/frontend/src/components/DepartureBoard.tsx` — needs real-time display updates
-- **Frontend service detail**: `packages/frontend/src/components/ServiceDetail.tsx` — needs delay/platform display
+- **Seed**: `packages/api/src/db/seed-timetable.ts` — DELETE+INSERT pattern, 0-indexed sequences, pushport data preservation
+- **Consumer handlers**: `packages/consumer/src/handlers/schedule.ts` — Darwin uses same DELETE+INSERT pattern
+- **API board**: `packages/api/src/routes/boards.ts` — calling point data in responses
 
 ## Next Steps
-- Fix platform "-3" bug
+- Fix platform "-3" bug (frontend display)
 - Add "Expected XX:XX" display when `etd_pushport ≠ ptd_timetable`
-- Render `delay_minutes` on calling points
-- Add source indicators (confirmed/altered/suppressed/scheduled) to frontend
-- Add `(journey_rid, tpl)` UNIQUE constraint to prevent duplicate TIPLOC entries
+- Render `delay_minutes` and platform source indicators on frontend
+- Render cancellation status and cancel reasons on frontend
 - Monitor `darwin_errors` for trends
+- Seed RAM optimisation: only process files modified in last 24 hours

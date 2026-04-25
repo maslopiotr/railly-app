@@ -104,7 +104,7 @@ export async function handleSchedule(
   const ssd = schedule.ssd || deriveSsdFromRid(rid);
   const trainId = schedule.trainId || "";
   const toc = schedule.toc || null;
-  const isCancelled = schedule.can === true || schedule.deleted === true || schedule.qtrain === true;
+  const isCancelled = schedule.can === true;
   const cancelReason = schedule.cancelReason?.reasontext || null;
 
   // Darwin sometimes sends a single location as an object instead of an array

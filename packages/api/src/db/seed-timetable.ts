@@ -154,7 +154,6 @@ function parseTimetableXml(
       name === "OPIP" ||
       name === "OPDT"
     ) {
-      pointSeq++;
       const tpl = (attrs.tpl || attrs.ftl || "").trim();
       currentPoint = {
         sequence: pointSeq,
@@ -168,6 +167,7 @@ function parseTimetableXml(
         wtp: attrs.wtp || null,
         act: attrs.act ? attrs.act.trim() : null,
       };
+      pointSeq++;
     }
   };
 
@@ -461,18 +461,104 @@ async function seed() {
       }
     }
 
-    // Mark existing calling points as potentially stale for this batch of journeys
+    // ── Calling points: DELETE+INSERT pattern ────────────────────────────────
+    // Instead of ON CONFLICT (which caused duplicates when seed and Darwin used
+    // different sequence numbering), we:
+    // 1. Fetch existing pushport (real-time) data for this batch of journeys
+    // 2. DELETE all calling points for these journeys
+    // 3. INSERT new calling points with 0-indexed sequences
+    // 4. Re-apply pushport data by matching on (tpl) with ordered matching
+    //    for circular trips (same TIPLOC visited twice)
     const rids = [...passengerJourneys.keys()];
+
+    // Step 1: Fetch existing pushport data for preservation
+    // Process in batches to avoid huge IN clauses
     const RID_BATCH = 500;
+    interface PreservedPushport {
+      tpl: string;
+      sequence: number;
+      etaPushport: string | null;
+      etdPushport: string | null;
+      ataPushport: string | null;
+      atdPushport: string | null;
+      platPushport: string | null;
+      platSource: string | null;
+      delayMinutes: number | null;
+      delayReason: string | null;
+      platIsSuppressed: boolean;
+      isCancelled: boolean;
+      cancelReason: string | null;
+      tsGeneratedAt: Date | null;
+    }
+    interface PreservedJourney {
+      rid: string;
+      byTpl: Map<string, PreservedPushport[]>;
+    }
+    const preservedByRid = new Map<string, PreservedJourney>();
+
+    for (let i = 0; i < rids.length; i += RID_BATCH) {
+      const batch = rids.slice(i, i + RID_BATCH);
+      const existingRows = await db
+        .select({
+          journeyRid: callingPoints.journeyRid,
+          sequence: callingPoints.sequence,
+          tpl: callingPoints.tpl,
+          etaPushport: callingPoints.etaPushport,
+          etdPushport: callingPoints.etdPushport,
+          ataPushport: callingPoints.ataPushport,
+          atdPushport: callingPoints.atdPushport,
+          platPushport: callingPoints.platPushport,
+          platSource: callingPoints.platSource,
+          delayMinutes: callingPoints.delayMinutes,
+          delayReason: callingPoints.delayReason,
+          platIsSuppressed: callingPoints.platIsSuppressed,
+          isCancelled: callingPoints.isCancelled,
+          cancelReason: callingPoints.cancelReason,
+          tsGeneratedAt: callingPoints.tsGeneratedAt,
+        })
+        .from(callingPoints)
+        .where(sql`${callingPoints.journeyRid} IN (${sql.join(batch.map(r => sql`${r}`), sql`, `)})`);
+
+      for (const row of existingRows) {
+        const rid = String(row.journeyRid);
+        const tpl = String(row.tpl || "");
+        if (!preservedByRid.has(rid)) {
+          preservedByRid.set(rid, { rid, byTpl: new Map() });
+        }
+        const journey = preservedByRid.get(rid)!;
+        const entry: PreservedPushport = {
+          tpl,
+          sequence: Number(row.sequence),
+          etaPushport: row.etaPushport ?? null,
+          etdPushport: row.etdPushport ?? null,
+          ataPushport: row.ataPushport ?? null,
+          atdPushport: row.atdPushport ?? null,
+          platPushport: row.platPushport ?? null,
+          platSource: row.platSource ?? null,
+          delayMinutes: row.delayMinutes ?? null,
+          delayReason: row.delayReason ?? null,
+          platIsSuppressed: Boolean(row.platIsSuppressed),
+          isCancelled: Boolean(row.isCancelled),
+          cancelReason: row.cancelReason ?? null,
+          tsGeneratedAt: row.tsGeneratedAt ?? null,
+        };
+        const arr = journey.byTpl.get(tpl) || [];
+        arr.push(entry);
+        journey.byTpl.set(tpl, arr);
+      }
+    }
+
+    console.log(`     Preserved pushport data for ${preservedByRid.size} journeys`);
+
+    // Step 2: DELETE existing calling points for this batch
     for (let i = 0; i < rids.length; i += RID_BATCH) {
       const batch = rids.slice(i, i + RID_BATCH);
       await db
-        .update(callingPoints)
-        .set({ sourceTimetable: false })
+        .delete(callingPoints)
         .where(sql`${callingPoints.journeyRid} IN (${sql.join(batch.map(r => sql`${r}`), sql`, `)})`);
     }
 
-    // Upsert calling points — only update _timetable columns, preserve _pushport columns
+    // Step 3: INSERT new calling points with 0-indexed sequences
     const pointRows: NewCallingPoint[] = [];
     for (const [rid, data] of passengerJourneys) {
       const ssd = data.journey.ssd;
@@ -482,14 +568,14 @@ async function seed() {
 
         pointRows.push({
           journeyRid: rid,
-          sequence: pt.sequence,
+          sequence: pt.sequence, // 0-indexed, matching Darwin handler
           ssd: ssd,
           stopType: pt.stopType,
           tpl: pt.tpl,
           crs: crs || undefined,
           name: name || undefined,
           sourceTimetable: true,
-          // sourceDarwin is NOT set here — preserve existing value from consumer
+          sourceDarwin: preservedByRid.has(rid), // true if Darwin data existed
           // -- Timetable columns --
           platTimetable: pt.plat || undefined,
           ptaTimetable: pt.pta || undefined,
@@ -499,8 +585,7 @@ async function seed() {
           wtpTimetable: pt.wtp || undefined,
           act: pt.act || undefined,
           dayOffset: pt.dayOffset,
-          // -- Push Port columns are left undefined so they keep their
-          // existing values on conflict or get defaults on new insert --
+          // -- Push Port columns: will be re-applied in step 4 --
         });
       }
     }
@@ -508,34 +593,7 @@ async function seed() {
     const POINT_BATCH = 4000;
     for (let i = 0; i < pointRows.length; i += POINT_BATCH) {
       const batch = pointRows.slice(i, i + POINT_BATCH);
-      await db
-        .insert(callingPoints)
-        .values(batch)
-        .onConflictDoUpdate({
-          target: [callingPoints.journeyRid, callingPoints.sequence],
-          set: {
-            ssd: sql`EXCLUDED.ssd`,
-            stopType: sql`EXCLUDED.stop_type`,
-            tpl: sql`EXCLUDED.tpl`,
-            crs: sql`EXCLUDED.crs`,
-            name: sql`EXCLUDED.name`,
-            sourceTimetable: sql`true`,
-            // Only update _timetable columns, preserve _pushport columns
-            platTimetable: sql`EXCLUDED.plat_timetable`,
-            ptaTimetable: sql`EXCLUDED.pta_timetable`,
-            ptdTimetable: sql`EXCLUDED.ptd_timetable`,
-            wtaTimetable: sql`EXCLUDED.wta_timetable`,
-            wtdTimetable: sql`EXCLUDED.wtd_timetable`,
-            wtpTimetable: sql`EXCLUDED.wtp_timetable`,
-            act: sql`EXCLUDED.act`,
-            dayOffset: sql`EXCLUDED.day_offset`,
-            // NOTE: _pushport columns (eta_pushport, etd_pushport, ata_pushport,
-            // atd_pushport, plat_pushport, plat_source, is_cancelled, delay_minutes,
-            // delay_reason, cancel_reason, plat_is_suppressed, updated_at,
-            // ts_generated_at, source_darwin) are deliberately NOT in the
-            // DO UPDATE SET so they persist from Darwin Push Port.
-          },
-        });
+      await db.insert(callingPoints).values(batch);
       if (i % 50000 === 0) {
         console.log(
           `     Calling points: ${Math.min(i + POINT_BATCH, pointRows.length)}/${pointRows.length}`,
@@ -543,20 +601,66 @@ async function seed() {
       }
     }
 
+    // Step 4: Re-apply preserved pushport data by matching on (tpl)
+    // For circular trips (same TIPLOC visited twice), match in order —
+    // the first occurrence in the new data maps to the first preserved entry.
+    let reapplyCount = 0;
+    for (const [rid, preserved] of preservedByRid) {
+      const journeyPoints = passengerJourneys.get(rid);
+      if (!journeyPoints) continue;
+
+      // Track which old entries have been matched (for circular trips)
+      const matchedOldSeqs = new Set<number>();
+
+      for (const pt of journeyPoints.points) {
+        const tplEntries = preserved.byTpl.get(pt.tpl) || [];
+        let rtEntry: PreservedPushport | null = null;
+
+        if (tplEntries.length === 1) {
+          rtEntry = tplEntries[0];
+        } else if (tplEntries.length > 1) {
+          // Circular trip — find the first unmatched entry by old sequence order
+          const unmatched = tplEntries.filter((e) => !matchedOldSeqs.has(e.sequence));
+          if (unmatched.length > 0) {
+            rtEntry = unmatched[0];
+            matchedOldSeqs.add(rtEntry.sequence);
+          }
+        }
+
+        if (!rtEntry) continue;
+
+        await db
+          .update(callingPoints)
+          .set({
+            etaPushport: rtEntry.etaPushport || undefined,
+            etdPushport: rtEntry.etdPushport || undefined,
+            ataPushport: rtEntry.ataPushport || undefined,
+            atdPushport: rtEntry.atdPushport || undefined,
+            platPushport: rtEntry.platPushport || undefined,
+            platSource: rtEntry.platSource || undefined,
+            delayMinutes: rtEntry.delayMinutes ?? undefined,
+            delayReason: rtEntry.delayReason || undefined,
+            platIsSuppressed: rtEntry.platIsSuppressed,
+            isCancelled: rtEntry.isCancelled,
+            cancelReason: rtEntry.cancelReason || undefined,
+            tsGeneratedAt: rtEntry.tsGeneratedAt || undefined,
+            sourceDarwin: true,
+          })
+          .where(sql`${callingPoints.journeyRid} = ${rid} AND ${callingPoints.sequence} = ${pt.sequence}`);
+
+        reapplyCount++;
+      }
+    }
+
+    if (reapplyCount > 0) {
+      console.log(`     Re-applied pushport data for ${reapplyCount} calling points`);
+    }
+
     totalJourneys += passengerJourneys.size;
     totalPoints += pointRows.length;
     console.log(
       `     ✅ ${passengerJourneys.size} journeys, ${pointRows.length} calling points`,
     );
-  }
-
-  // ── Cleanup: remove stale calling points (no timetable AND no Darwin source) ──
-  const deleted = await db
-    .delete(callingPoints)
-    .where(sql`${callingPoints.sourceTimetable} = false AND ${callingPoints.sourceDarwin} = false`)
-    .returning({ id: callingPoints.id });
-  if (deleted.length > 0) {
-    console.log(`   🧹 Cleaned up ${deleted.length} stale calling points (no source)`);
   }
 
   // ── Verification ─────────────────────────────────────────────────────────
