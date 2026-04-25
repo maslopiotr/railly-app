@@ -25,9 +25,7 @@ RUN npm run build --workspace=packages/api
 # Stage 2: Production seed runtime
 FROM node:22-slim
 
-# Install cron for scheduled runs
-RUN apt-get update && apt-get install -y cron && rm -rf /var/lib/apt/lists/*
-
+# No cron needed — entrypoint uses a shell-based polling loop
 WORKDIR /app
 
 # Copy root package files for workspace resolution
@@ -42,15 +40,9 @@ RUN npm install --omit=dev --workspace=packages/shared --workspace=packages/api
 COPY --from=builder /app/packages/shared/dist packages/shared/dist
 COPY --from=builder /app/packages/api/dist packages/api/dist
 
-# Set up cron job: run seed at 03:00 daily
-RUN echo "0 3 * * * cd /app && node packages/api/dist/db/seed-timetable.js >> /var/log/seed-cron.log 2>&1" > /etc/cron.d/seed-cron \
-    && chmod 0644 /etc/cron.d/seed-cron \
-    && crontab /etc/cron.d/seed-cron \
-    && touch /var/log/seed-cron.log
-
 # Copy entrypoint script
 COPY packages/api/seed-entrypoint.sh /usr/local/bin/seed-entrypoint.sh
 RUN chmod +x /usr/local/bin/seed-entrypoint.sh
 
-# Run entrypoint: seeds immediately on start, then cron takes over
+# Run entrypoint: seeds immediately on start, then polls for new files 03:00-05:00
 CMD ["/usr/local/bin/seed-entrypoint.sh"]

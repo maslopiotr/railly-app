@@ -24,11 +24,16 @@ Darwin Push Port Kafka → Consumer → PostgreSQL (real-time overlay)
 2. Phase 1: Parse reference files (`_ref_v{n}.xml.gz`) for TIPLOC→CRS mapping + TOC names
 3. Phase 2: Parse timetable files (`_v{n}.xml.gz`) for journeys + calling points
 4. Upsert to PostgreSQL with `ON CONFLICT (rid) DO UPDATE` for journeys
-5. Upsert calling points with `ON CONFLICT (journey_rid, sequence) DO UPDATE` — only `_timetable` columns updated, `_pushport` columns preserved
-6. Delete stale calling points: `sequence NOT IN (current batch)` to remove old shifted stops
-7. Re-apply preserved real-time data by TIPLOC match (guarded by `ts_generated_at` timestamps)
+5. For calling points: **DELETE+INSERT pattern** (not ON CONFLICT upsert) within a **transaction** per batch:
+   - Fetch preserved pushport data (including `platConfirmed`, `platFromTd`, `suppr`, `lengthPushport`, `detachFront`, `updatedAt`) before DELETE
+   - DELETE existing calling points for batch
+   - INSERT new calling points with `source_darwin=false`
+   - Re-apply pushport data by TIPLOC match, setting `source_darwin=true` only on matched points
+6. `dayOffset` computed using same time priority as Darwin consumer: `wtd > ptd > wtp > wta > pta`
+7. `parseTimeToMinutes` handles both "HH:MM" and "HH:MM:SS" formats
 8. Filter to passenger services only (`isPassengerSvc !== "false"`)
-9. Daily cron: `seed` container runs at 03:00, seeded volume from SFTP-delivered files
+9. Batch size: 5,000 journeys per transaction; pushport re-apply in groups of 500
+10. Daily cron: `seed` container runs at 03:00, seeded volume from SFTP-delivered files; incremental mode processes only recently-modified files
 
 ## Unified Board API (Single PostgreSQL Query)
 1. Query `calling_points` + `journeys` + `service_rt` + `location_ref` + `toc_ref` in single JOIN

@@ -30,6 +30,14 @@
 
 - **Seed duplicate calling points fix** (2026-04-25): Seed used 1-indexed sequences while Darwin used 0-indexed. ON CONFLICT by `(journey_rid, sequence)` created duplicate rows when sequences didn't match. Seed's UPDATE also overwrote wrong rows (e.g., Euston's timetable data with Harrow's tpl). Fix: Changed seed to DELETE+INSERT pattern with pushport data preservation via TIPLOC matching, and 0-indexed sequences. Deleted 31,860 duplicate rows from DB.
 
+- **Seed bug fixes round 2** (2026-04-25): Six issues found and fixed in `seed-timetable.ts`:
+  1. `computeDayOffsets` missing `wtp` in time priority — PP stops only have `wtp`, which was excluded. Fixed to match Darwin consumer: `wtd > ptd > wtp > wta > pta`
+  2. `parseTimeToMinutes` didn't handle "HH:MM:SS" — Working times use seconds; regex only matched "HH:MM". Fixed regex to accept both.
+  3. No transaction wrapping — Batch operations were not atomic. Crash between DELETE and INSERT = data loss. Now wrapped in `db.transaction()`.
+  4. Missing pushport columns — `platConfirmed`, `platFromTd`, `suppr`, `lengthPushport`, `detachFront`, `updatedAt` were silently reset to defaults on every re-seed. Added to preservation/re-apply.
+  5. `sourceDarwin` set too broadly — Was `true` for ALL calling points in a journey. Now only set `true` on points that actually receive pushport data.
+  6. Batch re-apply — Collected all pushport UPDATEs into array first, then executed in groups of 500.
+
 - **Platform source fix** (2026-04-25): Darwin `plat.conf` means "confirmed by train describer", NOT "platform changed". Parser now correctly extracts platform number from empty-key `{"": "2"}` instead of using `conf` as fallback. New `platSource` logic: suppressed > confirmed/altered (with timetable comparison) > default. Added `plat_confirmed`, `plat_from_td`, `suppr`, `length_pushport`, `detach_front` columns.
 
 - **Cancellation handling fix** (2026-04-25): Multiple gaps in cancellation data flow:

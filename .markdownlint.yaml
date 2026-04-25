@@ -1,0 +1,23 @@
+# Line length
+MD013: false
+
+# Headers should be surrounded by blank lines
+MD022: false
+
+# Multiple top-level headings in the same document
+MD025: false
+
+# Fenced code blocks should be surrounded by blank lines
+MD031: false
+
+# Lists should be surrounded by blank lines
+MD032: false
+
+# Fenced code blocks should have a language specified
+MD040: false
+
+# Files should end with a single newline character
+MD047: false
+
+# No space inside code span elements
+MD048: false
