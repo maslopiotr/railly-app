@@ -96,19 +96,32 @@ function computeDelayMinutes(scheduled: string | null, estimated: string | null,
 }
 
 /**
+ * Parse "HH:MM" or "HH:MM:SS" time string to minutes since midnight.
+ * Returns -1 for invalid/unparseable times.
+ */
+function parseTimeToMinutes(time: string | null | undefined): number {
+  if (!time) return -1;
+  const m = time.match(/^(\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (!m) return -1;
+  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+}
+
+/**
  * Match TS locations to existing calling point sequences.
  *
- * Strategy: Match by TIPLOC on non-PP (passing point) stops.
+ * Strategy: Match by TIPLOC + time on non-PP (passing point) stops.
  * PP stops are excluded from matching because they have null pta/ptd
  * and cause incorrect matches.
  *
- * For each TS location, find the best matching non-PP calling point by TIPLOC.
+ * For circular trips (same TIPLOC visited multiple times), the planned
+ * arrival/departure time disambiguates which visit this TS location refers to.
+ *
  * Unmatched locations are silently skipped — we only UPDATE existing CP rows,
  * never INSERT new ones for known services (prevents route waypoint contamination).
  */
 function matchLocationsToSequences(
   tsLocations: DarwinTSLocation[],
-  dbRows: Array<{ sequence: number; tpl: string; stop_type: string }>,
+  dbRows: Array<{ sequence: number; tpl: string; stop_type: string; pta_timetable: string | null; ptd_timetable: string | null }>,
 ): Map<number, number> {
   const matches = new Map<number, number>(); // tsLoc index → db sequence
 
@@ -121,16 +134,61 @@ function matchLocationsToSequences(
     const tpl = loc.tpl?.trim();
     if (!tpl) continue;
 
-    // Find first unused non-PP row with matching TIPLOC
-    const match = nonPPRows.find(
+    // Get the TS location's planned time for matching
+    const tsPlannedTime = loc.wtd || loc.ptd || loc.wta || loc.pta || null;
+
+    // Find candidate rows with matching TIPLOC that haven't been used yet
+    const candidates = nonPPRows.filter(
       (r) => r.tpl === tpl && !usedSequences.has(r.sequence),
     );
 
-    if (match) {
-      matches.set(locIdx, match.sequence);
-      usedSequences.add(match.sequence);
+    if (candidates.length === 0) {
+      // No match → silently skip (Darwin-only route waypoint)
+      continue;
     }
-    // No match → silently skip (Darwin-only route waypoint)
+
+    if (candidates.length === 1) {
+      // Single match — use it directly
+      matches.set(locIdx, candidates[0].sequence);
+      usedSequences.add(candidates[0].sequence);
+      continue;
+    }
+
+    // Multiple candidates (circular trip) — match by planned time
+    // Compare TS location's planned time against each candidate's timetable time
+    const tsMinutes = parseTimeToMinutes(tsPlannedTime);
+
+    if (tsMinutes >= 0) {
+      // Find candidate with closest timetable time to the TS location's planned time
+      let bestMatch = candidates[0];
+      let bestDiff = Infinity;
+
+      for (const candidate of candidates) {
+        const dbTime = candidate.ptd_timetable || candidate.pta_timetable;
+        const dbMinutes = parseTimeToMinutes(dbTime);
+        if (dbMinutes >= 0) {
+          const diff = Math.abs(tsMinutes - dbMinutes);
+          if (diff < bestDiff) {
+            bestDiff = diff;
+            bestMatch = candidate;
+          }
+        }
+      }
+
+      // Only accept if the time difference is reasonable (< 60 minutes)
+      if (bestDiff < 60) {
+        matches.set(locIdx, bestMatch.sequence);
+        usedSequences.add(bestMatch.sequence);
+      } else {
+        // Fallback: use first unused candidate (preserves order)
+        matches.set(locIdx, candidates[0].sequence);
+        usedSequences.add(candidates[0].sequence);
+      }
+    } else {
+      // No time available for matching — use first unused candidate
+      matches.set(locIdx, candidates[0].sequence);
+      usedSequences.add(candidates[0].sequence);
+    }
   }
 
   return matches;
@@ -291,7 +349,7 @@ export async function handleTrainStatus(
 
       // ── Query existing calling points to match by sequence ─────────────────
       const existingRows = await tx`
-        SELECT sequence, tpl, stop_type, pta_timetable, ptd_timetable
+        SELECT sequence, tpl, stop_type, pta_timetable, ptd_timetable, plat_timetable
         FROM calling_points
         WHERE journey_rid = ${rid}
         ORDER BY sequence
@@ -309,7 +367,7 @@ export async function handleTrainStatus(
       // ── Match TS locations to existing sequences ──────────────────────────
       const matches = matchLocationsToSequences(
         locations,
-        existingRows as unknown as Array<{ sequence: number; tpl: string; stop_type: string }>,
+        existingRows as unknown as Array<{ sequence: number; tpl: string; stop_type: string; pta_timetable: string | null; ptd_timetable: string | null; plat_timetable: string | null }>,
       );
 
       // ── Build calling_points updates with resolved sequence numbers ────────
@@ -332,7 +390,11 @@ export async function handleTrainStatus(
         const atdPushport = loc.atd?.trim() || null;
         const platPushport = loc.platform?.trim() || null;
 
-        // Determine platform source
+        // Determine platform source:
+        // - "confirmed": Darwin explicitly confirmed OR platform matches timetable
+        // - "suppressed": Darwin marked platform as suppressed
+        // - "altered": platform differs from timetable
+        // - null: no platform data from Darwin
         let platSource: string | null = null;
         if (platPushport) {
           if (loc.confirmed === true) {
@@ -340,7 +402,15 @@ export async function handleTrainStatus(
           } else if (loc.platIsSuppressed === true) {
             platSource = "suppressed";
           } else {
-            platSource = "altered";
+            // Compare against timetable platform to determine if altered or confirmed
+            const existingRow = (existingRows as unknown as Array<{ sequence: number; plat_timetable: string | null }>)
+              .find((r) => r.sequence === sequence);
+            const bookedPlat = existingRow?.plat_timetable?.trim() || null;
+            if (bookedPlat && platPushport === bookedPlat) {
+              platSource = "confirmed"; // Platform matches timetable — it's confirmed, not altered
+            } else {
+              platSource = "altered"; // Platform differs from timetable (or no timetable data)
+            }
           }
         }
 

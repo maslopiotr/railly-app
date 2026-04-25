@@ -505,7 +505,7 @@ async function seed() {
       }
     }
 
-    const POINT_BATCH = 5000;
+    const POINT_BATCH = 4000;
     for (let i = 0; i < pointRows.length; i += POINT_BATCH) {
       const batch = pointRows.slice(i, i + POINT_BATCH);
       await db
