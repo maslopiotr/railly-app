@@ -30,6 +30,7 @@ export const metrics = {
   messagesProcessed: 0,
   messagesSkipped: 0,
   messagesErrored: 0,
+  skippedLocations: 0,
   byType: {} as Record<string, number>,
 };
 

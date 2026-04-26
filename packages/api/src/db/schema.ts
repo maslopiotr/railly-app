@@ -127,14 +127,14 @@ export const callingPoints = pgTable(
       table.sequence,
     ),
     // Composite indexes for board query patterns
-    index("idx_calling_points_crs_journey_rid").on(table.crs, table.journeyRid),
+    // Board query uses (crs, ssd) — composite index replaces separate crs + ssd indexes for this pattern
+    index("idx_calling_points_crs_ssd").on(table.crs, table.ssd),
     index("idx_calling_points_journey_rid_stop_type").on(
       table.journeyRid,
       table.stopType,
     ),
-    // New indexes for direct date querying
+    // Index for direct date querying
     index("idx_calling_points_ssd").on(table.ssd),
-    index("idx_calling_points_ssd_dayoffset").on(table.ssd, table.dayOffset),
   ],
 );
 
@@ -260,7 +260,30 @@ export type NewLocationRef = typeof locationRef.$inferInsert;
 export type NewServiceRt = typeof serviceRt.$inferInsert;
 /** Type for a service_rt row as read from the DB */
 export type ServiceRtRow = typeof serviceRt.$inferSelect;
-/** Type for inserting a darwin_events row */
-export type NewDarwinEvent = typeof darwinEvents.$inferInsert;
 /** Type for inserting a darwin_errors row */
 export type NewDarwinError = typeof darwinErrors.$inferInsert;
+
+/**
+ * Skipped locations — TIPLOCs that were in a Darwin TS message but had no
+ * matching calling point in the timetable. Used for data quality investigation.
+ */
+export const skippedLocations = pgTable(
+  "skipped_locations",
+  {
+    id: serial("id").primaryKey(),
+    rid: varchar("rid", { length: 20 }).notNull(), // Service RID
+    tpl: varchar("tpl", { length: 10 }).notNull(), // TIPLOC code that was skipped
+    ssd: char("ssd", { length: 10 }), // Service start date
+    reason: varchar("reason", { length: 255 }), // Why it was skipped
+    tsGeneratedAt: timestamp("ts_generated_at", { withTimezone: true }), // Darwin message timestamp
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => [
+    index("idx_skipped_locations_tpl").on(table.tpl),
+    index("idx_skipped_locations_rid").on(table.rid),
+    index("idx_skipped_locations_created_at").on(table.createdAt),
+  ],
+);
+
+/** Type for inserting a skipped location row */
+export type NewSkippedLocation = typeof skippedLocations.$inferInsert;

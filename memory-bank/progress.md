@@ -83,12 +83,60 @@
 
 - **BUG-006**: TIPLOC skip warnings are currently 0 in logs — appears resolved or not triggering. Left as-is.
 
-- **BUG-007**: Consumer no longer silently skips batches — all batches show processing output. Appears resolved.
+- **Darwin volume analysis & optimisation** (2026-04-26): Analysed 2.3M messages over 2.5 days. Key findings:
+  - ~1M messages/day (89% TS, 7% schedule, 3% deactivated, 1% unknown)
+  - Average 24 TS updates per service per day; top service had 588 updates
+  - Peak hours: 16:00-17:00 UTC (90-107K messages/hr); quiet hours: 23:00-04:00 (5-35K/hr)
+  - darwin_events table: 1.7GB growing at ~700MB/day
+  - calling_points: 1.4GB (2.56M rows)
+  - TS median size: 451B; schedule median: 4.3KB; P95: 4KB/12KB respectively
+
+- **Index audit** (2026-04-26): Dropped 2 unused indexes on calling_points (saved 238MB):
+  - `idx_calling_points_crs_journey_rid` (173MB, 3 scans)
+  - `idx_calling_points_ssd_dayoffset` (65MB, 3 scans)
+  - Added composite `idx_calling_points_crs_ssd` (18MB) — board query 282ms → 6ms (47x faster)
+  - calling_points total size: 1378MB → 1158MB
+
+- **Retention cleanup** (2026-04-26): Added periodic cleanup in consumer that deletes processed darwin_events older than 3 days. Runs on startup and every hour. Unprocessed rows (processed_at IS NULL) are kept. darwin_errors kept indefinitely. Configurable via RETENTION_DAYS and CLEANUP_INTERVAL_MS env vars.
+
+- **Darwin latency analysis** (2026-04-26): Analysed 2.3M events over 2.5 days. Consumer P50=0.26s, P95=0.49s. P99 spikes (47s, 459s) are from consumer restart catch-up, not volume. Peak hours process same speed as quiet. Board API: 6ms (was 282ms). Total Darwin→user: ~0.5-1s with auto-polling.
+
+- **Frontend auto-polling** (2026-04-26): DepartureBoard now auto-polls every 30s when tab is visible (Visibility API). Pauses when tab hidden. Silent refreshes (no loading skeleton). Manual refresh button still available. ~2 req/min per user at ~6ms DB time each = negligible load on cheapest Hetzner VPS.
+
+- **BUG-007**: Consumer no longer silently skips batches — all batches show processing output. Appears resolved. Revised: need unprocessed message audit trail (see BUG-007-revised).
 
 - **BUG-001**: Already fixed — seed uses `--incremental` flag with mtime checking, plus 03:00-05:00 polling daemon with state tracking.
 
+- **BUG-020 fix** (2026-04-26): Train showing "at platform" at destination now shows "arrived". Added `stopType` parameter to `determineTrainStatus()` and `determineCurrentLocation()`. When `stopType === 'DT'` and `ata` exists, returns `"arrived"` instead of `"at_platform"`. Added `"arrived"` to `TrainStatus` and `CurrentLocation` types. Frontend `StatusBadge` shows blue "Arrived" badge.
+
+- **BUG-010 fix** (2026-04-26): Added `skippedLocationsTotal` counter to trainStatus handler, logged in metrics. Per-message skip count shown in log output. Still needs persistence (see BUG-006-revised).
+
+- **BUG-009-cleanup** (2026-04-26): Purged 258 old truncated JSON rows from darwin_events. 0 new truncated rows since VARCHAR→TEXT fix.
+
+- **BUG-023: CRS gap discovery** (2026-04-26): Found 42% of passenger calling points (77,388 rows) had NULL CRS — services at major stations like London Bridge, Bond Street, Clapham Junction were invisible on departure boards. Root cause: PPTimetable reference data has CRS for only ~3,700 of 12,100 TIPLOCs. The seed's `tplToCrs` lookup used this incomplete data. Fixed:
+  1. Manual backfill: `UPDATE calling_points SET crs = lr.crs, name = COALESCE(cp.name, lr.name) FROM location_ref lr WHERE cp.tpl = lr.tpl AND lr.crs IS NOT NULL ...` — 129,469 CRS + 51,089 names updated.
+  2. Added Phase 3 to seed-timetable.ts: post-insert backfill from `location_ref`.
+  3. Remaining: 1,465 passenger stops without CRS (374 genuine junctions), 2 CRS codes not in `stations` table (TRX, ZZY).
+
+- **BUG-006/007 revised** (2026-04-26): User feedback — silencing warnings hides real problems. Skipped TIPLOCs should be stored for investigation. Unprocessed messages need audit trail. Created BUG-006-revised and BUG-007-revised.
+
 ## What's Left
+- **BUG-021**: Mobile UI layout broken — destination hidden, time column too wide, status off-screen
+- **BUG-006-revised**: Create `skipped_locations` table for persisting skipped TIPLOCs
+- **BUG-007-revised**: Verify `darwin_errors` captures all retry-exhausted failures; add `retry_count` column
+- **BUG-022**: VSTP stubs create duplicate PP entries (low priority)
+- **BUG-023 remaining**: Add TRX and ZZY to stations seed; consider board query fallback for NULL CRS
 - Platforms suppressed — Some stations (Euston) suppress platforms in PPTimetable, then Darwin announces ~5 min before departure. Platform display could be further improved.
 - Monitor `darwin_errors` for trends
 - Build dashboard query for unresolved errors
-- Frontend: Build out ServiceDetail view with full calling pattern
+  - Frontend: Build out ServiceDetail view with full calling pattern
+
+- **UI Redesign — Light/Dark mode + UX improvements** (2026-04-26):
+  1. **Theme system**: `useTheme` hook with system/light/dark modes, localStorage persistence, `prefers-color-scheme` auto-detection. Theme toggle button in app header (💻/🌞/🌙 icons, cycles on click).
+  2. **Flash prevention**: Inline script in `index.html` applies `dark` class before React hydrates.
+  3. **Colour system refactor**: Complete `index.css` rewrite with light-mode defaults + `dark:` variants for all components. WCAG AA accessible colours (emerald-600/300, amber-600/300, red-600/300, blue-600/300).
+  4. **TimePicker dropdown popover**: Replaced confusing `--:--` placeholder with "🕐 Now ▾" pill button. Dropdown opens below without layout shift. Only fires `onChange` on actual time change (not on expand). ✕ resets to "now".
+  5. **DepartureBoard header**: Two-row layout — station+status top, tabs+controls bottom. Live indicator (pulsing dot + relative time) next to station name.
+  6. **Platform legend**: Compact colour-coded dots (● Confirmed, ● Altered, etc.) instead of badge examples. Visible on all screens with `text-[10px]`.
+  7. **ServiceDetail**: All dark-only colours replaced with light/dark variants. Alert boxes use `bg-red-50/dark:bg-red-500/10` pattern.
+  8. **Mobile optimisations**: Reduced padding (`px-2` on mobile), 44px min touch targets, status column wraps below on mobile.

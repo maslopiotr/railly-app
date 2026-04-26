@@ -110,11 +110,16 @@ function determineTrainStatus(
   atd: string | null,
   std: string | null,
   boardType: "departures" | "arrivals",
+  stopType?: string | null,
 ): TrainStatus {
   if (isCancelled) return "cancelled";
   if (!hasRealtime) return "scheduled";
 
-  if (ata && !atd) return "at_platform";
+  // A train at its destination (DT) that has arrived should show "arrived", not "at platform"
+  if (ata && !atd) {
+    if (stopType === "DT") return "arrived";
+    return "at_platform";
+  }
   if (atd) return "departed";
 
   // Use etd for departure boards, eta for arrival boards
@@ -145,11 +150,13 @@ function determineCurrentLocation(
 
   if (lastDepartedIndex >= 0 && lastDepartedIndex < callingPoints.length - 1) {
     const nextCp = callingPoints[lastDepartedIndex + 1];
+    // If the next stop is a DT (destination) and has arrived, it's arrived not at platform
+    const isArrivedDestination = nextCp.stopType === "DT" && nextCp.ataPushport;
     return {
       tpl: nextCp.tpl,
       crs: nextCp.crs,
       name: nextCp.name,
-      status: nextCp.ataPushport ? "at_platform" : "approaching",
+      status: isArrivedDestination ? "arrived" : (nextCp.ataPushport ? "at_platform" : "approaching"),
     };
   }
 
@@ -597,6 +604,7 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         entry.atdPushport,
         entry.ptdTimetable || entry.ptaTimetable,
         boardType,
+        entry.stopType,
       );
 
       const cpList: HybridCallingPoint[] = callingPattern

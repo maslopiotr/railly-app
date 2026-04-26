@@ -140,6 +140,11 @@ function matchLocationsToSequences(
     const tpl = loc.tpl?.trim();
     if (!tpl) continue;
 
+    // Skip passing points — Darwin marks these with isPass=true.
+    // They don't need real-time updates and would incorrectly match
+    // to IP/OR/DT rows if the same TIPLOC appears as both IP and PP.
+    if (loc.isPass === true) continue;
+
     // Get the TS location's planned time for matching
     const tsPlannedTime = loc.wtd || loc.ptd || loc.wta || loc.pta || null;
 
@@ -313,6 +318,9 @@ async function createDarwinStub(
  * Only writes _pushport columns. Never overwrites _timetable columns.
  * Creates Darwin stubs for unknown services.
  */
+/** Count of TS locations skipped due to no matching calling point (for metrics) */
+export let skippedLocationsTotal = 0;
+
 export async function handleTrainStatus(
   ts: DarwinTS,
   generatedAt: string,
@@ -340,6 +348,16 @@ export async function handleTrainStatus(
 
   // Darwin sometimes sends a single location as an object instead of an array
   const locations = toArray(ts.locations);
+
+  // Track skipped locations for persistence (populated during matching)
+  const skippedDetails: Array<{ tpl: string; reason: string }> = [];
+  let skippedInMessage = 0;
+
+  // Track locations with empty/null TIPLOCs (silently dropped before matching)
+  const emptyTiplocs = locations.filter((loc) => !loc.tpl?.trim()).length;
+  if (emptyTiplocs > 0) {
+    console.warn(`   ⚠️ TS ${rid}: ${emptyTiplocs} locations with empty TIPLOC — dropped`);
+  }
 
   try {
     await sql.begin(async (tx) => {
@@ -396,7 +414,25 @@ export async function handleTrainStatus(
 
         const sequence = matches.get(locIdx);
         if (sequence === undefined) {
-          // Unmatched Darwin location — silently skip (prevents route waypoint contamination)
+          // Unmatched Darwin location — skip and record for investigation
+          skippedInMessage++;
+          // Classify reason using Darwin location's own properties:
+          // - isOrigin/isDestination with no match → critical (data loss)
+          // - isPass or no planned times → passing point (expected)
+          // - Has planned times but no match → passenger stop (potential data loss)
+          let reason: string;
+          if (loc.isOrigin === true) {
+            reason = "origin_no_match"; // Critical: origin not found in timetable
+          } else if (loc.isDestination === true) {
+            reason = "destination_no_match"; // Critical: destination not found in timetable
+          } else if (loc.isPass === true) {
+            reason = "passing_point_no_match"; // Expected: passing point not in timetable
+          } else if (loc.pta || loc.ptd || loc.wta || loc.wtd) {
+            reason = "passenger_stop_no_match"; // Has planned times → potential data loss
+          } else {
+            reason = "passing_point_no_match"; // No times → likely a passing point
+          }
+          skippedDetails.push({ tpl, reason });
           continue;
         }
 
@@ -569,7 +605,23 @@ export async function handleTrainStatus(
 
     });
 
-    console.log(`   ✅ TS updated: ${rid} (${locations.length} locations processed)`);
+    // Track skipped locations for metrics and persist for investigation
+    if (skippedInMessage > 0) {
+      skippedLocationsTotal += skippedInMessage;
+      // Persist skipped locations to DB for data quality investigation
+      try {
+        for (const skip of skippedDetails) {
+          await sql`
+            INSERT INTO skipped_locations (rid, tpl, ssd, reason, ts_generated_at)
+            VALUES (${rid}, ${skip.tpl}, ${tsSsd}, ${skip.reason}, ${generatedAt}::timestamp with time zone)
+          `;
+        }
+      } catch (skipErr) {
+        // Don't let skip logging fail the main processing
+        console.warn(`   ⚠️ Failed to persist skipped location for ${rid}:`, (skipErr as Error).message);
+      }
+    }
+    console.log(`   ✅ TS updated: ${rid} (${locations.length} locations, ${skippedInMessage} skipped)`);
   } catch (err) {
     console.error(`   ❌ TS update failed for ${rid}:`, (err as Error).message);
     throw err;

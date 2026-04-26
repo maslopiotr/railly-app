@@ -1,49 +1,62 @@
 # Active Context
 
 ## Current Focus
-- **Bug triage and fixes** (2026-04-26): Audited all 17 bugs in bugs-tracker.md. Fixed BUG-009 (VARCHAR(20000) → TEXT), BUG-011 (PostgreSQL WAL config), BUG-012 (missing .limit(1)). Confirmed BUG-001/002/003/004/005/007/008 already resolved. Remaining open: BUG-006 (TIPLOC warnings, currently 0 warnings), BUG-010 (metrics), BUG-013-017 (backlog).
-**Board accuracy fixes round 3 — VERIFIED (2026-04-26).** Seven bugs fixed and edge-case verified across multiple stations (EUS, KGX, MKC, PAD, BHM, MAN).
+- **Bug verification and data quality fixes** (2026-04-26): Comprehensive PostgreSQL verification of all bugs in bugsTracker.md, plus discovery and fix of critical CRS gap.
 
-### API Fixes (`packages/api/src/routes/boards.ts`)
-1. **trainStatus="on_time" for delayed trains** — `determineTrainStatus()` now uses `etd` for departure boards, `eta` for arrival boards
-2. **eta/etd fallback to timetable** — Changed to pushport-only values (`eta = entry.etaPushport ?? null`). Frontend distinguishes "On time" (pushport confirms schedule) from scheduled-only display
-3. **delayMinutes inconsistency** — Uses DB `delay_minutes` as primary source, only recomputes if null
-4. **Platform-only services** — Returns `"scheduled"` instead of `"on_time"` when no etd/eta available
+### Bug Verification Results
+All 12 original bugs (BUG-001 through BUG-012) verified with live data:
+- **BUG-001 through BUG-008, BUG-011, BUG-012**: Confirmed FIXED
+- **BUG-009**: Fixed + 258 old truncated rows purged
+- **BUG-010**: Partially fixed (counter added, needs persistence)
+- **BUG-006/007**: Revised — silencing warnings hides real problems
 
-### Consumer Fix (`packages/consumer/src/handlers/trainStatus.ts`)
-5. **Cancel reason propagation** — Per-location cancel reasons now extracted from `lateReason` and propagated to `calling_points.cancel_reason`. Uses `COALESCE` to preserve existing reasons.
+### New Bugs Discovered
+- **BUG-020**: Train at destination showing "at platform" → Fixed with new "arrived" status
+- **BUG-021**: Mobile UI layout broken → Active, needs frontend fix
+- **BUG-022**: VSTP duplicate PP entries → Low priority, no display impact
+- **BUG-023**: 42% of passenger calling points missing CRS codes → Partially fixed (backfilled 129K rows)
+- **BUG-006-revised**: Need `skipped_locations` table for persistence
+- **BUG-007-revised**: Need unprocessed message audit trail
 
-### Frontend Fixes
-6. **ServiceRow.tsx** — Shows scheduled time with strikethrough when delayed, "Exp XX:XX" in amber, early arrivals show negative delay in green, cancel reasons displayed. Removed unused `isOnTime` function.
-7. **CallingPoints.tsx** — Same treatment for calling points: "Exp XX:XX" for delayed, "On time" for confirmed, strikethrough for scheduled time when delayed. Cancel reasons with `cancelReason` prop. Fixed missing `cancelReason` destructuring.
+### Critical CRS Gap Fix (BUG-023)
+- **Before**: 77,388 passenger stops (42%) had NULL CRS — services at London Bridge, Bond Street, Clapham Junction etc. were invisible on departure boards
+- **After backfill**: 1,465 without CRS (0.8%), all genuine junctions
+- **Manual backfill**: `UPDATE calling_points SET crs/name FROM location_ref` — 129,469 CRS + 51,089 names
+- **Seed fix**: Added Phase 3 post-insert backfill from `location_ref`
+- **Remaining**: 374 TIPLOCs without CRS in reference data (junctions), 2 missing station entries (TRX, ZZY)
 
-### Edge Case Verification (2026-04-26)
-All 7 train statuses verified live:
-- **delayed**: EUS service 202604268703851 correctly shows `trainStatus: "delayed"`, `delayMinutes: 81`, `etd ≠ std`
-- **on_time**: EUS/KGX services with `etd === std` correctly show `"on_time"`
-- **scheduled**: Services with platform data but no timing data correctly show `"scheduled"` (not "on_time")
-- **departed**: Services with `atdPushport` correctly show `"departed"`, `etd: null` (Darwin clears etd after departure)
-- **at_platform**: MKC service correctly shows `actualArrival` set, `actualDeparture: null`
-- **approaching**: MKC services correctly show `eta` populated, no ata/atd
-- **Early departures**: `delayMinutes: -1` correctly computed, frontend shows in green
-- **Platform alterations**: `platformTimetable: "3"`, `platformLive: "6"`, `platformSource: "altered"`
-- **Delay cascade**: Calling points show progressively reducing delay along route (77→64→37→27→12 min)
-- **Cancelled services**: None in current data (0 across 5 stations), code path correct but untested live
+### BUG-020 Fix: "Arrived" Status
+- Added `stopType` parameter to `determineTrainStatus()` and `determineCurrentLocation()`
+- When `stopType === 'DT'` and `ata` exists → returns `"arrived"` instead of `"at_platform"`
+- Added `"arrived"` to `TrainStatus` and `CurrentLocation` shared types
+- Frontend `StatusBadge` shows blue "Arrived" badge
 
-### Key Design Decisions
-- Once a train departs, Darwin clears `etdPushport` — the actual time is in `atdPushport`. The frontend correctly shows `actualDeparture` instead of `etd` for departed services.
-- `delay > 5` threshold for "delayed" status matches National Rail convention (1-5 min = "on_time").
-- Services with `hasRealtime=true` but no timing data show `"scheduled"` (uncertain status), not `"on_time"`.
+### Data Quality Summary (2026-04-26)
+| Check | Result | Status |
+|-------|--------|--------|
+| Truncated JSON (new) | 0 rows | ✅ |
+| `processed_at IS NULL` | 0 rows | ✅ |
+| True duplicate CPs | 10 (legitimate) | ✅ |
+| EUS departures | 121 | ✅ |
+| BHM departures | 248 | ✅ |
+| Passenger stops without CRS | 1,465 (0.8%) | ⚠️ |
+| Cancelled services today | 3,233 | ✅ |
+| Darwin errors (24h) | 4 deadlocks | ✅ |
 
 ## Key Files
-- **API board**: `packages/api/src/routes/boards.ts` — `determineTrainStatus()` uses `etd`/`eta` based on board type; pushport-only eta/etd; DB `delay_minutes` as primary
-- **Consumer**: `packages/consumer/src/handlers/trainStatus.ts` — Per-location cancel reason extraction and propagation
-- **Frontend**: `packages/frontend/src/components/ServiceRow.tsx` — Delayed/scheduled/on-time display logic
-- **Frontend**: `packages/frontend/src/components/CallingPoints.tsx` — Expected time display, cancel reasons
+- **API board**: `packages/api/src/routes/boards.ts` — `determineTrainStatus()`, `determineCurrentLocation()`, board query
+- **Consumer**: `packages/consumer/src/handlers/trainStatus.ts` — `skippedLocationsTotal` counter, Darwin stub creation
+- **Consumer**: `packages/consumer/src/handlers/index.ts` — `skippedLocations` metric in `metrics` object
+- **Consumer**: `packages/consumer/src/index.ts` — `skippedLocationsTotal` in metrics logging
+- **Seed**: `packages/api/src/db/seed-timetable.ts` — Phase 3 CRS backfill from `location_ref`
+- **Shared types**: `packages/shared/src/types/board.ts` — `TrainStatus` includes `"arrived"`, `CurrentLocation` includes `"arrived"`
+- **Frontend**: `packages/frontend/src/components/ServiceRow.tsx` — "Arrived" badge
 
 ## Next Steps
-- Platforms suppressed — Some stations (Euston) suppress platforms; display could be improved
-- Monitor `darwin_errors` for trends
+- **BUG-021**: Mobile UI layout fix (frontend-only)
+- **BUG-006-revised**: Create `skipped_locations` table for persisting skipped TIPLOCs
+- **BUG-007-revised**: Verify `darwin_errors` captures all retry-exhausted failures
+- **BUG-022**: VSTP duplicate PP entries (low priority)
+- **BUG-023 remaining**: Add TRX/ZZY to stations seed; board query fallback for NULL CRS
 - Build dashboard query for unresolved errors
-- Frontend: Build out ServiceDetail view with full calling pattern
-- Test cancel reason display with live cancelled services
+- Frontend: Build out ServiceDetail view

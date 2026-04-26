@@ -959,6 +959,21 @@ async function seed() {
   console.log(`   Location refs: ${locCount[0].count}`);
   console.log(`   TOC refs: ${tocCount[0].count}`);
 
+  // ── Phase 3: Backfill CRS and names from location_ref ──────────────────
+  console.log("\n📋 Phase 3: Backfill CRS and names from location_ref...");
+  const phase3Start = Date.now();
+
+  const backfillResult = await db.execute(sql`
+    UPDATE calling_points cp
+    SET crs = lr.crs, name = COALESCE(cp.name, lr.name)
+    FROM location_ref lr
+    WHERE cp.tpl = lr.tpl
+    AND lr.crs IS NOT NULL AND lr.crs != ''
+    AND (cp.crs IS NULL OR cp.crs = '' OR cp.name IS NULL)
+  `);
+  console.log(`   ✅ Backfilled ${backfillResult.count ?? 0} calling points with CRS/name from location_ref`);
+  logElapsed("Phase 3", phase3Start);
+
   logElapsed("Total seed", seedStart);
   logMemory("end");
   console.log("\n✅ Timetable seed complete!");

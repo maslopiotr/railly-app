@@ -5,6 +5,7 @@ import { ServiceDetail } from "./components/ServiceDetail";
 import { TimePicker } from "./components/TimePicker";
 import { useRecentStations } from "./hooks/useRecentStations";
 import { useFavourites } from "./hooks/useFavourites";
+import { useTheme } from "./hooks/useTheme";
 import { fetchBoard } from "./api/boards";
 import type { StationSearchResult, HybridBoardService } from "@railly-app/shared";
 
@@ -72,7 +73,7 @@ function LiveClock() {
   });
 
   return (
-    <div className="text-3xl sm:text-4xl font-mono font-bold text-white tracking-tight">
+    <div className="text-3xl sm:text-4xl font-mono font-bold text-gray-900 dark:text-white tracking-tight">
       {formattedTime}
     </div>
   );
@@ -93,7 +94,7 @@ function StationChips({
 
   return (
     <div className="w-full max-w-2xl">
-      <h3 className="text-xs uppercase tracking-wider text-slate-500 mb-2 flex items-center gap-1.5">
+      <h3 className="text-xs uppercase tracking-wider text-gray-500 dark:text-slate-500 mb-2 flex items-center gap-1.5">
         {icon}
         {title}
       </h3>
@@ -102,10 +103,10 @@ function StationChips({
           <button
             key={station.crsCode}
             onClick={() => onSelect(station)}
-            className="chip-hover px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-full text-sm text-slate-300 hover:bg-slate-700 hover:text-white hover:border-slate-600 flex items-center gap-1.5"
+            className="chip-hover px-3 py-1.5 bg-gray-100 border border-gray-200 rounded-full text-sm text-gray-700 hover:bg-gray-200 hover:text-gray-900 hover:border-gray-300 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white dark:hover:border-slate-600 flex items-center gap-1.5"
           >
             <span>{station.name}</span>
-            <span className="text-xs text-slate-500 font-mono">{station.crsCode}</span>
+            <span className="text-xs text-gray-400 font-mono dark:text-slate-500">{station.crsCode}</span>
           </button>
         ))}
       </div>
@@ -118,6 +119,10 @@ function App() {
   const [selectedService, setSelectedService] = useState<HybridBoardService | null>(null);
   const { recentStations, addRecentStation } = useRecentStations();
   const { favourites, toggleFavourite, isFavourite } = useFavourites();
+  const { theme, cycleTheme } = useTheme();
+
+  const themeIcon = theme === "system" ? "💻" : theme === "light" ? "🌞" : "🌙";
+  const themeTitle = theme === "system" ? "System theme" : theme === "light" ? "Light mode" : "Dark mode";
 
   // Board tab state — lifted so it persists across service detail navigation
   const [activeTab, setActiveTab] = useState<"departures" | "arrivals">("departures");
@@ -332,8 +337,8 @@ function App() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-900 to-slate-800 text-white overflow-x-hidden flex flex-col">
-      <header className="px-4 sm:px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+    <div className="min-h-screen bg-gray-50 text-gray-900 dark:bg-slate-900 dark:text-white overflow-x-hidden flex flex-col">
+      <header className="px-4 sm:px-6 py-3 border-b border-gray-200 dark:border-slate-700 flex items-center justify-between bg-white dark:bg-slate-900">
         <button
           onClick={handleLogoClick}
           className="logo-btn cursor-pointer"
@@ -341,7 +346,17 @@ function App() {
         >
           Railly
         </button>
-        <span className="text-xs sm:text-sm text-slate-500">Rail Buddy</span>
+        <div className="flex items-center gap-3">
+          <span className="text-xs sm:text-sm text-gray-400 dark:text-slate-500">Rail Buddy</span>
+          <button
+            onClick={cycleTheme}
+            className="theme-toggle"
+            aria-label={themeTitle}
+            title={themeTitle}
+          >
+            {themeIcon}
+          </button>
+        </div>
       </header>
 
       <main className="flex-1 flex flex-col items-center px-4 sm:px-6 py-6 sm:py-8">
@@ -382,7 +397,7 @@ function App() {
             <h2 className="text-xl sm:text-2xl font-semibold text-center mb-2">
               Live UK Train Departures
             </h2>
-            <p className="text-sm sm:text-base text-slate-400 text-center mb-8">
+            <p className="text-sm sm:text-base text-gray-500 dark:text-slate-400 text-center mb-8">
               Search any station to see departures, arrivals, and platform info
             </p>
 
@@ -402,7 +417,7 @@ function App() {
                   onChange={setSelectedTime}
                 />
               </div>
-              <p className="text-xs text-slate-500 mt-2">
+              <p className="text-xs text-gray-400 dark:text-slate-500 mt-2">
                 Try 'Euston', 'Manchester', or 'KGX'
               </p>
             </div>
@@ -410,8 +425,8 @@ function App() {
             {/* Favourite Stations */}
             {favourites.length > 0 ? (
               <div className="w-full mb-6">
-                <h3 className="text-xs uppercase tracking-wider text-amber-400/80 mb-3 flex items-center gap-1.5">
-                  <svg className="w-3.5 h-3.5 text-amber-400" fill="currentColor" viewBox="0 0 24 24">
+                <h3 className="text-xs uppercase tracking-wider text-amber-600 dark:text-amber-400/80 mb-3 flex items-center gap-1.5">
+                  <svg className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
                   </svg>
                   Favourites
@@ -441,7 +456,7 @@ function App() {
                 </div>
               </div>
             ) : (
-              <p className="text-xs text-slate-500 text-center mb-6">
+              <p className="text-xs text-gray-400 dark:text-slate-500 text-center mb-6">
                 ⭐ Favourite a station from the board to add it here
               </p>
             )}
@@ -477,7 +492,7 @@ function App() {
         )}
       </main>
 
-      <footer className="px-4 sm:px-6 py-4 text-center text-xs text-slate-500 border-t border-slate-700">
+      <footer className="px-4 sm:px-6 py-4 text-center text-xs text-gray-400 dark:text-slate-500 border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900">
         © 2026 Railly · Data from National Rail Enquiries
       </footer>
     </div>

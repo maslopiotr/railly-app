@@ -168,6 +168,7 @@ export type TrainStatus =
   | "on_time"
   | "delayed"
   | "at_platform"
+  | "arrived"
   | "approaching"
   | "departed"
   | "cancelled"
@@ -182,5 +183,5 @@ export interface CurrentLocation {
   /** Location name */
   name: string | null;
   /** What the train is doing here */
-  status: "at_platform" | "departed" | "approaching" | "future";
+  status: "at_platform" | "arrived" | "departed" | "approaching" | "future";
 }

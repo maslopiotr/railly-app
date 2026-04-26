@@ -3,7 +3,7 @@
  *
  * Shows all services for a station within a time window (past 10min + next 2hr).
  * Splits into Departures and Arrivals tabs, now server-filtered.
- * Manual refresh only (pull-to-refresh on mobile, button on desktop).
+ * Auto-polls every 30 seconds when visible; manual refresh also available.
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -31,6 +31,11 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
   const [board, setBoard] = useState<HybridBoardResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
+  const [isLive, setIsLive] = useState(true); // auto-polling is active
+
+  // Relative time string ("just now", "30s ago", "1m ago", etc.)
+  const [relativeTime, setRelativeTime] = useState<string>("");
 
   // Pull-to-refresh state
   const [pullDistance, setPullDistance] = useState(0);
@@ -40,15 +45,37 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
   const abortRef = useRef<AbortController | null>(null);
   const PULL_THRESHOLD = 60;
 
-  const loadBoard = useCallback(async () => {
+  // Update relative time every 10 seconds
+  useEffect(() => {
+    const updateRelativeTime = () => {
+      if (!lastRefreshed) {
+        setRelativeTime("");
+        return;
+      }
+      const seconds = Math.floor((Date.now() - lastRefreshed.getTime()) / 1000);
+      if (seconds < 5) setRelativeTime("just now");
+      else if (seconds < 60) setRelativeTime(`${seconds}s ago`);
+      else if (seconds < 120) setRelativeTime("1m ago");
+      else setRelativeTime(`${Math.floor(seconds / 60)}m ago`);
+    };
+
+    updateRelativeTime();
+    const id = setInterval(updateRelativeTime, 10_000);
+    return () => clearInterval(id);
+  }, [lastRefreshed]);
+
+  const loadBoard = useCallback(async (silent = false) => {
     // Abort any in-flight request
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
 
     try {
-      setBoard(null);
-      setIsLoading(true);
+      // Only show loading skeleton on initial load, not on auto-poll refreshes
+      if (!silent) {
+        setBoard(null);
+        setIsLoading(true);
+      }
       const data = await fetchBoard(station.crsCode, {
         timeWindow: 120,
         pastWindow: 10,
@@ -60,6 +87,7 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
       if (!controller.signal.aborted) {
         setBoard(data);
         setError(null);
+        setLastRefreshed(new Date());
       }
     } catch (err) {
       // Ignore aborted requests
@@ -79,6 +107,55 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
     loadBoard();
     return () => {
       abortRef.current?.abort();
+    };
+  }, [loadBoard]);
+
+  // Auto-poll every 30 seconds when tab is visible
+  // Stops polling when tab is hidden to save resources (Visibility API)
+  // ~2 requests/min per user, each ~6ms DB time — negligible server load
+  useEffect(() => {
+    const POLL_INTERVAL = 60_000; // 60 seconds
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
+    const startPolling = () => {
+      if (intervalId) return; // Already polling
+      intervalId = setInterval(() => {
+        loadBoard(true); // silent=true — no loading skeleton
+      }, POLL_INTERVAL);
+    };
+
+    const stopPolling = () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        startPolling();
+        setIsLive(true);
+        // Refresh immediately when tab becomes visible again
+        loadBoard(true);
+      } else {
+        stopPolling();
+        setIsLive(false);
+        // Abort in-flight request when tab is hidden
+        abortRef.current?.abort();
+      }
+    };
+
+    // Start polling if tab is visible
+    if (document.visibilityState === "visible") {
+      startPolling();
+      setIsLive(true);
+    }
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      stopPolling();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [loadBoard]);
 
@@ -118,7 +195,7 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
 
   return (
     <div className="departure-board w-full max-w-6xl mx-auto animate-fade-slide-up">
-      {/* Header */}
+      {/* Station header row */}
       <div className="board-header">
         <div className="board-header-left">
           {onBack && (
@@ -142,17 +219,42 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
           </h2>
         </div>
         <div className="board-header-right">
+          {lastRefreshed && (
+            <span className="refresh-status">
+              <span className={`live-dot ${isLive ? "live" : "paused"}`} />
+              <span className="refresh-status-text">{relativeTime}</span>
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Controls row: tabs + time picker + refresh */}
+      <div className="board-controls">
+        <div className="board-tabs">
+          <button
+            className={`tab ${activeTab === "departures" ? "active" : ""}`}
+            onClick={() => onTabChange("departures")}
+          >
+            Departures {activeTab === "departures" ? serviceCount : ""}
+          </button>
+          <button
+            className={`tab ${activeTab === "arrivals" ? "active" : ""}`}
+            onClick={() => onTabChange("arrivals")}
+          >
+            Arrivals {activeTab === "arrivals" ? serviceCount : ""}
+          </button>
+        </div>
+        <div className="board-controls-right">
           {onTimeChange ? (
             <TimePicker
               value={selectedTime || null}
               onChange={onTimeChange}
               compact
-              className="time-picker-inline"
             />
           ) : selectedTime ? (
             <span className="selected-time-badge">{selectedTime}</span>
           ) : null}
-          <button className="btn-refresh" onClick={loadBoard} disabled={isLoading} aria-label="Refresh board">
+          <button className={`btn-refresh ${isLoading ? "spinning" : ""}`} onClick={() => loadBoard()} disabled={isLoading} aria-label="Refresh board" title="Refresh">
             ↻
           </button>
         </div>
@@ -167,35 +269,19 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
         </div>
       )}
 
-      {/* Tabs */}
-      <div className="board-tabs">
-          <button
-            className={`tab ${activeTab === "departures" ? "active" : ""}`}
-            onClick={() => onTabChange("departures")}
-          >
-            Departures ({activeTab === "departures" ? serviceCount : "—"})
-          </button>
-          <button
-            className={`tab ${activeTab === "arrivals" ? "active" : ""}`}
-            onClick={() => onTabChange("arrivals")}
-          >
-            Arrivals ({activeTab === "arrivals" ? serviceCount : "—"})
-          </button>
-      </div>
-
       {/* Platform legend */}
       <div className="board-legend">
         <span className="legend-item">
-          <span className="platform-confirmed">5</span> Confirmed
+          <span className="w-2 h-2 rounded-full bg-blue-600 dark:bg-blue-400 inline-block" /> Confirmed
         </span>
         <span className="legend-item">
-          <span className="platform-altered">3→7</span> Altered
+          <span className="w-2 h-2 rounded-full bg-amber-600 dark:bg-amber-400 inline-block" /> Altered
         </span>
         <span className="legend-item">
-          <span className="platform-expected">5</span> Expected
+          <span className="w-2 h-2 rounded-full border border-dashed border-gray-400 dark:border-slate-500 inline-block" /> Expected
         </span>
         <span className="legend-item">
-          <span className="platform-scheduled">5</span> Scheduled
+          <span className="w-2 h-2 rounded-full border border-gray-300 dark:border-slate-600 inline-block" /> Scheduled
         </span>
       </div>
 
@@ -218,12 +304,12 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
         }}
       >
         {isRefreshing ? (
-          <div className="flex items-center justify-center py-2 text-sm text-slate-400">
+          <div className="flex items-center justify-center py-2 text-sm text-gray-400 dark:text-slate-400">
             <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mr-2" />
             Refreshing…
           </div>
         ) : (
-          <div className="flex items-center justify-center py-2 text-sm text-slate-400">
+          <div className="flex items-center justify-center py-2 text-sm text-gray-400 dark:text-slate-400">
             {pullDistance >= PULL_THRESHOLD ? "Release to refresh" : "Pull to refresh"}
           </div>
         )}
@@ -241,7 +327,7 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
           <div className="loading animate-pulse-subtle">
             <div className="flex flex-col gap-3 px-2">
               {[1, 2, 3, 4, 5].map((i) => (
-                <div key={i} className="h-14 bg-slate-700/40 rounded-lg" />
+                <div key={i} className="h-14 bg-gray-200 dark:bg-slate-700/40 rounded-lg" />
               ))}
             </div>
           </div>

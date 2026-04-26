@@ -103,6 +103,13 @@ function StatusBadge({ status, delayMinutes }: { status: string; delayMinutes: n
           Departed
         </span>
       );
+    case "arrived":
+      return (
+        <span className={`${base} bg-blue-500/20 text-blue-300 border border-blue-500/30`}>
+          <span className="w-2 h-2 rounded-full bg-blue-400" />
+          Arrived
+        </span>
+      );
     case "delayed":
       return (
         <span className={`${base} bg-red-500/20 text-red-300 border border-red-500/30`}>

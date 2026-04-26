@@ -9,6 +9,7 @@ import "./env.js";
 import { Kafka, logLevel } from "kafkajs";
 import { sql, closeDb } from "./db.js";
 import { handleDarwinMessage, metrics } from "./handlers/index.js";
+import { skippedLocationsTotal } from "./handlers/trainStatus.js";
 import { parseDarwinMessage } from "./parser.js";
 
 // ── Configuration ──────────────────────────────────────────────────────────────
@@ -64,6 +65,7 @@ const consumer = kafka.consumer({
 
 let isShuttingDown = false;
 let metricsInterval: ReturnType<typeof setInterval> | null = null;
+let cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
 async function shutdown(signal: string): Promise<void> {
   if (isShuttingDown) return;
@@ -74,6 +76,11 @@ async function shutdown(signal: string): Promise<void> {
   if (metricsInterval) {
     clearInterval(metricsInterval);
     metricsInterval = null;
+  }
+
+  if (cleanupInterval) {
+    clearInterval(cleanupInterval);
+    cleanupInterval = null;
   }
 
   try {
@@ -111,8 +118,56 @@ function startMetricsLogging(): ReturnType<typeof setInterval> {
     );
     console.log(
       `   byType: ${JSON.stringify(metrics.byType)}`,
+      `   skippedLocations: ${skippedLocationsTotal}`,
     );
   }, METRICS_INTERVAL_MS);
+}
+
+// ── Retention Cleanup ──────────────────────────────────────────────────────────
+// Delete processed darwin_events older than 3 days.
+// Error records (darwin_errors) are kept indefinitely.
+// darwin_events with processed_at IS NULL (unprocessed) are also kept.
+
+const RETENTION_DAYS = parseInt(process.env.RETENTION_DAYS || "3", 10);
+const CLEANUP_INTERVAL_MS = parseInt(process.env.CLEANUP_INTERVAL_MS || "3600000", 10); // Default: 1 hour
+
+async function runRetentionCleanup(): Promise<number> {
+  const cutoff = `NOW() - INTERVAL '${RETENTION_DAYS} days'`;
+  try {
+    const result = await sql`
+      DELETE FROM darwin_events
+      WHERE received_at < ${sql.unsafe(cutoff)}
+        AND processed_at IS NOT NULL
+    `;
+    const deleted = result.count ?? 0;
+    if (deleted > 0) {
+      console.log(`🧹 Retention cleanup: deleted ${deleted} old darwin_events (>${RETENTION_DAYS} days)`);
+    }
+
+    // Also clean up old skipped_locations (keep 7 days for investigation)
+    const skippedCutoff = `NOW() - INTERVAL '7 days'`;
+    const skippedResult = await sql`
+      DELETE FROM skipped_locations
+      WHERE created_at < ${sql.unsafe(skippedCutoff)}
+    `;
+    const skippedDeleted = skippedResult.count ?? 0;
+    if (skippedDeleted > 0) {
+      console.log(`🧹 Retention cleanup: deleted ${skippedDeleted} old skipped_locations (>7 days)`);
+    }
+
+    return deleted + skippedDeleted;
+  } catch (err) {
+    console.error("   ⚠️ Retention cleanup failed:", (err as Error).message);
+    return 0;
+  }
+}
+
+function startRetentionCleanup(): ReturnType<typeof setInterval> {
+  // Run immediately on start, then every CLEANUP_INTERVAL_MS
+  runRetentionCleanup();
+  return setInterval(() => {
+    runRetentionCleanup();
+  }, CLEANUP_INTERVAL_MS);
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -165,8 +220,9 @@ async function main(): Promise<void> {
     // KafkaJS will auto-restart when restart === true
   });
 
-  // Start metrics logging
+  // Start metrics logging and retention cleanup
   metricsInterval = startMetricsLogging();
+  cleanupInterval = startRetentionCleanup();
 
   // Run the consumer with MANUAL commit for reliable offset tracking
   await consumer.run({
