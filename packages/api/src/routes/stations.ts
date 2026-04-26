@@ -75,7 +75,8 @@ router.get("/", async (req, res, next) => {
           tiploc: stations.tiploc,
         })
         .from(stations)
-        .where(eq(stations.crs, crsTrimmed));
+        .where(eq(stations.crs, crsTrimmed))
+        .limit(1);
 
       return res.json({ stations: results });
     }

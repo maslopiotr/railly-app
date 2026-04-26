@@ -73,6 +73,20 @@
 
 - **Frontend build fix** (2026-04-26): Removed unused `isOnTime` function from ServiceRow.tsx and added missing `cancelReason` destructuring in CallingPoints.tsx CallingPointRow props.
 
+- **BUG-009 fix** (2026-04-26): Root cause found: `darwin_events.raw_json` was `VARCHAR(20000)`, silently truncating large messages at 19990 chars. Consumer also had `.slice(0, 19990)`. Fixed both: schema changed to `TEXT`, consumer no longer slices. DB migration run: `ALTER TABLE darwin_events ALTER COLUMN raw_json TYPE text; ALTER TABLE darwin_errors ALTER COLUMN raw_json TYPE text;`. 258 truncated messages found, all `schedule` type with large route data.
+
+- **BUG-011 fix** (2026-04-26): PostgreSQL `max_wal_size` increased from default (1GB) to 4GB, `min_wal_size` to 1GB, `checkpoint_completion_target` to 0.9 via `docker-compose.yml` command directive. Checkpoint frequency during seed should improve significantly.
+
+- **BUG-012 fix** (2026-04-26): Added `.limit(1)` to exact CRS lookup query in `stations.ts`.
+
+- **BUG-002/003/004/005/008**: Already resolved in previous sessions (duplicate calling points, wrong times, source separation, dedup race condition, timezone delays).
+
+- **BUG-006**: TIPLOC skip warnings are currently 0 in logs — appears resolved or not triggering. Left as-is.
+
+- **BUG-007**: Consumer no longer silently skips batches — all batches show processing output. Appears resolved.
+
+- **BUG-001**: Already fixed — seed uses `--incremental` flag with mtime checking, plus 03:00-05:00 polling daemon with state tracking.
+
 ## What's Left
 - Platforms suppressed — Some stations (Euston) suppress platforms in PPTimetable, then Darwin announces ~5 min before departure. Platform display could be further improved.
 - Monitor `darwin_errors` for trends

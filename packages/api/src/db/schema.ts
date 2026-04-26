@@ -179,7 +179,7 @@ export const darwinEvents = pgTable(
     id: serial("id").primaryKey(),
     messageType: varchar("message_type", { length: 20 }).notNull(), // TS, schedule, deactivated, OW, etc.
     rid: varchar("rid", { length: 20 }), // Nullable — some message types (formationLoading) have no RID
-    rawJson: varchar("raw_json", { length: 20000 }), // Truncated raw message
+    rawJson: text("raw_json"), // Full raw message (TEXT to avoid truncation)
     generatedAt: timestamp("generated_at", { withTimezone: true }), // From Darwin message
     receivedAt: timestamp("received_at", { withTimezone: true }).defaultNow(),
     processedAt: timestamp("processed_at", { withTimezone: true }), // When consumer finished
@@ -204,7 +204,7 @@ export const darwinErrors = pgTable(
     rid: varchar("rid", { length: 20 }),
     errorCode: varchar("error_code", { length: 100 }), // e.g. "UNDEFINED_VALUE", "FK_VIOLATION"
     errorMessage: text("error_message"), // Full error message
-    rawJson: varchar("raw_json", { length: 5000 }), // Truncated message that caused the error
+    rawJson: text("raw_json"), // Full message that caused the error
     stackTrace: text("stack_trace"), // First 2000 chars of stack
     receivedAt: timestamp("received_at", { withTimezone: true }).defaultNow(),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }), // When fixed (null = unresolved)

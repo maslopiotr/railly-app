@@ -64,7 +64,7 @@ async function logDarwinEvent(
       INSERT INTO darwin_events (
         message_type, rid, raw_json, generated_at, processed_at
       ) VALUES (
-        ${messageType}, ${rid}, ${rawJson.slice(0, 19990)}, ${generatedAt}, NOW()
+        ${messageType}, ${rid}, ${rawJson}, ${generatedAt}, NOW()
       )
     `;
   } catch (err) {

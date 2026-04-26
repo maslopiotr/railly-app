@@ -1,6 +1,7 @@
 # Active Context
 
 ## Current Focus
+- **Bug triage and fixes** (2026-04-26): Audited all 17 bugs in bugs-tracker.md. Fixed BUG-009 (VARCHAR(20000) → TEXT), BUG-011 (PostgreSQL WAL config), BUG-012 (missing .limit(1)). Confirmed BUG-001/002/003/004/005/007/008 already resolved. Remaining open: BUG-006 (TIPLOC warnings, currently 0 warnings), BUG-010 (metrics), BUG-013-017 (backlog).
 **Board accuracy fixes round 3 — VERIFIED (2026-04-26).** Seven bugs fixed and edge-case verified across multiple stations (EUS, KGX, MKC, PAD, BHM, MAN).
 
 ### API Fixes (`packages/api/src/routes/boards.ts`)
