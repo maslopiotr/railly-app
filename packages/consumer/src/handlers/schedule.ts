@@ -31,9 +31,17 @@ interface PreservedRtData {
   delayMinutes: number | null;
   delayReason: string | null;
   platIsSuppressed: boolean;
+  isCancelled: boolean;
+  cancelReason: string | null;
+  platConfirmed: boolean;
+  platFromTd: boolean;
+  suppr: boolean;
+  lengthPushport: string | null;
+  detachFront: boolean;
+  updatedAt: string | null;
   tsGeneratedAt: string | null;
   sourceTimetable: boolean;
-  // _timetable columns (preserved for PPTimetable-sourced rows)
+  // _timetable columns (preserved from PPTimetable seed or previous Darwin data)
   ptaTimetable: string | null;
   ptdTimetable: string | null;
   wtaTimetable: string | null;
@@ -200,6 +208,14 @@ export async function handleSchedule(
           plat_pushport, plat_source,
           delay_minutes, delay_reason,
           plat_is_suppressed,
+          is_cancelled,
+          cancel_reason,
+          plat_confirmed,
+          plat_from_td,
+          suppr,
+          length_pushport,
+          detach_front,
+          updated_at,
           ts_generated_at,
           source_timetable,
           pta_timetable, ptd_timetable, wta_timetable, wtd_timetable, wtp_timetable,
@@ -226,6 +242,14 @@ export async function handleSchedule(
           delayMinutes: row.delay_minutes != null ? Number(row.delay_minutes) : null,
           delayReason: row.delay_reason ? String(row.delay_reason) : null,
           platIsSuppressed: Boolean(row.plat_is_suppressed),
+          isCancelled: Boolean(row.is_cancelled),
+          cancelReason: row.cancel_reason ? String(row.cancel_reason) : null,
+          platConfirmed: Boolean(row.plat_confirmed),
+          platFromTd: Boolean(row.plat_from_td),
+          suppr: Boolean(row.suppr),
+          lengthPushport: row.length_pushport ? String(row.length_pushport) : null,
+          detachFront: Boolean(row.detach_front),
+          updatedAt: row.updated_at ? String(row.updated_at) : null,
           tsGeneratedAt: row.ts_generated_at ? String(row.ts_generated_at) : null,
           sourceTimetable: Boolean(row.source_timetable),
           // _timetable columns (preserved from PPTimetable seed or previous Darwin data)
@@ -380,7 +404,16 @@ export async function handleSchedule(
             plat_source = ${rtEntry.platSource},
             delay_minutes = ${rtEntry.delayMinutes},
             delay_reason = ${rtEntry.delayReason},
-            plat_is_suppressed = ${rtEntry.platIsSuppressed}
+            plat_is_suppressed = ${rtEntry.platIsSuppressed},
+            is_cancelled = ${rtEntry.isCancelled},
+            cancel_reason = ${rtEntry.cancelReason},
+            plat_confirmed = ${rtEntry.platConfirmed},
+            plat_from_td = ${rtEntry.platFromTd},
+            suppr = ${rtEntry.suppr},
+            length_pushport = ${rtEntry.lengthPushport},
+            detach_front = ${rtEntry.detachFront},
+            updated_at = ${rtEntry.updatedAt}::timestamp with time zone,
+            source_darwin = true
           WHERE journey_rid = ${rid} AND sequence = ${cp.sequence}
             AND (
               ts_generated_at IS NULL

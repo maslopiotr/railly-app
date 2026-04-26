@@ -7,26 +7,28 @@
     "packages/*"
   ],
   "scripts": {
-    "docker:ps": "docker ps --format \"table {{.Names}}\\t{{.Status}}\" 2>&1",
-    "rebuildall": "npm run build && npm run docker:rebuild",
-    "build": "npm run build --workspaces",
-    "docker:rebuild": "docker compose up -d --build",
     "dev:api": "npm run dev --workspace=packages/api",
     "dev:frontend": "npm run dev --workspace=packages/frontend",
     "dev:consumer": "npm run dev --workspace=packages/consumer",
-    "db:push": "npm run db:push --workspace=packages/api",
-    "db:seed": "npm run db:seed --workspace=packages/api",
-    "db:studio": "npm run db:studio --workspace=packages/api",
+    "lint": "npm run lint --workspaces",
+    "build": "npm run build --workspaces",
     "build:shared": "npm run build --workspace=packages/shared",
     "build:api": "npm run build --workspace=packages/api",
     "build:frontend": "npm run build --workspace=packages/frontend",
     "build:consumer": "npm run build --workspace=packages/consumer",
-    "lint": "npm run lint --workspaces",
-    "test": "npm run test --workspaces",
+    "docker:ps": "docker ps --format \"table {{.Names}}\\t{{.Status}}\" 2>&1",
+    "docker:logs": "docker compose logs -f",
+    "docker:rebuild": "docker compose up -d --build",
     "docker:rebuild:api": "docker compose up -d --build api",
     "docker:rebuild:frontend": "docker compose up -d --build frontend",
+    "docker:rebuild:consumer": "docker compose up -d --build consumer",
     "docker:down": "docker compose down",
-    "docker:logs": "docker compose logs -f"
+    "db:push": "npm run db:push --workspace=packages/api",
+    "db:migrate": "npm run db:migrate --workspace=packages/api",
+    "db:seed": "npm run db:seed --workspace=packages/api",
+    "db:seed-timetable": "tsx packages/api/src/db/seed-timetable.ts",
+    "db:seed-timetable:incremental": "tsx packages/api/src/db/seed-timetable.ts --incremental",
+    "db:studio": "npm run db:studio --workspace=packages/api"
   },
   "engines": {
     "node": ">=22.0.0"

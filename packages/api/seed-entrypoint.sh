@@ -7,9 +7,9 @@ echo "[STARTUP] Seed container starting — Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 echo "🚂 Seeding stations from CORPUS..."
 cd /app && node packages/api/dist/db/seed-stations.js || echo "⚠️ Station seed failed"
 
-# ── Phase 2: Full timetable seed on startup (processes all files)
-echo "🚂 Running full timetable seed..."
-cd /app && node packages/api/dist/db/seed-timetable.js || echo "⚠️ Timetable seed failed"
+# ── Phase 2: Incremental timetable seed on startup (only recently modified files)
+echo "🚂 Running incremental timetable seed..."
+cd /app && node packages/api/dist/db/seed-timetable.js --incremental || echo "⚠️ Timetable seed failed"
 
 # ── Phase 3: Background polling loop for incremental updates
 # Checks for new PPTimetable files between 03:00-05:00 UK time every 15 minutes.

@@ -30,7 +30,7 @@ Every bug uses these fields. If a field is unknown, it's marked `?` rather than 
 - **Context:** The daily PPTimetable seed processes every file each run, consuming excessive RAM and taking a long time. It should only process files modified within the last ~12 hours (daily transfers).
 - **Evidence:** Observed high RAM usage and long processing times during daily cron (03:00).
 - **Impact:** Resource exhaustion; delayed availability of fresh timetable data.
-- **Fix-Direction:** Add file mtime check before processing. Only ingest files updated within the last 12 hours. Bug affecting both seed and postgres.
+- **Fix-Direction:** Add file mtime check before processing. Only ingest files updated within the last 12 hours. Bug affecting seed, consumer and postgres.
 
 ---
 
