@@ -19,21 +19,26 @@ Darwin Push Port Kafka → Consumer → PostgreSQL (real-time overlay)
 - **Cold path**: API → PostgreSQL → Client (timetable/historical queries)
 - **Audit path**: Kafka → Consumer → PostgreSQL `darwin_events` table (append-only, every message logged)
 
-## PP Timetable → PostgreSQL Seed Process
+## PP Timetable → PostgreSQL Seed Process (v5 — Source-Separated UPSERT)
 1. Discover `.xml.gz` files in `data/PPTimetable/`
 2. Phase 1: Parse reference files (`_ref_v{n}.xml.gz`) for TIPLOC→CRS mapping + TOC names
 3. Phase 2: Parse timetable files (`_v{n}.xml.gz`) for journeys + calling points
 4. Upsert to PostgreSQL with `ON CONFLICT (rid) DO UPDATE` for journeys
-5. For calling points: **DELETE+INSERT pattern** (not ON CONFLICT upsert) within a **transaction** per batch:
-   - Fetch preserved pushport data (including `platConfirmed`, `platFromTd`, `suppr`, `lengthPushport`, `detachFront`, `updatedAt`) before DELETE
-   - DELETE existing calling points for batch
-   - INSERT new calling points with `source_darwin=false`
-   - Re-apply pushport data by TIPLOC match, setting `source_darwin=true` only on matched points
-6. `dayOffset` computed using same time priority as Darwin consumer: `wtd > ptd > wtp > wta > pta`
-7. `parseTimeToMinutes` handles both "HH:MM" and "HH:MM:SS" formats
-8. Filter to passenger services only (`isPassengerSvc !== "false"`)
-9. Batch size: 5,000 journeys per transaction; pushport re-apply in groups of 500
-10. Daily cron: `seed` container runs at 03:00, seeded volume from SFTP-delivered files; incremental mode processes only recently-modified files
+5. For calling points: **UPSERT-only approach** — `ON CONFLICT (journey_rid, sequence) DO UPDATE`:
+   - Seed writes ONLY `_timetable` columns (never touches `_pushport` columns)
+   - On conflict: update timetable columns, set `source_timetable=true`, `timetable_updated_at=NOW()`
+   - CRS/name: `COALESCE(EXCLUDED.crs, calling_points.crs)` — don't overwrite Darwin-filled values with NULL
+   - Pushport columns NOT listed in `SET` clause — preserved from consumer
+6. Phase 3: Backfill CRS codes and names from `location_ref` for CPs missing them
+7. Phase 4: Stale CP cleanup:
+   - Mark CPs with `source_timetable=true` but `timetable_updated_at < seed_start` as `source_timetable=false`
+   - Delete CPs where both `source_timetable=false` AND `source_darwin=false` (true orphans)
+8. `dayOffset` computed using same time priority as Darwin consumer: `wtd > ptd > wtp > wta > pta`
+9. `parseTimeToMinutes` handles both "HH:MM" and "HH:MM:SS" formats
+10. Filter to passenger services only (`isPassengerSvc !== "false"`)
+11. Batch size: 5,000 journeys per transaction; CP upsert in groups of 500
+12. Daily cron: `seed` container runs at 03:00, seeded volume from SFTP-delivered files; incremental mode processes only recently-modified files
+13. **Key principle**: Seed NEVER deletes rows. It UPSERTs timetable data and marks stale CPs for cleanup.
 
 ## Unified Board API (Single PostgreSQL Query)
 1. Query `calling_points` + `journeys` + `service_rt` + `location_ref` + `toc_ref` in single JOIN
@@ -70,25 +75,37 @@ isPassenger BOOLEAN DEFAULT TRUE
 id SERIAL PRIMARY KEY,
 journey_rid VARCHAR(20) REFERENCES journeys(rid),
 sequence INTEGER NOT NULL,
+ssd CHAR(10),                       -- Denormalised from journeys for direct querying
 stop_type VARCHAR(5) NOT NULL,     -- OR, DT, IP, PP, OPOR, OPIP, OPDT
 tpl VARCHAR(10) NOT NULL,          -- TIPLOC
 crs CHAR(3),                       -- CRS (nullable for junctions)
-source_timetable BOOLEAN DEFAULT TRUE,  -- true = seed data, false = Darwin-only
--- Timetable columns (written by seed)
+name VARCHAR(255),                 -- Location name (denormalised from location_ref)
+source_timetable BOOLEAN DEFAULT FALSE,  -- true = PPTimetable seed data
+source_darwin BOOLEAN DEFAULT FALSE,     -- true = Darwin Push Port data
+-- Timetable columns (written by seed ONLY)
 plat_timetable VARCHAR(5),         -- Booked platform
 pta_timetable CHAR(5), ptd_timetable CHAR(5),  -- Public times HH:MM
 wta_timetable VARCHAR(8), wtd_timetable VARCHAR(8), wtp_timetable VARCHAR(8),  -- Working times
--- Pushport columns (written by consumer)
+act VARCHAR(10),                   -- Activities (TB, TF, T, etc.)
+day_offset INTEGER DEFAULT 0,       -- 0=same day as ssd, 1=next day, 2=day after
+-- Pushport columns (written by consumer ONLY)
 eta_pushport CHAR(5), etd_pushport CHAR(5),    -- Estimated times
 ata_pushport CHAR(5), atd_pushport CHAR(5),    -- Actual times
-live_plat_pushport VARCHAR(5),                  -- Live platform
+plat_pushport VARCHAR(5),                      -- Live platform from Darwin
+plat_source VARCHAR(10),                       -- confirmed/altered/suppressed
+plat_confirmed BOOLEAN DEFAULT FALSE,           -- Platform confirmed by train describer
+plat_from_td BOOLEAN DEFAULT FALSE,            -- Platform from TIPLOC/train describer
 plat_is_suppressed BOOLEAN DEFAULT FALSE,
 is_cancelled BOOLEAN DEFAULT FALSE,
 delay_minutes INTEGER,
 delay_reason VARCHAR(100),         -- Per-location delay reason from TS
 cancel_reason VARCHAR(100),        -- Per-location cancel reason from schedule
+suppr BOOLEAN DEFAULT FALSE,       -- Stop suppressed from public display
+length_pushport VARCHAR(10),       -- Train length in coaches
+detach_front BOOLEAN DEFAULT FALSE, -- Front coaches detach at this stop
 ts_generated_at TIMESTAMP WITH TIME ZONE,  -- TS message timestamp for per-CP dedup
-updated_at TIMESTAMP WITH TIME ZONE
+updated_at TIMESTAMP WITH TIME ZONE,       -- Last Darwin message
+timetable_updated_at TIMESTAMP WITH TIME ZONE  -- Last PPTimetable seed update (stale detection)
 -- UNIQUE(journey_rid, sequence)
 ```
 
@@ -153,7 +170,10 @@ await sql.begin(async (tx) => {
 ### Calling Point Sequence Ordering
 Darwin schedule `locations` array orders IPs first, then PPs — NOT chronologically. PPTimetable XML uses chronological order. The schedule handler MUST sort locations by time (`wtd || ptd || wtp || wta || pta`) before assigning sequence numbers. This ensures alignment with PPTimetable seed data and correct TS matching.
 
-When sequence numbers change after re-sorting, the schedule handler uses DELETE+INSERT instead of ON CONFLICT upsert (which would corrupt data by overwriting old sequence 0 with new sequence 0's TIPLOC). Existing `_timetable` and `_pushport` data is preserved via TIPLOC-based matching before deletion and re-applied after insertion.
+**Source-separated UPSERT approach (BUG-027 fix)**:
+- **Timetable-sourced services** (`source_timetable=true`): Schedule handler matches Darwin locations to existing CPs by TIPLOC and UPDATEs pushport columns only. Never deletes or re-inserts. New Darwin-only locations get INSERTed with `source_timetable=false`. This eliminates the duplicate key violation that occurred when the old DELETE+re-insert approach reassigned sequence numbers.
+- **VSTP services** (`source_timetable=false`): DELETE + INSERT is safe since we own all the data and there's no seed conflict.
+- **Seed**: UPSERT-only — `ON CONFLICT (journey_rid, sequence) DO UPDATE` writes only `_timetable` columns. Never deletes rows. Uses `timetable_updated_at` for stale CP detection.
 
 ### TS Location Matching
 TS messages don't include sequence numbers. Match by TIPLOC on non-PP stops, with time-based disambiguation for circular trips (same TIPLOC visited twice). Compare TS location's planned time (`wtd || ptd || wta || pta`) against DB timetable time to find the closest match within 60 minutes.

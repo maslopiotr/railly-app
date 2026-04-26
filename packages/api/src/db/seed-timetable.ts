@@ -23,16 +23,6 @@ import {
 } from "./schema.js";
 import { sql } from "drizzle-orm";
 
-/**
- * Type for db or transaction client.
- * Both PostgresJsDatabase and PgTransaction support the query builder methods
- * (.select, .insert, .update, .delete) but their TypeScript types are not
- * directly compatible due to the $client property on PostgresJsDatabase.
- * Using a union type allows these internal helper functions to accept either.
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type DbOrTx = Omit<typeof db, "$client"> | any;
-
 const DATA_DIR = resolve(__dirname, "../../../../data/PPTimetable");
 
 // ── CLI flags ─────────────────────────────────────────────────────────────────
@@ -80,7 +70,7 @@ interface ParsedCallingPoint {
   wtd: string | null;
   wtp: string | null;
   act: string | null;
-  dayOffset: number; // 0=same day as ssd, 1=next day, 2=day after next
+  dayOffset: number;
 }
 
 interface ParsedJourneyWithPoints {
@@ -113,7 +103,6 @@ function discoverFiles(): { refFiles: TimetableFile[]; ttFiles: TimetableFile[] 
     const ttMatch = f.match(/PPTimetable_(\d{8})\d+_v(\d+)\.xml\.gz$/);
 
     if (refMatch) {
-      // Reference files: pick latest version per day
       const ssdMatch = f.match(/PPTimetable_(\d{8})/);
       const ssd = ssdMatch ? ssdMatch[1] : "unknown";
       parsed.push({ filename: f, ssd, version: parseInt(refMatch[1]), isRef: true });
@@ -122,7 +111,6 @@ function discoverFiles(): { refFiles: TimetableFile[]; ttFiles: TimetableFile[] 
     }
   }
 
-  // For ref files: pick latest version per SSD
   const refBySsd = new Map<string, TimetableFile>();
   for (const f of parsed.filter((f) => f.isRef)) {
     const existing = refBySsd.get(f.ssd);
@@ -131,7 +119,6 @@ function discoverFiles(): { refFiles: TimetableFile[]; ttFiles: TimetableFile[] 
     }
   }
 
-  // For timetable files: pick latest version per SSD
   const ttBySsd = new Map<string, TimetableFile>();
   for (const f of parsed.filter((f) => !f.isRef)) {
     const existing = ttBySsd.get(f.ssd);
@@ -143,7 +130,6 @@ function discoverFiles(): { refFiles: TimetableFile[]; ttFiles: TimetableFile[] 
   let refFiles = [...refBySsd.values()].sort((a, b) => a.version - b.version);
   let ttFiles = [...ttBySsd.values()].sort((a, b) => a.version - b.version);
 
-  // ── Incremental mode: only process files modified in the last N hours ──────
   if (incremental) {
     const cutoff = new Date(Date.now() - HOURS_THRESHOLD * 60 * 60 * 1000);
     console.log(`   Incremental mode: processing files modified after ${cutoff.toISOString()}`);
@@ -234,7 +220,6 @@ function parseTimetableXml(
 
   parser.onclosetag = (name: string) => {
     if (name === "Journey" && currentJourney) {
-      // Compute day_offset for each calling point based on time wraps
       computeDayOffsets(currentPoints);
       result.set(currentJourney.rid, {
         journey: currentJourney,
@@ -258,9 +243,7 @@ function parseTimetableXml(
     }
   };
 
-  parser.onerror = () => {
-    // Continue parsing on recoverable errors
-  };
+  parser.onerror = () => {};
 
   parser.write(xmlContent).close();
   return result;
@@ -306,11 +289,6 @@ function parseRefXml(xmlContent: string): {
 
 // ── Helper: compute day_offset for calling points ──────────────────────────────
 
-/**
- * Parse "HH:MM" or "HH:MM:SS" time string to minutes since midnight.
- * Returns -1 for invalid/unparseable times.
- * Handles both public times (HH:MM) and working times (HH:MM:SS).
- */
 function parseTimeToMinutes(time: string | null): number {
   if (!time) return -1;
   const m = time.match(/^(\d{2}):(\d{2})(?::(\d{2}))?$/);
@@ -318,30 +296,15 @@ function parseTimeToMinutes(time: string | null): number {
   return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
 }
 
-/**
- * Compute day_offset for each calling point in a journey.
- *
- * Algorithm: scan calling points in sequence order. Track the previous
- * time in minutes. When the current time is earlier than the previous time
- * AND the previous time was in the evening (>= 20:00 / 1200 min),
- * we've crossed midnight — increment day_offset.
- *
- * Time priority matches the Darwin consumer:
- *   wtd (working departure) > ptd (public departure) >
- *   wtp (working passing)   > wta (working arrival) >
- *   pta (public arrival)
- */
 function computeDayOffsets(points: ParsedCallingPoint[]): void {
   let dayOffset = 0;
   let prevMinutes = -1;
 
   for (const pt of points) {
-    // Use working times (more precise) then public times — matches Darwin consumer priority
     const time = pt.wtd || pt.ptd || pt.wtp || pt.wta || pt.pta;
     const currentMinutes = parseTimeToMinutes(time);
 
     if (currentMinutes >= 0 && prevMinutes >= 0) {
-      // Time wrapped backwards from evening to early morning → crossed midnight
       if (currentMinutes < prevMinutes && prevMinutes >= 1200) {
         dayOffset++;
       }
@@ -363,266 +326,12 @@ function readGzXml(filePath: string): string {
   return decompressed.toString("utf-8");
 }
 
-// ── Pushport data preservation ────────────────────────────────────────────────
-
-interface PreservedPushport {
-  tpl: string;
-  sequence: number;
-  etaPushport: string | null;
-  etdPushport: string | null;
-  ataPushport: string | null;
-  atdPushport: string | null;
-  platPushport: string | null;
-  platSource: string | null;
-  delayMinutes: number | null;
-  delayReason: string | null;
-  platIsSuppressed: boolean;
-  isCancelled: boolean;
-  cancelReason: string | null;
-  platConfirmed: boolean;
-  platFromTd: boolean;
-  suppr: boolean;
-  lengthPushport: string | null;
-  detachFront: boolean;
-  updatedAt: Date | null;
-  tsGeneratedAt: Date | null;
-}
-
-interface PreservedJourney {
-  rid: string;
-  byTpl: Map<string, PreservedPushport[]>;
-}
-
-/**
- * Fetch existing pushport data for a batch of RIDs.
- * Returns a Map keyed by RID containing preserved pushport data
- * organised by TIPLOC for re-apply after re-insert.
- */
-async function fetchPreservedPushportData(
-  rids: string[],
-  dbOrTx: DbOrTx,
-): Promise<Map<string, PreservedJourney>> {
-  const preservedByRid = new Map<string, PreservedJourney>();
-  const RID_BATCH = 500;
-
-  for (let i = 0; i < rids.length; i += RID_BATCH) {
-    const batch = rids.slice(i, i + RID_BATCH);
-    const ridValues = batch.map((r) => sql`${r}`);
-    const inClause = sql.join(ridValues, sql`, `);
-    const existingRows = await dbOrTx
-      .select({
-        journeyRid: callingPoints.journeyRid,
-        sequence: callingPoints.sequence,
-        tpl: callingPoints.tpl,
-        etaPushport: callingPoints.etaPushport,
-        etdPushport: callingPoints.etdPushport,
-        ataPushport: callingPoints.ataPushport,
-        atdPushport: callingPoints.atdPushport,
-        platPushport: callingPoints.platPushport,
-        platSource: callingPoints.platSource,
-        delayMinutes: callingPoints.delayMinutes,
-        delayReason: callingPoints.delayReason,
-        platIsSuppressed: callingPoints.platIsSuppressed,
-        isCancelled: callingPoints.isCancelled,
-        cancelReason: callingPoints.cancelReason,
-        platConfirmed: callingPoints.platConfirmed,
-        platFromTd: callingPoints.platFromTd,
-        suppr: callingPoints.suppr,
-        lengthPushport: callingPoints.lengthPushport,
-        detachFront: callingPoints.detachFront,
-        updatedAt: callingPoints.updatedAt,
-        tsGeneratedAt: callingPoints.tsGeneratedAt,
-      })
-      .from(callingPoints)
-      .where(sql`${callingPoints.journeyRid} IN (${inClause})`);
-
-    for (const row of existingRows) {
-      const rid = String(row.journeyRid);
-      const tpl = String(row.tpl || "");
-      if (!preservedByRid.has(rid)) {
-        preservedByRid.set(rid, { rid, byTpl: new Map() });
-      }
-      const journey = preservedByRid.get(rid)!;
-      const entry: PreservedPushport = {
-        tpl,
-        sequence: Number(row.sequence),
-        etaPushport: row.etaPushport ?? null,
-        etdPushport: row.etdPushport ?? null,
-        ataPushport: row.ataPushport ?? null,
-        atdPushport: row.atdPushport ?? null,
-        platPushport: row.platPushport ?? null,
-        platSource: row.platSource ?? null,
-        delayMinutes: row.delayMinutes ?? null,
-        delayReason: row.delayReason ?? null,
-        platIsSuppressed: Boolean(row.platIsSuppressed),
-        isCancelled: Boolean(row.isCancelled),
-        cancelReason: row.cancelReason ?? null,
-        platConfirmed: Boolean(row.platConfirmed),
-        platFromTd: Boolean(row.platFromTd),
-        suppr: Boolean(row.suppr),
-        lengthPushport: row.lengthPushport ?? null,
-        detachFront: Boolean(row.detachFront),
-        updatedAt: row.updatedAt ?? null,
-        tsGeneratedAt: row.tsGeneratedAt ?? null,
-      };
-      const arr = journey.byTpl.get(tpl) || [];
-      arr.push(entry);
-      journey.byTpl.set(tpl, arr);
-    }
-  }
-
-  return preservedByRid;
-}
-
-/**
- * Delete calling points for a batch of RIDs.
- */
-async function deleteCallingPointsForRids(
-  rids: string[],
-  dbOrTx: DbOrTx,
-): Promise<void> {
-  const RID_BATCH = 500;
-  for (let i = 0; i < rids.length; i += RID_BATCH) {
-    const batch = rids.slice(i, i + RID_BATCH);
-    const ridValues = batch.map((r) => sql`${r}`);
-    const inClause = sql.join(ridValues, sql`, `);
-    await dbOrTx
-      .delete(callingPoints)
-      .where(sql`${callingPoints.journeyRid} IN (${inClause})`);
-  }
-}
-
-/**
- * Re-apply preserved pushport data to newly inserted calling points.
- * For circular trips (same TIPLOC visited twice), match in order —
- * the first occurrence in the new data maps to the first preserved entry.
- *
- * Sets source_darwin = true ONLY on calling points that receive
- * pushport data, not on all calling points in the journey.
- */
-async function reapplyPushportData(
-  passengerJourneys: Map<string, ParsedJourneyWithPoints>,
-  preservedByRid: Map<string, PreservedJourney>,
-  dbOrTx: DbOrTx,
-): Promise<number> {
-  // Collect all updates first, then batch-execute for efficiency
-  const updates: Array<{
-    rid: string;
-    sequence: number;
-    etaPushport: string | null;
-    etdPushport: string | null;
-    ataPushport: string | null;
-    atdPushport: string | null;
-    platPushport: string | null;
-    platSource: string | null;
-    delayMinutes: number | null;
-    delayReason: string | null;
-    platIsSuppressed: boolean;
-    isCancelled: boolean;
-    cancelReason: string | null;
-    platConfirmed: boolean;
-    platFromTd: boolean;
-    suppr: boolean;
-    lengthPushport: string | null;
-    detachFront: boolean;
-    updatedAt: Date | null;
-    tsGeneratedAt: Date | null;
-  }> = [];
-
-  for (const [rid, preserved] of preservedByRid) {
-    const journeyPoints = passengerJourneys.get(rid);
-    if (!journeyPoints) continue;
-
-    // Track which old entries have been matched (for circular trips)
-    const matchedOldSeqs = new Set<number>();
-
-    for (const pt of journeyPoints.points) {
-      const tplEntries = preserved.byTpl.get(pt.tpl) || [];
-      let rtEntry: PreservedPushport | null = null;
-
-      if (tplEntries.length === 1) {
-        rtEntry = tplEntries[0];
-      } else if (tplEntries.length > 1) {
-        // Circular trip — find the first unmatched entry by old sequence order
-        const unmatched = tplEntries.filter(
-          (e) => !matchedOldSeqs.has(e.sequence),
-        );
-        if (unmatched.length > 0) {
-          rtEntry = unmatched[0];
-          matchedOldSeqs.add(rtEntry.sequence);
-        }
-      }
-
-      if (!rtEntry) continue;
-
-      updates.push({
-        rid,
-        sequence: pt.sequence,
-        etaPushport: rtEntry.etaPushport,
-        etdPushport: rtEntry.etdPushport,
-        ataPushport: rtEntry.ataPushport,
-        atdPushport: rtEntry.atdPushport,
-        platPushport: rtEntry.platPushport,
-        platSource: rtEntry.platSource,
-        delayMinutes: rtEntry.delayMinutes,
-        delayReason: rtEntry.delayReason,
-        platIsSuppressed: rtEntry.platIsSuppressed,
-        isCancelled: rtEntry.isCancelled,
-        cancelReason: rtEntry.cancelReason,
-        platConfirmed: rtEntry.platConfirmed,
-        platFromTd: rtEntry.platFromTd,
-        suppr: rtEntry.suppr,
-        lengthPushport: rtEntry.lengthPushport,
-        detachFront: rtEntry.detachFront,
-        updatedAt: rtEntry.updatedAt,
-        tsGeneratedAt: rtEntry.tsGeneratedAt,
-      });
-    }
-  }
-
-  // Batch-execute updates in groups of 500 for efficiency
-  const UPDATE_BATCH = 500;
-  for (let i = 0; i < updates.length; i += UPDATE_BATCH) {
-    const batch = updates.slice(i, i + UPDATE_BATCH);
-    for (const u of batch) {
-      await dbOrTx
-        .update(callingPoints)
-        .set({
-          etaPushport: u.etaPushport || undefined,
-          etdPushport: u.etdPushport || undefined,
-          ataPushport: u.ataPushport || undefined,
-          atdPushport: u.atdPushport || undefined,
-          platPushport: u.platPushport || undefined,
-          platSource: u.platSource || undefined,
-          delayMinutes: u.delayMinutes ?? undefined,
-          delayReason: u.delayReason || undefined,
-          platIsSuppressed: u.platIsSuppressed,
-          isCancelled: u.isCancelled,
-          cancelReason: u.cancelReason || undefined,
-          platConfirmed: u.platConfirmed,
-          platFromTd: u.platFromTd,
-          suppr: u.suppr,
-          lengthPushport: u.lengthPushport || undefined,
-          detachFront: u.detachFront,
-          updatedAt: u.updatedAt || undefined,
-          tsGeneratedAt: u.tsGeneratedAt || undefined,
-          sourceDarwin: true,
-        })
-        .where(
-          sql`${callingPoints.journeyRid} = ${u.rid} AND ${callingPoints.sequence} = ${u.sequence}`,
-        );
-    }
-  }
-
-  return updates.length;
-}
-
 // ── Main seed function ────────────────────────────────────────────────────────
 
 async function seed() {
   const seedStart = Date.now();
   console.log(
-    "🚂 Seeding timetable data from PPTimetable (upsert mode)...",
+    "🚂 Seeding timetable data from PPTimetable (UPSERT mode)...",
   );
   console.log(`   Data directory: ${DATA_DIR}`);
   if (incremental) {
@@ -637,7 +346,6 @@ async function seed() {
 
   const { refFiles, ttFiles } = discoverFiles();
 
-  // Early exit if incremental mode finds no new files
   if (incremental && refFiles.length === 0 && ttFiles.length === 0) {
     console.log("\n✅ No new files to process. Seed skipped.");
     return;
@@ -661,7 +369,6 @@ async function seed() {
     const { locations, tocs } = parseRefXml(xmlContent);
     console.log(`     → ${locations.size} locations, ${tocs.size} TOCs`);
 
-    // Merge — later versions override earlier
     for (const [tpl, loc] of locations) {
       allLocations.set(tpl, loc);
     }
@@ -734,9 +441,9 @@ async function seed() {
   logElapsed("Phase 1", phase1Start);
   logMemory("after-phase1");
 
-  // ── Phase 2: Timetable data ──────────────────────────────────────────────
-  console.log("\n📋 Phase 2: Timetable journeys and calling points...");
-  // Build TIPLOC→CRS and TIPLOC→name lookups from location refs
+  // ── Phase 2: Timetable data (UPSERT — no DELETE, no preservation) ─────────
+  console.log("\n📋 Phase 2: Timetable journeys and calling points (UPSERT)...");
+  console.log("   Source-separated: seed writes timetable columns only, pushport columns preserved");
   const tplToCrs = new Map<string, string | null>();
   const tplToName = new Map<string, string | null>();
   for (const [tpl, loc] of allLocations) {
@@ -745,11 +452,8 @@ async function seed() {
   }
 
   let totalJourneys = 0;
-  let totalPoints = 0;
+  let totalPointsUpserted = 0;
 
-  // ── Batch size for journey processing ────────────────────────────────────
-  // Processing in batches of 5,000 journeys keeps memory low:
-  // pushport data for 5K journeys ≈ 2-5 MB instead of 50 MB for all 52K
   const JOURNEY_BATCH_SIZE = 5000;
 
   for (const ttFile of ttFiles) {
@@ -773,14 +477,11 @@ async function seed() {
     console.log(`     → ${passengerJourneys.size} passenger journeys`);
     logMemory("after-parse");
 
-    // Free the full journey map — we only need passenger journeys
-    // (SAX parse creates a large map that includes non-passenger services)
     journeyMap.clear();
 
-    // ── Process in batches of JOURNEY_BATCH_SIZE journeys ────────────────
     const allRids = [...passengerJourneys.keys()];
     const totalBatches = Math.ceil(allRids.length / JOURNEY_BATCH_SIZE);
-    let filePointsInserted = 0;
+    let filePointsUpserted = 0;
 
     for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
       const batchEnd = Math.min(
@@ -797,11 +498,8 @@ async function seed() {
         `     Batch ${batchNum}/${totalBatches}: ${batchRids.length} journeys`,
       );
 
-      // ── Run batch operations inside a transaction for atomicity ──────
-      // This ensures that if anything fails mid-batch, the database
-      // rolls back to a consistent state — no partial DELETE without INSERT.
       await db.transaction(async (tx) => {
-        // ── Step 1: Upsert journeys for this batch ────────────────────────
+        // ── Step 1: Upsert journeys ──────────────────────────────────────────
         const journeyRows: NewJourney[] = [];
         for (const rid of batchRids) {
           const data = passengerJourneys.get(rid)!;
@@ -815,16 +513,12 @@ async function seed() {
             status: data.journey.status || undefined,
             isPassenger: data.journey.isPassenger,
             sourceTimetable: true,
-            // sourceDarwin is NOT set here — preserve existing value from consumer
           });
         }
 
         const JOURNEY_INSERT_BATCH = 5000;
         for (let i = 0; i < journeyRows.length; i += JOURNEY_INSERT_BATCH) {
-          const insertBatch = journeyRows.slice(
-            i,
-            i + JOURNEY_INSERT_BATCH,
-          );
+          const insertBatch = journeyRows.slice(i, i + JOURNEY_INSERT_BATCH);
           await tx
             .insert(journeys)
             .values(insertBatch)
@@ -839,21 +533,15 @@ async function seed() {
                 status: sql`EXCLUDED.status`,
                 isPassenger: sql`EXCLUDED.is_passenger`,
                 sourceTimetable: sql`true`,
-                // source_darwin is deliberately NOT updated — preserve consumer value
               },
             });
         }
 
-        // ── Step 2: Fetch preserved pushport data for this batch ───────────
-        const preservedByRid = await fetchPreservedPushportData(batchRids, tx);
-        console.log(
-          `       Preserved pushport data for ${preservedByRid.size} journeys`,
-        );
-
-        // ── Step 3: DELETE existing calling points for this batch ──────────
-        await deleteCallingPointsForRids(batchRids, tx);
-
-        // ── Step 4: INSERT new calling points for this batch ───────────────
+        // ── Step 2: Upsert calling points (timetable columns only) ──────────
+        // ON CONFLICT (journey_rid, sequence): update timetable columns only.
+        // Pushport columns are NEVER overwritten by the seed.
+        // This eliminates the DELETE + re-insert + re-apply cycle that caused
+        // duplicate key violations and data loss of Darwin-only CPs (BUG-027).
         const pointRows: NewCallingPoint[] = [];
         for (const rid of batchRids) {
           const data = passengerJourneys.get(rid)!;
@@ -864,15 +552,15 @@ async function seed() {
 
             pointRows.push({
               journeyRid: rid,
-              sequence: pt.sequence, // 0-indexed, matching Darwin handler
+              sequence: pt.sequence,
               ssd: ssd,
               stopType: pt.stopType,
               tpl: pt.tpl,
               crs: crs || null,
               name: name || null,
               sourceTimetable: true,
-              sourceDarwin: false, // Will be set to true only for points with re-applied pushport data
-              // -- Timetable columns --
+              sourceDarwin: false,
+              // Timetable columns
               platTimetable: pt.plat || null,
               ptaTimetable: pt.pta || null,
               ptdTimetable: pt.ptd || null,
@@ -881,15 +569,41 @@ async function seed() {
               wtpTimetable: pt.wtp || null,
               act: pt.act || null,
               dayOffset: pt.dayOffset,
-              // -- Push Port columns: will be re-applied in step 5 --
+              timetableUpdatedAt: new Date(),
             });
           }
         }
 
-        const POINT_BATCH = 500; // 500 rows × ~30 columns = 15,000 params (well under PG's 65,535 limit)
+        const POINT_BATCH = 500;
         for (let i = 0; i < pointRows.length; i += POINT_BATCH) {
           const insertBatch = pointRows.slice(i, i + POINT_BATCH);
-          await tx.insert(callingPoints).values(insertBatch);
+          await tx
+            .insert(callingPoints)
+            .values(insertBatch)
+            .onConflictDoUpdate({
+              target: [callingPoints.journeyRid, callingPoints.sequence],
+              set: {
+                // Timetable columns — seed is the authority
+                ssd: sql`EXCLUDED.ssd`,
+                stopType: sql`EXCLUDED.stop_type`,
+                tpl: sql`EXCLUDED.tpl`,
+                // CRS/name: don't overwrite with NULL if Darwin already filled them
+                crs: sql`COALESCE(EXCLUDED.crs, calling_points.crs)`,
+                name: sql`COALESCE(EXCLUDED.name, calling_points.name)`,
+                sourceTimetable: sql`true`,
+                // source_darwin: NOT updated — preserve consumer value
+                platTimetable: sql`EXCLUDED.plat_timetable`,
+                ptaTimetable: sql`EXCLUDED.pta_timetable`,
+                ptdTimetable: sql`EXCLUDED.ptd_timetable`,
+                wtaTimetable: sql`EXCLUDED.wta_timetable`,
+                wtdTimetable: sql`EXCLUDED.wtd_timetable`,
+                wtpTimetable: sql`EXCLUDED.wtp_timetable`,
+                act: sql`EXCLUDED.act`,
+                dayOffset: sql`EXCLUDED.day_offset`,
+                timetableUpdatedAt: sql`NOW()`,
+                // Pushport columns: NOT listed — preserved from Darwin
+              },
+            });
           if (i % 50000 === 0 && i > 0) {
             console.log(
               `       Calling points: ${Math.min(i + POINT_BATCH, pointRows.length)}/${pointRows.length}`,
@@ -897,38 +611,136 @@ async function seed() {
           }
         }
 
-        filePointsInserted += pointRows.length;
-
-        // ── Step 5: Re-apply preserved pushport data ──────────────────────
-        let reapplyCount = 0;
-        if (preservedByRid.size > 0) {
-          reapplyCount = await reapplyPushportData(
-            passengerJourneys,
-            preservedByRid,
-            tx,
-          );
-          if (reapplyCount > 0) {
-            console.log(
-              `       Re-applied pushport data for ${reapplyCount} calling points`,
-            );
-          }
-        }
-
-        console.log(
-          `       ✅ Batch ${batchNum}: ${batchRids.length} journeys, ${pointRows.length} calling points, ${reapplyCount} re-applied`,
-        );
+        filePointsUpserted += pointRows.length;
       }); // ── End of transaction ──
 
       logMemory(`batch-${batchNum}/${totalBatches}`);
     }
 
     totalJourneys += passengerJourneys.size;
-    totalPoints += filePointsInserted;
+    totalPointsUpserted += filePointsUpserted;
     console.log(
-      `     ✅ ${passengerJourneys.size} journeys, ${filePointsInserted} calling points`,
+      `     ✅ ${passengerJourneys.size} journeys, ${filePointsUpserted} calling points upserted`,
     );
     logElapsed(`File ${ttFile.filename}`, fileStart);
   }
+
+  // ── Phase 3: Backfill CRS codes and names from location_ref ──────────────
+  console.log("\n📋 Phase 3: Backfill CRS and names from location_ref...");
+  const phase3Start = Date.now();
+
+  const crsBackfillResult = await db
+    .update(callingPoints)
+    .set({
+      crs: sql`COALESCE(${callingPoints.crs}, lr.crs)`,
+      name: sql`COALESCE(${callingPoints.name}, lr.name)`,
+    })
+    .from(
+      sql`${locationRef} AS lr`,
+    )
+    .where(
+      sql`${callingPoints.tpl} = lr.tpl AND (${callingPoints.crs} IS NULL OR ${callingPoints.name} IS NULL)`,
+    );
+
+  const crsBackfillCount = (crsBackfillResult as unknown as { rowCount: number }).rowCount ?? 0;
+  console.log(`   Backfilled ${crsBackfillCount} calling points with CRS/name from location_ref`);
+  logElapsed("Phase 3", phase3Start);
+
+  // ── Phase 4: Clean up stale timetable CPs ──────────────────────────────────
+  // CPs that had source_timetable=true from a previous seed run but were not
+  // touched by this seed (timetable_updated_at < seed start) are stale:
+  // - If source_darwin=true: keep but mark source_timetable=false (Darwin still owns them)
+  // - If source_darwin=false: delete (orphan — no source owns them)
+  console.log("\n📋 Phase 4: Clean up stale timetable calling points...");
+  const phase4Start = Date.now();
+
+  // Mark stale timetable CPs as no longer sourced from timetable
+  const staleUpdateResult = await db
+    .update(callingPoints)
+    .set({
+      sourceTimetable: false,
+      timetableUpdatedAt: sql`NOW()`,
+      // Clear timetable columns on stale CPs
+      platTimetable: null,
+      ptaTimetable: null,
+      ptdTimetable: null,
+      wtaTimetable: null,
+      wtdTimetable: null,
+      wtpTimetable: null,
+      act: null,
+    })
+    .where(
+      sql`${callingPoints.sourceTimetable} = true AND (${callingPoints.timetableUpdatedAt} < ${new Date(seedStart).toISOString()}::timestamp with time zone OR ${callingPoints.timetableUpdatedAt} IS NULL)`,
+    );
+
+  const staleUpdateCount = (staleUpdateResult as unknown as { rowCount: number }).rowCount ?? 0;
+  console.log(`   Marked ${staleUpdateCount} stale timetable CPs as source_timetable=false`);
+
+  // Delete orphan CPs (no source at all)
+  const orphanDeleteResult = await db
+    .delete(callingPoints)
+    .where(
+      sql`${callingPoints.sourceTimetable} = false AND ${callingPoints.sourceDarwin} = false`,
+    );
+
+  const orphanDeleteCount = (orphanDeleteResult as unknown as { rowCount: number }).rowCount ?? 0;
+  console.log(`   Deleted ${orphanDeleteCount} orphan CPs (no source)`);
+
+  // Verify with actual counts (Drizzle rowCount can be unreliable for large updates)
+  const [staleVerify] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(callingPoints)
+    .where(sql`${callingPoints.sourceTimetable} = true AND ${callingPoints.timetableUpdatedAt} IS NULL`);
+  if (staleVerify.count > 0) {
+    console.log(`   ⚠️  WARNING: ${staleVerify.count} stale CPs still have NULL timetable_updated_at`);
+  }
+
+  logElapsed("Phase 4", phase4Start);
+
+  // ── Phase 5: Clean up stale duplicate CPs ────────────────────────────────
+  // Stale CPs marked source_timetable=false but source_darwin=true may duplicate
+  // current timetable CPs at the same (journey_rid, tpl). When the old timetable
+  // had a longer route (e.g., continuing past Euston), the old CPs got Darwin data
+  // but are now redundant because the current timetable CP already has that data.
+  // Merge pushport data from stale duplicates into timetable CPs, then delete.
+  console.log("\n📋 Phase 5: Clean up stale duplicate calling points...");
+  const phase5Start = Date.now();
+
+  // Merge pushport data from stale duplicates into current timetable CPs
+  const mergeResult = await db.execute(sql`
+    UPDATE calling_points tt_cp
+    SET
+      eta_pushport = COALESCE(tt_cp.eta_pushport, stale_cp.eta_pushport),
+      etd_pushport = COALESCE(tt_cp.etd_pushport, stale_cp.etd_pushport),
+      ata_pushport = COALESCE(tt_cp.ata_pushport, stale_cp.ata_pushport),
+      atd_pushport = COALESCE(tt_cp.atd_pushport, stale_cp.atd_pushport),
+      plat_pushport = COALESCE(tt_cp.plat_pushport, stale_cp.plat_pushport),
+      plat_source = COALESCE(tt_cp.plat_source, stale_cp.plat_source)
+    FROM calling_points stale_cp
+    WHERE stale_cp.source_timetable = false
+      AND stale_cp.source_darwin = true
+      AND stale_cp.journey_rid = tt_cp.journey_rid
+      AND stale_cp.tpl = tt_cp.tpl
+      AND tt_cp.source_timetable = true
+  `);
+  const mergeCount = mergeResult.rowCount ?? 0;
+  console.log(`   Merged pushport data from ${mergeCount} stale duplicates into timetable CPs`);
+
+  // Delete stale duplicate CPs that have a timetable CP at the same (journey_rid, tpl)
+  const deleteResult = await db.execute(sql`
+    DELETE FROM calling_points stale_cp
+    WHERE stale_cp.source_timetable = false
+      AND stale_cp.source_darwin = true
+      AND EXISTS (
+        SELECT 1 FROM calling_points tt_cp
+        WHERE tt_cp.journey_rid = stale_cp.journey_rid
+          AND tt_cp.tpl = stale_cp.tpl
+          AND tt_cp.source_timetable = true
+      )
+  `);
+  const deleteCount = deleteResult.rowCount ?? 0;
+  console.log(`   Deleted ${deleteCount} stale duplicate CPs`);
+  logElapsed("Phase 5", phase5Start);
 
   // ── Verification ─────────────────────────────────────────────────────────
   console.log("\n📊 Verification:");
@@ -959,31 +771,47 @@ async function seed() {
   console.log(`   Location refs: ${locCount[0].count}`);
   console.log(`   TOC refs: ${tocCount[0].count}`);
 
-  // ── Phase 3: Backfill CRS and names from location_ref ──────────────────
-  console.log("\n📋 Phase 3: Backfill CRS and names from location_ref...");
-  const phase3Start = Date.now();
+  // Check for Darwin-only calling points
+  const darwinOnlyCpStats = await db
+    .select({
+      count: sql<number>`count(*)`,
+    })
+    .from(callingPoints)
+    .where(
+      sql`${callingPoints.sourceDarwin} = true AND ${callingPoints.sourceTimetable} = false`,
+    );
+  console.log(`   Darwin-only CPs: ${darwinOnlyCpStats[0].count}`);
 
-  const backfillResult = await db.execute(sql`
-    UPDATE calling_points cp
-    SET crs = lr.crs, name = COALESCE(cp.name, lr.name)
-    FROM location_ref lr
-    WHERE cp.tpl = lr.tpl
-    AND lr.crs IS NOT NULL AND lr.crs != ''
-    AND (cp.crs IS NULL OR cp.crs = '' OR cp.name IS NULL)
-  `);
-  console.log(`   ✅ Backfilled ${backfillResult.count ?? 0} calling points with CRS/name from location_ref`);
-  logElapsed("Phase 3", phase3Start);
+  // Check for timetable-only CPs
+  const ttOnlyCpStats = await db
+    .select({
+      count: sql<number>`count(*)`,
+    })
+    .from(callingPoints)
+    .where(
+      sql`${callingPoints.sourceTimetable} = true AND ${callingPoints.sourceDarwin} = false`,
+    );
+  console.log(`   Timetable-only CPs: ${ttOnlyCpStats[0].count}`);
 
-  logElapsed("Total seed", seedStart);
+  // Check for both sources CPs
+  const bothCpStats = await db
+    .select({
+      count: sql<number>`count(*)`,
+    })
+    .from(callingPoints)
+    .where(
+      sql`${callingPoints.sourceTimetable} = true AND ${callingPoints.sourceDarwin} = true`,
+    );
+  console.log(`   Both-sources CPs: ${bothCpStats[0].count}`);
+
+  const elapsed = ((Date.now() - seedStart) / 1000).toFixed(1);
+  console.log(
+    `\n✅ Seed complete in ${elapsed}s — ${totalJourneys} journeys, ${totalPointsUpserted} calling points upserted`,
+  );
   logMemory("end");
-  console.log("\n✅ Timetable seed complete!");
 }
 
-seed()
-  .catch((err) => {
-    console.error("❌ Seed failed:", err);
-    process.exit(1);
-  })
-  .finally(async () => {
-    process.exit(0);
-  });
+seed().catch((err) => {
+  console.error("❌ Seed failed:", err);
+  process.exit(1);
+});

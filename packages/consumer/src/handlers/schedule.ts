@@ -2,26 +2,29 @@
  * Darwin Push Port: Schedule message handler (P0)
  *
  * Schedule messages contain full train schedules.
- * Upserts calling_points into PostgreSQL, preserving _pushport columns.
- * Also upserts service_rt for quick service-level lookups.
- *
- * Source separation:
- * - If source_timetable = true (from PPTimetable seed), only update _pushport columns
- * - If source_timetable = false (VSTP service), write both _timetable AND _pushport
+ * Uses source-separated UPSERT approach:
+ * - Timetable-sourced services: match by TIPLOC, update pushport columns only
+ * - VSTP services: DELETE + INSERT (we own all data, no seed conflict)
  * - Always set source_darwin = true on upserted rows
+ *
+ * This eliminates the DELETE + re-insert + re-apply cycle that caused
+ * duplicate key violations (BUG-027) and data loss of Darwin-only CPs.
  */
 
 import type { DarwinSchedule, DarwinScheduleLocation } from "@railly-app/shared";
 import { sql } from "../db.js";
 
 /**
- * Preserved data for a calling point, used when re-applying
- * real-time and timetable data after a schedule upsert changes sequence numbers.
+ * Preserved pushport data for a calling point, used to match
+ * Darwin locations to existing CPs by TIPLOC.
  */
-interface PreservedRtData {
+interface ExistingCpRow {
+  id: number;
+  sequence: number;
   tpl: string;
-  oldSequence: number;
-  // _pushport columns (real-time data)
+  sourceTimetable: boolean;
+  sourceDarwin: boolean;
+  // Pushport columns (real-time data)
   etaPushport: string | null;
   etdPushport: string | null;
   ataPushport: string | null;
@@ -40,15 +43,6 @@ interface PreservedRtData {
   detachFront: boolean;
   updatedAt: string | null;
   tsGeneratedAt: string | null;
-  sourceTimetable: boolean;
-  // _timetable columns (preserved from PPTimetable seed or previous Darwin data)
-  ptaTimetable: string | null;
-  ptdTimetable: string | null;
-  wtaTimetable: string | null;
-  wtdTimetable: string | null;
-  wtpTimetable: string | null;
-  platTimetable: string | null;
-  act: string | null;
 }
 
 /**
@@ -70,7 +64,6 @@ function parseTs(ts: string): number {
 /**
  * Parse "HH:MM" or "HH:MM:SS" time string to minutes since midnight.
  * Returns -1 for invalid/unparseable times.
- * Handles both public times (HH:MM) and working times (HH:MM:SS).
  */
 function parseTimeToMinutes(time: string | null | undefined): number {
   if (!time) return -1;
@@ -92,10 +85,11 @@ function deriveSsdFromRid(rid: string): string {
 
 /**
  * Process a schedule message: upsert calling pattern into PostgreSQL.
- * Preserves existing _pushport columns (eta_pushport, etd_pushport, etc.).
  *
- * For VSTP services (source_timetable = false), writes _timetable columns too.
- * For timetable-sourced services (source_timetable = true), only updates _pushport.
+ * Source-separated approach:
+ * - Timetable-sourced services: match by TIPLOC, update pushport columns only
+ * - VSTP services: DELETE + INSERT (we own all data)
+ * - New Darwin-only locations: INSERT with source_timetable=false
  */
 export async function handleSchedule(
   schedule: DarwinSchedule,
@@ -112,6 +106,7 @@ export async function handleSchedule(
   const ssd = schedule.ssd || deriveSsdFromRid(rid);
   const trainId = schedule.trainId || "";
   const toc = schedule.toc || null;
+  const isPassengerSvc = schedule.isPassengerSvc !== false;
   const isCancelled = schedule.can === true;
   const cancelReason = schedule.cancelReason?.reasontext || null;
 
@@ -120,14 +115,7 @@ export async function handleSchedule(
 
   // ── Sort locations chronologically by time ──────────────────────────────
   // Darwin's `locations` array orders IPs first, then PPs — which does NOT
-  // match the physical journey order. PPTimetable XML uses chronological order
-  // (PP and IP interleaved by time). Both systems must use the same ordering
-  // so that sequence numbers align correctly.
-  //
-  // Sort key: COALESCE(wtd, ptd, wtp, wta, pta) — uses the most precise
-  // available time for each stop type:
-  //   OR: ptd/wtd (departure), IP: pta/wta (arrival), PP: wtp (passing),
-  //   DT: pta/wta (arrival)
+  // match the physical journey order. Sort by time to get correct sequence.
   const sortedLocations = [...rawLocations].sort((a, b) => {
     const timeA = a.wtd || a.ptd || a.wtp || a.wta || a.pta || "";
     const timeB = b.wtd || b.ptd || b.wtp || b.wta || b.pta || "";
@@ -139,7 +127,7 @@ export async function handleSchedule(
     return minA - minB;
   });
 
-  // Build calling points for upsert, computing day_offset from time wraps.
+  // Build calling points with sequence numbers and day_offset
   let dayOffset = 0;
   let prevMinutes = -1;
   const cps = sortedLocations
@@ -197,88 +185,13 @@ export async function handleSchedule(
         }
       }
 
-      // ── Pre-fetch existing _pushport data so we can preserve it ───────────
-      // Query includes tpl so we can match by TIPLOC (not old sequence),
-      // since the schedule handler now re-sorts locations chronologically,
-      // which changes sequence assignments.
-      const existingRt = await tx`
-        SELECT
-          sequence, tpl,
-          eta_pushport, etd_pushport, ata_pushport, atd_pushport,
-          plat_pushport, plat_source,
-          delay_minutes, delay_reason,
-          plat_is_suppressed,
-          is_cancelled,
-          cancel_reason,
-          plat_confirmed,
-          plat_from_td,
-          suppr,
-          length_pushport,
-          detach_front,
-          updated_at,
-          ts_generated_at,
-          source_timetable,
-          pta_timetable, ptd_timetable, wta_timetable, wtd_timetable, wtp_timetable,
-          plat_timetable, act
-        FROM calling_points
-        WHERE journey_rid = ${rid}
-      `;
-
-      // Build TIPLOC-keyed map for matching pushport data to the new sequence order.
-      // For circular trips (same TIPLOC visited twice), an array preserves all entries.
-      const rtByTpl = new Map<string, PreservedRtData[]>();
-
-      for (const row of existingRt as Array<Record<string, unknown>>) {
-        const tpl = row.tpl ? String(row.tpl) : "";
-        const entry: PreservedRtData = {
-          tpl,
-          oldSequence: Number(row.sequence),
-          etaPushport: row.eta_pushport ? String(row.eta_pushport) : null,
-          etdPushport: row.etd_pushport ? String(row.etd_pushport) : null,
-          ataPushport: row.ata_pushport ? String(row.ata_pushport) : null,
-          atdPushport: row.atd_pushport ? String(row.atd_pushport) : null,
-          platPushport: row.plat_pushport ? String(row.plat_pushport) : null,
-          platSource: row.plat_source ? String(row.plat_source) : null,
-          delayMinutes: row.delay_minutes != null ? Number(row.delay_minutes) : null,
-          delayReason: row.delay_reason ? String(row.delay_reason) : null,
-          platIsSuppressed: Boolean(row.plat_is_suppressed),
-          isCancelled: Boolean(row.is_cancelled),
-          cancelReason: row.cancel_reason ? String(row.cancel_reason) : null,
-          platConfirmed: Boolean(row.plat_confirmed),
-          platFromTd: Boolean(row.plat_from_td),
-          suppr: Boolean(row.suppr),
-          lengthPushport: row.length_pushport ? String(row.length_pushport) : null,
-          detachFront: Boolean(row.detach_front),
-          updatedAt: row.updated_at ? String(row.updated_at) : null,
-          tsGeneratedAt: row.ts_generated_at ? String(row.ts_generated_at) : null,
-          sourceTimetable: Boolean(row.source_timetable),
-          // _timetable columns (preserved from PPTimetable seed or previous Darwin data)
-          ptaTimetable: row.pta_timetable ? String(row.pta_timetable) : null,
-          ptdTimetable: row.ptd_timetable ? String(row.ptd_timetable) : null,
-          wtaTimetable: row.wta_timetable ? String(row.wta_timetable) : null,
-          wtdTimetable: row.wtd_timetable ? String(row.wtd_timetable) : null,
-          wtpTimetable: row.wtp_timetable ? String(row.wtp_timetable) : null,
-          platTimetable: row.plat_timetable ? String(row.plat_timetable) : null,
-          act: row.act ? String(row.act) : null,
-        };
-
-        if (tpl) {
-          const arr = rtByTpl.get(tpl) || [];
-          arr.push(entry);
-          rtByTpl.set(tpl, arr);
-        }
-      }
-
-      // Track which old sequence entries have been matched (for circular trips)
-      const matchedOldSeqs = new Set<number>();
-
-      // Upsert journey — set source_darwin = true, preserve source_timetable
+      // ── Upsert journey — set source_darwin = true, preserve source_timetable ──
       await tx`
         INSERT INTO journeys (
           rid, uid, train_id, ssd, toc, train_cat, status, is_passenger, source_darwin
         ) VALUES (
           ${rid}, ${uid}, ${trainId}, ${ssd}, ${toc},
-          ${schedule.trainCat || "OO"}, ${schedule.status || "P"}, true, true
+          ${schedule.trainCat || "OO"}, ${schedule.status || "P"}, ${isPassengerSvc}, true
         )
         ON CONFLICT (rid) DO UPDATE SET
           uid = EXCLUDED.uid,
@@ -287,10 +200,11 @@ export async function handleSchedule(
           toc = EXCLUDED.toc,
           train_cat = EXCLUDED.train_cat,
           status = EXCLUDED.status,
+          is_passenger = EXCLUDED.is_passenger,
           source_darwin = true
       `;
 
-      // Upsert service_rt — set source_darwin = true
+      // ── Upsert service_rt — set source_darwin = true ──
       await tx`
         INSERT INTO service_rt (
           rid, uid, ssd, train_id, toc,
@@ -313,116 +227,189 @@ export async function handleSchedule(
           last_updated = NOW()
       `;
 
-      // ── Delete ALL existing calling points for this RID before re-insert ──
-      // This is essential because the chronological sort changes sequence
-      // numbers. Using ON CONFLICT with old sequence numbers would corrupt
-      // data (e.g., new sequence 0 = PP would overwrite old sequence 0 = EUS,
-      // keeping EUS's timetable data but with PP's tpl — wrong!).
-      // Deleting first and re-inserting is safe because we're in a transaction
-      // and we've already preserved the RT data for re-application.
-      await tx`
-        DELETE FROM calling_points WHERE journey_rid = ${rid}
-      `;
+      // ── Fetch existing CPs for this RID ──
+      const existingCpRows = await tx`
+        SELECT
+          id, sequence, tpl, source_timetable, source_darwin,
+          eta_pushport, etd_pushport, ata_pushport, atd_pushport,
+          plat_pushport, plat_source,
+          delay_minutes, delay_reason,
+          plat_is_suppressed,
+          is_cancelled,
+          cancel_reason,
+          plat_confirmed,
+          plat_from_td,
+          suppr,
+          length_pushport,
+          detach_front,
+          updated_at,
+          ts_generated_at
+        FROM calling_points
+        WHERE journey_rid = ${rid}
+      ` as Array<Record<string, unknown>>;
 
-      // ── Insert calling points with correct chronological sequences ────────
-      for (const cp of cps) {
-        // Match existing RT data by TIPLOC (not old sequence, since we re-sorted)
-        const tplEntries = rtByTpl.get(cp.tpl) || [];
-        let existingRtData: PreservedRtData | null = null;
+      // Parse existing CPs
+      const existingCps: ExistingCpRow[] = existingCpRows.map((row) => ({
+        id: Number(row.id),
+        sequence: Number(row.sequence),
+        tpl: String(row.tpl || ""),
+        sourceTimetable: Boolean(row.source_timetable),
+        sourceDarwin: Boolean(row.source_darwin),
+        etaPushport: row.eta_pushport ? String(row.eta_pushport) : null,
+        etdPushport: row.etd_pushport ? String(row.etd_pushport) : null,
+        ataPushport: row.ata_pushport ? String(row.ata_pushport) : null,
+        atdPushport: row.atd_pushport ? String(row.atd_pushport) : null,
+        platPushport: row.plat_pushport ? String(row.plat_pushport) : null,
+        platSource: row.plat_source ? String(row.plat_source) : null,
+        delayMinutes: row.delay_minutes != null ? Number(row.delay_minutes) : null,
+        delayReason: row.delay_reason ? String(row.delay_reason) : null,
+        platIsSuppressed: Boolean(row.plat_is_suppressed),
+        isCancelled: Boolean(row.is_cancelled),
+        cancelReason: row.cancel_reason ? String(row.cancel_reason) : null,
+        platConfirmed: Boolean(row.plat_confirmed),
+        platFromTd: Boolean(row.plat_from_td),
+        suppr: Boolean(row.suppr),
+        lengthPushport: row.length_pushport ? String(row.length_pushport) : null,
+        detachFront: Boolean(row.detach_front),
+        updatedAt: row.updated_at ? String(row.updated_at) : null,
+        tsGeneratedAt: row.ts_generated_at ? String(row.ts_generated_at) : null,
+      }));
 
-        if (tplEntries.length === 1) {
-          existingRtData = tplEntries[0];
-        } else if (tplEntries.length > 1) {
-          // Circular trip — find the first unmatched entry by old sequence order
-          const unmatched = tplEntries.filter((e) => !matchedOldSeqs.has(e.oldSequence));
-          if (unmatched.length > 0) {
-            existingRtData = unmatched[0];
-            matchedOldSeqs.add(unmatched[0].oldSequence);
+      // ── Determine if this is a timetable-sourced service ──
+      const isTimetableSourced = existingCps.some((cp) => cp.sourceTimetable);
+
+      if (isTimetableSourced) {
+        // ── TIMETABLE-SOURCED PATH ──────────────────────────────────────────
+        // Match Darwin locations to existing CPs by TIPLOC.
+        // Update pushport columns only — preserve timetable columns from seed.
+        // Insert new Darwin-only CPs for locations not in timetable.
+
+        // Build TIPLOC-keyed map (array for circular trips)
+        const cpByTpl = new Map<string, ExistingCpRow[]>();
+        for (const cp of existingCps) {
+          const arr = cpByTpl.get(cp.tpl) || [];
+          arr.push(cp);
+          cpByTpl.set(cp.tpl, arr);
+        }
+
+        // Track which existing CPs have been matched (by id)
+        const matchedCpIds = new Set<number>();
+
+        // Process each Darwin location
+        for (const cp of cps) {
+          const tplEntries = cpByTpl.get(cp.tpl) || [];
+          // Find first unmatched entry (for circular trips)
+          const match = tplEntries.find((e) => !matchedCpIds.has(e.id));
+
+          if (match) {
+            // ── Match found: UPDATE pushport columns only ──
+            matchedCpIds.add(match.id);
+
+            // Guard: don't overwrite pushport data if a more recent TS message updated it
+            const tsGuard = match.tsGeneratedAt
+              ? sql`AND (ts_generated_at IS NULL OR ts_generated_at = ${match.tsGeneratedAt}::timestamp with time zone)`
+              : sql`AND ts_generated_at IS NULL`;
+
+            await tx`
+              UPDATE calling_points
+              SET
+                eta_pushport = ${cp.pta && cp.stopType === "DT" ? null : cp.pta}::varchar(5),
+                etd_pushport = ${cp.ptd}::varchar(5),
+                ata_pushport = null,
+                atd_pushport = null,
+                plat_pushport = ${cp.plat}::varchar(5),
+                source_darwin = true,
+                is_cancelled = ${cp.isCancelled},
+                cancel_reason = ${cp.cancelReason}
+              WHERE id = ${match.id}
+                ${tsGuard}
+            `;
+          } else {
+            // ── No match: INSERT new Darwin-only CP ──
+            // Assign sequence that doesn't conflict with existing CPs
+            // Use a high sequence number to avoid conflicts with timetable sequences
+            await tx`
+              INSERT INTO calling_points (
+                journey_rid, sequence, ssd, stop_type, tpl,
+                crs, name,
+                pta_timetable, ptd_timetable,
+                wta_timetable, wtd_timetable, wtp_timetable,
+                plat_timetable, act,
+                is_cancelled, cancel_reason, day_offset,
+                source_timetable, source_darwin
+              ) VALUES (
+                ${cp.rid}, ${cp.sequence}, ${cp.ssd}, ${cp.stopType}, ${cp.tpl},
+                NULL, NULL,
+                ${cp.pta}::varchar(5), ${cp.ptd}::varchar(5),
+                ${cp.wta}::varchar(8), ${cp.wtd}::varchar(8), ${cp.wtp}::varchar(8),
+                ${cp.plat}::varchar(5), ${cp.act},
+                ${cp.isCancelled}, ${cp.cancelReason}, ${cp.dayOffset},
+                false, true
+              )
+              ON CONFLICT (journey_rid, sequence) DO UPDATE SET
+                stop_type = EXCLUDED.stop_type,
+                tpl = EXCLUDED.tpl,
+                pta_timetable = COALESCE(EXCLUDED.pta_timetable, calling_points.pta_timetable),
+                ptd_timetable = COALESCE(EXCLUDED.ptd_timetable, calling_points.ptd_timetable),
+                wta_timetable = COALESCE(EXCLUDED.wta_timetable, calling_points.wta_timetable),
+                wtd_timetable = COALESCE(EXCLUDED.wtd_timetable, calling_points.wtd_timetable),
+                wtp_timetable = COALESCE(EXCLUDED.wtp_timetable, calling_points.wtp_timetable),
+                plat_timetable = COALESCE(EXCLUDED.plat_timetable, calling_points.plat_timetable),
+                act = COALESCE(EXCLUDED.act, calling_points.act),
+                source_darwin = true
+            `;
           }
         }
 
-        const isVstp = !existingRtData || !existingRtData.sourceTimetable;
+        // ── Clean up: mark unmatched existing CPs as no longer sourced from Darwin ──
+        // This handles the case where a schedule message removes locations that
+        // were in a previous schedule. Don't delete them — they might still have
+        // timetable data. Just clear source_darwin.
+        if (matchedCpIds.size < existingCps.length) {
+          const unmatchedIds = existingCps
+            .filter((cp) => !matchedCpIds.has(cp.id))
+            .map((cp) => cp.id);
 
-        // Determine timetable column values:
-        // - VSTP: use Darwin schedule data as timetable data
-        // - Timetable-sourced: preserve existing PPTimetable data
-        const ptaValue = isVstp ? cp.pta : existingRtData!.ptaTimetable;
-        const ptdValue = isVstp ? cp.ptd : existingRtData!.ptdTimetable;
-        const wtaValue = isVstp ? cp.wta : existingRtData!.wtaTimetable;
-        const wtdValue = isVstp ? cp.wtd : existingRtData!.wtdTimetable;
-        const wtpValue = isVstp ? cp.wtp : existingRtData!.wtpTimetable;
-        const platValue = isVstp ? cp.plat : existingRtData!.platTimetable;
-        const actValue = isVstp ? cp.act : existingRtData!.act;
+          // Only clear source_darwin on CPs that had it (not timetable-only CPs)
+          if (unmatchedIds.length > 0) {
+            await tx`
+              UPDATE calling_points
+              SET source_darwin = false
+              WHERE id = ANY(${unmatchedIds}) AND source_darwin = true
+            `;
+          }
+        }
+      } else {
+        // ── VSTP PATH (no timetable source) ─────────────────────────────────
+        // We own all the data, so DELETE + INSERT is safe.
+        // No seed data to conflict with — this service isn't in PPTimetable.
 
         await tx`
-          INSERT INTO calling_points (
-            journey_rid, sequence, ssd, stop_type, tpl,
-            act, plat_timetable, pta_timetable, ptd_timetable,
-            wta_timetable, wtd_timetable, wtp_timetable,
-            is_cancelled, day_offset,
-            source_timetable, source_darwin
-          ) VALUES (
-            ${cp.rid}, ${cp.sequence}, ${cp.ssd}, ${cp.stopType}, ${cp.tpl},
-            ${actValue}, ${platValue}, ${ptaValue}, ${ptdValue},
-            ${wtaValue}, ${wtdValue}, ${wtpValue},
-            ${cp.isCancelled}, ${cp.dayOffset},
-            ${!isVstp}, true
-          )
+          DELETE FROM calling_points WHERE journey_rid = ${rid}
         `;
-      }
 
-      // ── Re-apply preserved _pushport data to calling points by TIPLOC ────
-      // Match by TIPLOC since sequence numbers changed after chronological sort.
-      // Use ts_generated_at equality as guard against concurrent TS updates.
-      const reapplyMatched = new Set<number>();
-
-      for (const cp of cps) {
-        const tplEntries = rtByTpl.get(cp.tpl) || [];
-        let rtEntry: PreservedRtData | null = null;
-
-        if (tplEntries.length === 1) {
-          rtEntry = tplEntries[0];
-        } else if (tplEntries.length > 1) {
-          // Circular trip — find the first unmatched entry
-          const unmatched = tplEntries.filter((e) => !reapplyMatched.has(e.oldSequence));
-          if (unmatched.length > 0) {
-            rtEntry = unmatched[0];
-            reapplyMatched.add(unmatched[0].oldSequence);
-          }
-        }
-
-        if (!rtEntry) continue;
-
-        await tx`
-          UPDATE calling_points
-          SET
-            eta_pushport = ${rtEntry.etaPushport},
-            etd_pushport = ${rtEntry.etdPushport},
-            ata_pushport = ${rtEntry.ataPushport},
-            atd_pushport = ${rtEntry.atdPushport},
-            plat_pushport = ${rtEntry.platPushport},
-            plat_source = ${rtEntry.platSource},
-            delay_minutes = ${rtEntry.delayMinutes},
-            delay_reason = ${rtEntry.delayReason},
-            plat_is_suppressed = ${rtEntry.platIsSuppressed},
-            is_cancelled = ${rtEntry.isCancelled},
-            cancel_reason = ${rtEntry.cancelReason},
-            plat_confirmed = ${rtEntry.platConfirmed},
-            plat_from_td = ${rtEntry.platFromTd},
-            suppr = ${rtEntry.suppr},
-            length_pushport = ${rtEntry.lengthPushport},
-            detach_front = ${rtEntry.detachFront},
-            updated_at = ${rtEntry.updatedAt}::timestamp with time zone,
-            source_darwin = true
-          WHERE journey_rid = ${rid} AND sequence = ${cp.sequence}
-            AND (
-              ts_generated_at IS NULL
-              OR ts_generated_at = ${rtEntry.tsGeneratedAt}::timestamp with time zone
+        for (const cp of cps) {
+          await tx`
+            INSERT INTO calling_points (
+              journey_rid, sequence, ssd, stop_type, tpl,
+              pta_timetable, ptd_timetable,
+              wta_timetable, wtd_timetable, wtp_timetable,
+              plat_timetable, act,
+              is_cancelled, cancel_reason, day_offset,
+              source_timetable, source_darwin
+            ) VALUES (
+              ${cp.rid}, ${cp.sequence}, ${cp.ssd}, ${cp.stopType}, ${cp.tpl},
+              ${cp.pta}::varchar(5), ${cp.ptd}::varchar(5),
+              ${cp.wta}::varchar(8), ${cp.wtd}::varchar(8), ${cp.wtp}::varchar(8),
+              ${cp.plat}::varchar(5), ${cp.act},
+              ${cp.isCancelled}, ${cp.cancelReason}, ${cp.dayOffset},
+              false, true
             )
-        `;
+          `;
+        }
       }
 
-      // If this schedule marks the service as cancelled, propagate to all calling points
+      // ── If this schedule marks the service as cancelled, propagate to all CPs ──
       if (isCancelled) {
         await tx`
           UPDATE calling_points

@@ -164,7 +164,7 @@
 }
 
 .service-time {
-  @apply flex flex-col anchor-center min-w-[4.5rem];
+  @apply flex flex-col items-center justify-center min-w-[4.5rem];
 }
 
 .time-scheduled {

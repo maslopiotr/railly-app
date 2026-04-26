@@ -178,6 +178,68 @@ Every bug uses these fields. If a field is unknown, it's marked `?` rather than 
 
 ---
 
+### BUG-024: VSTP PP-only services lose all real-time passenger stop data
+- **Severity:** Critical
+- **Type:** Data-Integrity
+- **Status:** Fixed (2026-04-26)
+- **File:** `packages/consumer/src/parser.ts`, `packages/consumer/src/handlers/schedule.ts`, `packages/consumer/src/handlers/trainStatus.ts`, `packages/api/src/routes/boards.ts`
+- **Context:** 45% of VSTP services (3,144 of 6,923) had only PP calling points because the parser ignored OPOR/OPIP/OPDT stop types. Darwin schedule messages for VSTP services contain PP waypoints + OPOR/OPDT (operational origin/destination), but the parser only processed OR/IP/PP/DT — dropping OPOR, OPIP, and OPDT entirely. This meant VSTP services had no origin/destination data, and TS messages with real passenger stops couldn't match PP-only rows.
+- **Evidence:**
+  - Service `202604267182522` (3C50, GN): Had `OPOR: HRNSYMD` and `OPDT: KNGX` in raw Darwin, but only 4 PP rows were created
+  - 2,451 PP-only services have `isPassengerSvc=false` (operational moves)
+  - 878 PP-only services have `isPassengerSvc=true` (passenger services)
+- **Impact:** VSTP passenger services appeared on departure boards without real-time estimates. Major stations (KNGX, EDINBUR, BHM) were affected.
+- **Fix Applied:**
+  1. **Parser** (`parser.ts`): Added OPOR/OPIP/OPDT handling in `normalizeSchedule()`. These were previously silently dropped.
+  2. **Schedule handler** (`schedule.ts`): Now uses `isPassengerSvc` from Darwin instead of hardcoded `true`. VSTP operational services (ECS, light loco) now correctly marked `is_passenger=false`.
+  3. **TS handler** (`trainStatus.ts`): For VSTP services, INSERT new CP rows for unmatched passenger stops with CRS looked up from `location_ref`. Also backfilled `is_passenger` based on `isPassengerSvc` for new stubs.
+  4. **Board query** (`boards.ts`): Replaced `source_timetable = true` with `is_passenger = true`. Added `COALESCE(pta_timetable, eta_pushport)` for VSTP services lacking timetable times. Excluded OPOR/OPIP/OPDT from display. OR/OPOR map to origin, DT/OPDT map to destination.
+
+### BUG-025: CP-level dedup leaves 138K stale calling points
+- **Severity:** Low
+- **Type:** Bug
+- **Status:** Active
+- **File:** `packages/consumer/src/handlers/trainStatus.ts`
+- **Context:** 138,148 calling points have `ts_generated_at` more than 1 minute behind their service's `ts_generated_at`. This is expected behavior — each TS message only updates CPs that have changed, so unmentioned CPs keep older timestamps. However, this means we can't easily distinguish "no update received" from "update received but no change". Consider whether this matters.
+- **Impact:** Low — no data loss, just slightly stale timestamps on unchanged CPs.
+- **Fix-Direction:** Accept as expected behavior, or update all CPs in a TS message's service to have the same `ts_generated_at` (even unchanged ones).
+
+### BUG-026: Seed deletes Darwin-only CPs on timetable journeys
+- **Severity:** Medium
+- **Type:** Data-Integrity
+- **Status:** Fixed (2026-04-26)
+- **File:** `packages/api/src/db/seed-timetable.ts`, `packages/consumer/src/handlers/schedule.ts`
+- **Context:** Seed process DELETEs all calling points for a batch, then re-inserts from PPTimetable. Darwin-only CPs (source_darwin=true, source_timetable=false) on timetable-sourced journeys were lost. Fixed by full rewrite to source-separated UPSERT approach — seed now uses ON CONFLICT DO UPDATE on (journey_rid, sequence) updating only timetable columns, never deleting any rows.
+- **Evidence:** 20,247 CPs with source_darwin=true AND source_timetable=false on source_timetable=true journeys. 82 unique TIPLOCs, 77 with pushport data (eta/etd/ata/atd).
+- **Impact:** VSTP services at major stations (KNGX, BHM, EDB) would lose real-time data after seed re-run.
+- **Fix:** Full rewrite to UPSERT approach (BUG-027 fix). Seed writes timetable columns only, consumer writes pushport columns only.
+- **Blocks / Blocked-by:** Superseded by BUG-027
+
+### BUG-027: Duplicate key violation on `idx_calling_points_journey_rid_sequence` during re-seed
+- **Severity:** Critical
+- **Type:** Data-Integrity
+- **Status:** Fixed (2026-04-26)
+- **File:** `packages/api/src/db/seed-timetable.ts`, `packages/consumer/src/handlers/schedule.ts`
+- **Context:** Re-seeding the timetable caused `duplicate key value violates unique constraint "idx_calling_points_journey_rid_sequence"` errors. Root cause: the old seed used DELETE + re-insert approach with `reinsertDarwinOnlyCps()` that reassigned sequence numbers to preserved Darwin-only CPs, which could collide with new timetable CPs for the same (journey_rid, sequence). Additionally, the DELETE + re-insert + re-apply cycle was fundamentally unsafe: it destroyed pushport data temporarily and could lose Darwin-only CPs.
+- **Evidence:** `Key (journey_rid, sequence)=(202604268073672, 29) already exists` — Darwin CP at sequence 29 conflicted with a timetable CP at the same sequence after re-numbering.
+- **Impact:** Seed re-runs crashed with duplicate key violations. If they didn't crash, Darwin-only CPs could be lost or have their pushport data overwritten.
+- **Fix:** Full rewrite to source-separated UPSERT architecture:
+  1. **Schema:** Added `timetable_updated_at` column for stale CP detection.
+  2. **Seed (`seed-timetable.ts`):** UPSERT-only approach — `ON CONFLICT (journey_rid, sequence) DO UPDATE` updating only timetable columns (`_timetable` fields, `source_timetable`, `day_offset`, etc.). Pushport columns NEVER touched by seed. Phase 4 marks stale CPs (`source_timetable=true` but `timetable_updated_at < seed start`) and deletes true orphans (both sources false).
+  3. **Consumer (`schedule.ts`):** For timetable-sourced services, matches Darwin locations to existing CPs by TIPLOC and UPDATEs pushport columns only. For VSTP services, DELETE + INSERT is safe (we own all data). New Darwin-only locations get INSERTed with `source_timetable=false`.
+  4. **Consumer (`trainStatus.ts`):** No changes needed — already only writes pushport columns.
+- **Blocks / Blocked-by:** None
+
+### BUG-028: TS handler doesn't update `journeys.source_darwin` flag
+- **Severity:** High
+- **Type:** Data-Integrity
+- **Status:** Fixed (2026-04-26)
+- **File:** `packages/consumer/src/handlers/trainStatus.ts`
+- **Context:** The trainStatus handler sets `source_darwin = true` on `calling_points` and `service_rt`, but never updates `journeys.source_darwin`. This caused 107,689 journeys to have `source_darwin=false` on the journey row while their CPs had `source_darwin=true`. Only the `schedule` handler and `createDarwinStub` set the journey flag.
+- **Evidence:** 107,689 journeys with `source_darwin=false` but CPs with `source_darwin=true`. 476 today's journeys affected. After backfill: 0 inconsistencies.
+- **Impact:** Queries filtering by `journeys.source_darwin` would miss these journeys.
+- **Fix:** Added `UPDATE journeys SET source_darwin = true WHERE rid = ${rid} AND source_darwin = false` to the TS handler transaction. Backfilled 107,689 existing rows.
+
 ## Backlog
 
 ---
@@ -277,10 +339,34 @@ BUG-022 (VSTP duplicate PP entries)
 | BUG-021 (mobile UI) | Still active, needs frontend fix |
 | VSTP stubs create duplicate PP entries | Tracked as BUG-022 — low priority |
 
-### Bug 18
+### Bug A18
 
 MKC?name=MILTON%2520KEYNES%2520CENTRAL&time=15%3A00:13 Executing inline script violates the following Content Security Policy directive 'script-src 'self''. Either the 'unsafe-inline' keyword, a hash ('sha256-8q8ZNMrcf766ej0NFNRI++ZkDD4jxIF+wRksU9A+tik='), or a nonce ('nonce-...') is required to enable inline execution. The action has been blocked.
 
-### Bug 19
+### Bug A19
 
 for 202604268702858 when viewing the train, when the last station is being viewed like here Euston is the last station, its misleading to say that train is at station - if this is the last station and train terminates there, we should have a different status here. Same goes for departure/arrivals board - we need a different status for when train arrived at the last station, as "departed" is misleading. Arrived maybe as well for departures/arrivals views?
+
+### Bug A20
+
+Service 202604266772349 shows as 'unknown'when viewed from Bournemouth departure board. Calling points and times are correct. Are there any more that somewhere on the calling points show as unknown?
+
+### Bug A21
+
+Some station names are capitals some are normal - when showing in the board or anywhere on the front-end, we should normalise so for example MILTON KEYNES becomes Milton Keynes etc - but only normalise this on the front-end. This is mostly showed like this in favourites, but we should be consistent across the website on how we normalise this.
+
+### Bug A22
+
+202604268705385 does not have "departed" status when viewed from LIVERPOOL LIME STREET departure board. Next calling stations have Departed status correctly.
+
+202604267187709 at Manor Road does not have "departed" status when viewed from Manor Road, same for Moreton (Merseyside) and Meols. Train has finished its journey.
+
+### Bug A23
+
+202604268700028 shows --.-- for time and is from Unknown to Unknown - is this a service train that is being showed by a mistake? calling points London Euston and CMDNCSD.
+
+Similar for 202604268700002 - London Euston 20:26 and WMBYICD 20:42
+
+### Bug A24
+
+PPTimetable filters out Non-passenger services (`isPassengerSvc="false"`) from processing, as well as we're not processing associations, which can be helpful to process if we want to show customers which parts of the train will split.

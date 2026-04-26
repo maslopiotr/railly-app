@@ -295,7 +295,11 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
     // wall_clock_minutes = days_from_today * 1440 + time_minutes
     // where days_from_today = (ssd_date + day_offset) - today_date
     // Uses cp.ssd (denormalized) instead of joining to journeys.ssd
-    const timeField = boardType === "arrivals" ? callingPoints.ptaTimetable : callingPoints.ptdTimetable;
+    // BUG-024: COALESCE with pushport times for VSTP services that may
+    // lack timetable data but have real-time estimates
+    const timeField = boardType === "arrivals"
+      ? sql`COALESCE(${callingPoints.ptaTimetable}, ${callingPoints.etaPushport})`
+      : sql`COALESCE(${callingPoints.ptdTimetable}, ${callingPoints.etdPushport})`;
     const wallMinutesSql = sql<number>`
       (EXTRACT(EPOCH FROM (COALESCE(${callingPoints.ssd}, ${journeys.ssd})::date + ${callingPoints.dayOffset} * INTERVAL '1 day') - ${todayStr}::date) / 86400)::integer * 1440
       + EXTRACT(HOUR FROM ${timeField}::time) * 60
@@ -361,13 +365,16 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       .where(
         and(
           eq(callingPoints.crs, crs),
-          eq(callingPoints.sourceTimetable, true),
-          inArray(journeys.ssd, ssds),
+          // BUG-024: Include VSTP passenger services, not just timetable-sourced.
+          // Filter by is_passenger (set from Darwin isPassengerSvc or PPTimetable)
+          // rather than source_timetable, so real-time VSTP services appear on boards.
           eq(journeys.isPassenger, true),
-          sql`${callingPoints.stopType} != 'PP'`,
+          inArray(journeys.ssd, ssds),
+          // Exclude PP (passing points) and operational stops from board display
+          sql`${callingPoints.stopType} NOT IN ('PP', 'OPOR', 'OPIP', 'OPDT')`,
           boardType === "arrivals"
-            ? sql`${callingPoints.ptaTimetable} IS NOT NULL`
-            : sql`${callingPoints.ptdTimetable} IS NOT NULL`,
+            ? sql`(${callingPoints.ptaTimetable} IS NOT NULL OR ${callingPoints.etaPushport} IS NOT NULL)`
+            : sql`(${callingPoints.ptdTimetable} IS NOT NULL OR ${callingPoints.etdPushport} IS NOT NULL)`,
           timeFilter,
         ),
       )
@@ -402,7 +409,7 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       .where(
         and(
           inArray(callingPoints.journeyRid, uniqueRids),
-          inArray(callingPoints.stopType, ["OR", "DT"]),
+          inArray(callingPoints.stopType, ["OR", "OPOR", "DT", "OPDT"]),
         ),
       );
 
@@ -429,8 +436,8 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         endpointMap.set(e.rid, entry);
       }
       const loc = { crs: e.crs, name: e.name, tpl: e.tpl };
-      if (e.stopType === "OR") entry.origin = loc;
-      else if (e.stopType === "DT") entry.destination = loc;
+      if (e.stopType === "OR" || e.stopType === "OPOR") entry.origin = loc;
+      else if (e.stopType === "DT" || e.stopType === "OPDT") entry.destination = loc;
     }
 
     // ── Query 3: Full calling pattern for each journey ────────────────────
@@ -497,8 +504,11 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         entry.ataPushport != null ||
         entry.atdPushport != null;
 
+      // BUG-024: VSTP services may lack timetable times — use pushport as fallback
       const schedMinutes = parseTimeToMinutes(
-        boardType === "arrivals" ? entry.ptaTimetable : entry.ptdTimetable
+        boardType === "arrivals"
+          ? entry.ptaTimetable || entry.etaPushport
+          : entry.ptdTimetable || entry.etdPushport
       );
       if (schedMinutes === null) return false;
 
@@ -608,7 +618,7 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       );
 
       const cpList: HybridCallingPoint[] = callingPattern
-        .filter((cp) => cp.stopType !== "PP")
+        .filter((cp) => !["PP", "OPOR", "OPIP", "OPDT"].includes(cp.stopType))
         .map((cp) => ({
           tpl: cp.tpl,
           crs: cp.crs ?? null,

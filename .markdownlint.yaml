@@ -21,3 +21,6 @@ MD047: false
 
 # No space inside code span elements
 MD048: false
+
+# Code blocks should not be surrounded by blank lines
+MD060: false

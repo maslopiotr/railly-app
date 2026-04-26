@@ -308,20 +308,35 @@ export function parseDarwinMessage(raw: Buffer | string | null): DarwinMessage |
         sched.deleted = toBool(sched.deleted) ?? false;
       }
 
-      // Darwin schedule locations can be: OR, IP (array), PP (array), DT
-      // We need to collect them into a unified locations array with stopType
-      if (!sched.locations && (sched.OR || sched.IP || sched.PP || sched.DT)) {
+      // Darwin schedule locations can be: OR, OPOR, IP, OPIP, PP (array), DT, OPDT
+      // We need to collect them into a unified locations array with stopType.
+      // OPOR/OPIP/OPDT are operational (non-passenger) variants that Darwin
+      // sends as separate top-level keys — they were previously ignored, causing
+      // VSTP services to lose their origin/destination data (BUG-024).
+      if (!sched.locations && (sched.OR || sched.OPOR || sched.IP || sched.OPIP || sched.PP || sched.DT || sched.OPDT)) {
         const locations: unknown[] = [];
         if (sched.OR) {
           const or = sched.OR as Record<string, unknown>;
           or.stopType = "OR";
           locations.push(or);
         }
+        if (sched.OPOR) {
+          const opor = sched.OPOR as Record<string, unknown>;
+          opor.stopType = "OPOR";
+          locations.push(opor);
+        }
         if (sched.IP) {
           const ipArray = Array.isArray(sched.IP) ? sched.IP : [sched.IP];
           for (const ip of ipArray) {
             (ip as Record<string, unknown>).stopType = "IP";
             locations.push(ip);
+          }
+        }
+        if (sched.OPIP) {
+          const opipArray = Array.isArray(sched.OPIP) ? sched.OPIP : [sched.OPIP];
+          for (const opip of opipArray) {
+            (opip as Record<string, unknown>).stopType = "OPIP";
+            locations.push(opip);
           }
         }
         if (sched.PP) {
@@ -335,6 +350,11 @@ export function parseDarwinMessage(raw: Buffer | string | null): DarwinMessage |
           const dt = sched.DT as Record<string, unknown>;
           dt.stopType = "DT";
           locations.push(dt);
+        }
+        if (sched.OPDT) {
+          const opdt = sched.OPDT as Record<string, unknown>;
+          opdt.stopType = "OPDT";
+          locations.push(opdt);
         }
         sched.locations = locations;
       }

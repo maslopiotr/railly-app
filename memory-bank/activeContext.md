@@ -1,62 +1,39 @@
 # Active Context
 
-## Current Focus
-- **Bug verification and data quality fixes** (2026-04-26): Comprehensive PostgreSQL verification of all bugs in bugsTracker.md, plus discovery and fix of critical CRS gap.
+## Current Focus: BUG-027 + BUG-028 Fixed and Verified
 
-### Bug Verification Results
-All 12 original bugs (BUG-001 through BUG-012) verified with live data:
-- **BUG-001 through BUG-008, BUG-011, BUG-012**: Confirmed FIXED
-- **BUG-009**: Fixed + 258 old truncated rows purged
-- **BUG-010**: Partially fixed (counter added, needs persistence)
-- **BUG-006/007**: Revised — silencing warnings hides real problems
+### Just Completed (2026-04-26)
 
-### New Bugs Discovered
-- **BUG-020**: Train at destination showing "at platform" → Fixed with new "arrived" status
-- **BUG-021**: Mobile UI layout broken → Active, needs frontend fix
-- **BUG-022**: VSTP duplicate PP entries → Low priority, no display impact
-- **BUG-023**: 42% of passenger calling points missing CRS codes → Partially fixed (backfilled 129K rows)
-- **BUG-006-revised**: Need `skipped_locations` table for persistence
-- **BUG-007-revised**: Need unprocessed message audit trail
+**BUG-027: Duplicate key violation on re-seed** — Fixed and verified with full data integrity check:
+- Seed ran successfully with zero duplicate key errors
+- 794,133 calling points upserted, 2,579,860 total
+- All pushport data preserved (eta/etd/plat/delay counts stable or increased)
+- Source flags consistent: no Darwin data overwritten by seed
 
-### Critical CRS Gap Fix (BUG-023)
-- **Before**: 77,388 passenger stops (42%) had NULL CRS — services at London Bridge, Bond Street, Clapham Junction etc. were invisible on departure boards
-- **After backfill**: 1,465 without CRS (0.8%), all genuine junctions
-- **Manual backfill**: `UPDATE calling_points SET crs/name FROM location_ref` — 129,469 CRS + 51,089 names
-- **Seed fix**: Added Phase 3 post-insert backfill from `location_ref`
-- **Remaining**: 374 TIPLOCs without CRS in reference data (junctions), 2 missing station entries (TRX, ZZY)
+**BUG-028: TS handler doesn't update `journeys.source_darwin`** — Fixed:
+- `trainStatus.ts` now includes `UPDATE journeys SET source_darwin = true WHERE rid = ${rid} AND source_darwin = false`
+- Backfilled 107,689 existing journeys where `source_darwin=false` but CPs had `source_darwin=true`
+- After fix: 0 inconsistent journeys, all today's 21,755 journeys have `source_darwin=true`
 
-### BUG-020 Fix: "Arrived" Status
-- Added `stopType` parameter to `determineTrainStatus()` and `determineCurrentLocation()`
-- When `stopType === 'DT'` and `ata` exists → returns `"arrived"` instead of `"at_platform"`
-- Added `"arrived"` to `TrainStatus` and `CurrentLocation` shared types
-- Frontend `StatusBadge` shows blue "Arrived" badge
+### Key Architecture: Source-Separated UPSERT
 
-### Data Quality Summary (2026-04-26)
-| Check | Result | Status |
-|-------|--------|--------|
-| Truncated JSON (new) | 0 rows | ✅ |
-| `processed_at IS NULL` | 0 rows | ✅ |
-| True duplicate CPs | 10 (legitimate) | ✅ |
-| EUS departures | 121 | ✅ |
-| BHM departures | 248 | ✅ |
-| Passenger stops without CRS | 1,465 (0.8%) | ⚠️ |
-| Cancelled services today | 3,233 | ✅ |
-| Darwin errors (24h) | 4 deadlocks | ✅ |
+The seed and consumer never overwrite each other's data:
+- **Seed** UPSERTs timetable columns only (`_timetable` fields, `source_timetable`, `day_offset`)
+- **Consumer** UPSERTs pushport columns only (`_pushport` fields, `source_darwin`)
+- **`source_timetable`/`source_darwin`** flags track which source owns each row
+- **`timetable_updated_at`** timestamp enables stale CP detection
+- **`journeys.source_darwin`** now set by all three handlers: schedule, trainStatus, and createDarwinStub
 
-## Key Files
-- **API board**: `packages/api/src/routes/boards.ts` — `determineTrainStatus()`, `determineCurrentLocation()`, board query
-- **Consumer**: `packages/consumer/src/handlers/trainStatus.ts` — `skippedLocationsTotal` counter, Darwin stub creation
-- **Consumer**: `packages/consumer/src/handlers/index.ts` — `skippedLocations` metric in `metrics` object
-- **Consumer**: `packages/consumer/src/index.ts` — `skippedLocationsTotal` in metrics logging
-- **Seed**: `packages/api/src/db/seed-timetable.ts` — Phase 3 CRS backfill from `location_ref`
-- **Shared types**: `packages/shared/src/types/board.ts` — `TrainStatus` includes `"arrived"`, `CurrentLocation` includes `"arrived"`
-- **Frontend**: `packages/frontend/src/components/ServiceRow.tsx` — "Arrived" badge
+### Files Changed This Session
+- `packages/api/src/db/schema.ts` — Added `timetableUpdatedAt` column
+- `packages/api/src/db/seed-timetable.ts` — Full rewrite to UPSERT approach
+- `packages/consumer/src/handlers/schedule.ts` — Full rewrite to source-separated approach
+- `packages/consumer/src/handlers/trainStatus.ts` — Added journey source_darwin update (BUG-028)
+- `packages/api/drizzle/meta/0001_add_timetable_updated_at.sql` — Migration
+- `packages/api/drizzle/meta/_journal.json` — Updated journal
+- `memory-bank/bugsTracker.md` — Added BUG-027, BUG-028
 
-## Next Steps
-- **BUG-021**: Mobile UI layout fix (frontend-only)
-- **BUG-006-revised**: Create `skipped_locations` table for persisting skipped TIPLOCs
-- **BUG-007-revised**: Verify `darwin_errors` captures all retry-exhausted failures
-- **BUG-022**: VSTP duplicate PP entries (low priority)
-- **BUG-023 remaining**: Add TRX/ZZY to stations seed; board query fallback for NULL CRS
-- Build dashboard query for unresolved errors
-- Frontend: Build out ServiceDetail view
+### Next Steps (Priority Order)
+1. **BUG-023 Remaining**: Add TRX/ZZY to stations seed; board query fallback for NULL CRS
+2. **BUG-021**: Mobile UI fix (ServiceRow, DepartureBoard responsive layout)
+3. **P1-P3 Message Handlers**: OW (P1), Association (P2), trackingID (P3)

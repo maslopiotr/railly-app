@@ -117,6 +117,7 @@ export const callingPoints = pgTable(
     detachFront: boolean("detach_front").default(false).notNull(), // Front coaches detach at this stop
     updatedAt: timestamp("updated_at", { withTimezone: true }), // Last Darwin message
     tsGeneratedAt: timestamp("ts_generated_at", { withTimezone: true }), // Last TS message timestamp (for dedup)
+    timetableUpdatedAt: timestamp("timetable_updated_at", { withTimezone: true }), // Last PPTimetable seed update
   },
   (table) => [
     index("idx_calling_points_journey_rid").on(table.journeyRid),
