@@ -49,11 +49,32 @@
   
   Fixes: Added `toBool()` helper in parser, extract service-level `isCancelled`/`cancelReason`/`delayReason` from TS, propagate to `service_rt` with `CASE WHEN` (once cancelled, stays cancelled), fixed schedule to only use `can === true`, added cancel/delay data to board API calling points response.
 
+- **Board accuracy fixes round 3** (2026-04-26): Seven bugs found via live data verification and fixed:
+  1. **trainStatus="on_time" for delayed trains** (CRITICAL): `determineTrainStatus()` only used `eta` for delay computation, which is null at origin stops on departure boards. Now uses `etd` for departure boards, `eta` for arrival boards. Verified: delayed service correctly shows `trainStatus: "delayed"`.
+  2. **eta/etd fallback to timetable**: Previously `eta = entry.etaPushport ?? entry.ptaTimetable` meant etd always matched std for on-time services, making delayed detection impossible. Changed to pushport-only values: `eta = entry.etaPushport ?? null`. Frontend now shows "On time" when pushport confirms schedule, "Exp XX:XX" when delayed, and scheduled time only when no pushport data.
+  3. **delayMinutes inconsistency**: API was recomputing delay instead of using DB `delay_minutes` (computed by consumer). Now uses DB value as primary source, only recomputing if null.
+  4. **Platform-only services showing "on_time"**: Services with `hasRealtime=true` (platform data only, no timing data) were incorrectly showing `trainStatus: "on_time"`. Now correctly returns `"scheduled"` when no etd/eta is available.
+  5. **Cancel reason propagation**: Per-location cancel reasons from Darwin TS messages now propagated to `calling_points.cancel_reason`. If a location is cancelled, the service-level `cancelReason` is used as fallback. Frontend now shows cancel reasons on both board rows and calling points.
+  6. **Frontend: "Expected XX:XX" display**: ServiceRow shows scheduled time with strikethrough when delayed, plus "Exp XX:XX" in amber. CallingPoints shows similar treatment. Early arrivals show negative delay in green.
+  7. **Frontend: Cancel reasons**: Both ServiceRow and CallingPoints now display `cancelReason` when available.
+
+- **Board accuracy fixes round 3 — edge case verification** (2026-04-26): Comprehensive live testing across 6 stations (EUS, KGX, MKC, PAD, BHM, MAN) verified all 7 train statuses work correctly:
+  - **delayed**: 81-min delay correctly shown with `etd ≠ std`
+  - **on_time**: Confirmed by Darwin (`etd === std`)
+  - **scheduled**: Platform-only data without timing shows uncertain status
+  - **departed**: `atdPushport` present, `etdPushport` null (Darwin clears etd after departure)
+  - **at_platform**: `actualArrival` set, `actualDeparture` null
+  - **approaching**: `eta` populated, no ata/atd
+  - **Early departures**: `delayMinutes: -1` correctly computed
+  - **Platform alterations**: `platformSource: "altered"` when live differs from timetable
+  - **Delay cascade**: Calling points show progressively reducing delay (77→64→37→27→12 min)
+  - **Key design decision**: Once departed, Darwin clears `etdPushport` — frontend shows `actualDeparture` instead
+  - **Key design decision**: `delay > 5` threshold for "delayed" matches National Rail convention (1-5 min = "on_time")
+
+- **Frontend build fix** (2026-04-26): Removed unused `isOnTime` function from ServiceRow.tsx and added missing `cancelReason` destructuring in CallingPoints.tsx CallingPointRow props.
+
 ## What's Left
-- Platforms suprressed - Some stations, like Euston, surpress platforms in PPTimetable files. Then, the platform gets announced via Darwin about 5 minutes before departure, and then gets surpressed again. We might want to fix for that.
+- Platforms suppressed — Some stations (Euston) suppress platforms in PPTimetable, then Darwin announces ~5 min before departure. Platform display could be further improved.
 - Monitor `darwin_errors` for trends
 - Build dashboard query for unresolved errors
-- Frontend: Show "Expected XX:XX" when etd ≠ std (pushport data now available)
-- Frontend: Fix platform "-3" bug
-- Frontend: Show delay minutes and cancellation status on calling points (data now available in API responses)
-- Frontend: Show cancel reasons when services are cancelled
+- Frontend: Build out ServiceDetail view with full calling pattern

@@ -30,11 +30,6 @@ function formatTime(time: string | null | undefined): string {
   return cleaned;
 }
 
-/** Check if an estimated time represents "On time" */
-function isOnTime(et: string | null | undefined): boolean {
-  return et === "On time";
-}
-
 /** Check if an estimated time represents a cancellation */
 function isCancelled(et: string | null | undefined): boolean {
   return et === "Cancelled" || et === "cancelled";
@@ -164,7 +159,18 @@ export function ServiceRow({ service, isArrival, stationCrs, onSelect }: Service
   const origin = isArrival ? service.destination : service.origin;
 
   const cancelled = service.isCancelled || isCancelled(estimatedTime);
-  const onTime = !cancelled && isOnTime(estimatedTime);
+
+  // Determine display logic for estimated time:
+  // - hasRealtime + etd === std → "On time" (confirmed by Darwin)
+  // - hasRealtime + etd !== std → "Expected XX:XX" (delayed)
+  // - !hasRealtime → scheduled only (no estimate line)
+  const hasEstimate = service.hasRealtime && estimatedTime !== null && !cancelled;
+  const isOnTimeByEstimate = hasEstimate && (
+    isArrival
+      ? service.eta === service.sta
+      : service.etd === service.std
+  );
+  const isDelayed = hasEstimate && !isOnTimeByEstimate && !cancelled;
 
   // Get next calling points (up to 3 for mobile preview)
   const nextStops = getNextCallingPoints(service.callingPoints || [], stationCrs || null, 3);
@@ -180,33 +186,51 @@ export function ServiceRow({ service, isArrival, stationCrs, onSelect }: Service
     >
       {/* Main row */}
       <div className="service-main">
-        {/* Time column: scheduled + estimated + actual + delay */}
-        <div className="service-time w-24 shrink-0 flex flex-col gap-0.5">
-          <span className="time-scheduled text-sm font-mono font-semibold text-white">
-            {formatTime(scheduledTime)}
-          </span>
-
-          {actualTime && (
-            <span className="text-xs font-mono text-green-400">
-              {formatTime(actualTime)}
+          {/* Time column: scheduled + estimated + actual + delay */}
+          <div className="service-time w-24 shrink-0 flex flex-col gap-0.5">
+            <span className={`time-scheduled text-sm font-mono font-semibold ${isDelayed ? "text-slate-400 line-through" : "text-white"}`}>
+              {formatTime(scheduledTime)}
             </span>
-          )}
 
-          {!actualTime && estimatedTime && !onTime && !cancelled && (
-            <span className="text-xs font-mono text-amber-400">
-              {formatTime(estimatedTime)}
-            </span>
-          )}
+            {actualTime && (
+              <span className="text-xs font-mono font-semibold text-green-400">
+                {formatTime(actualTime)}
+              </span>
+            )}
 
-          {service.delayMinutes !== null && service.delayMinutes > 0 && !cancelled && (
-            <span className="text-[10px] font-medium text-red-400">
-              +{service.delayMinutes} min
-            </span>
-          )}
+            {/* Estimated time: show when delayed (differs from scheduled) */}
+            {!actualTime && isDelayed && estimatedTime && (
+              <span className="text-xs font-mono font-semibold text-amber-400">
+                Exp {formatTime(estimatedTime)}
+              </span>
+            )}
 
-          {onTime && <span className="text-[10px] font-medium text-green-400">On time</span>}
-          {cancelled && <span className="text-[10px] font-medium text-red-400">Cancelled</span>}
-        </div>
+            {/* On time: confirmed by Darwin data */}
+            {!actualTime && isOnTimeByEstimate && (
+              <span className="text-[10px] font-medium text-green-400">On time</span>
+            )}
+
+            {/* No realtime: show nothing extra (scheduled only) */}
+
+            {service.delayMinutes !== null && service.delayMinutes > 0 && !cancelled && (
+              <span className="text-[10px] font-medium text-red-400">
+                +{service.delayMinutes} min
+              </span>
+            )}
+
+            {/* Early arrival/departure */}
+            {service.delayMinutes !== null && service.delayMinutes < 0 && !cancelled && (
+              <span className="text-[10px] font-medium text-green-400">
+                {service.delayMinutes} min
+              </span>
+            )}
+
+            {cancelled && (
+              <span className="text-[10px] font-medium text-red-400">
+                Cancelled{service.cancelReason ? `: ${service.cancelReason}` : ""}
+              </span>
+            )}
+          </div>
 
         {/* Platform */}
         <div className="w-20 shrink-0 flex justify-center">

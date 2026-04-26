@@ -198,6 +198,7 @@ function CallingPointRow({
   platTimetable,
   platPushport,
   isCancelled,
+  cancelReason,
   stopState,
   isLast,
 }: {
@@ -212,6 +213,7 @@ function CallingPointRow({
   platTimetable: string | null;
   platPushport: string | null;
   isCancelled: boolean;
+  cancelReason: string | null;
   stopState: StopState;
   isLast: boolean;
 }) {
@@ -291,7 +293,9 @@ function CallingPointRow({
         <div className="flex items-center gap-2 mt-0.5">
           {/* Cancelled */}
           {isCancelled && (
-            <span className="text-xs text-red-400 font-medium">Cancelled</span>
+            <span className="text-xs text-red-400 font-medium">
+              Cancelled{cancelReason ? `: ${cancelReason}` : ""}
+            </span>
           )}
 
           {/* Not cancelled — show times */}
@@ -304,20 +308,34 @@ function CallingPointRow({
                 </span>
               )}
 
-              {/* Scheduled time (strikethrough if visited) */}
+              {/* Scheduled time — strikethrough if delayed and not visited */}
               {scheduled && (
-                <span className={`text-xs font-mono ${actual ? "text-slate-500 line-through" : "text-slate-400"}`}>
+                <span className={`text-xs font-mono ${
+                  actual
+                    ? "text-slate-500 line-through"
+                    : (estimated && estimated !== "On time" && scheduled !== estimated)
+                      ? "text-slate-500 line-through"
+                      : "text-slate-400"
+                }`}>
                   {scheduled}
                 </span>
               )}
 
               {/* Estimated time (if not visited) */}
               {estimated && !actual && (
-                <span className={`text-xs font-mono ${
-                  estimated === "On time" ? "text-green-400" : "text-amber-400"
-                }`}>
-                  {estimated}
-                </span>
+                estimated === "On time" ? (
+                  <span className="text-xs font-mono text-green-400">
+                    On time
+                  </span>
+                ) : scheduled && estimated !== scheduled ? (
+                  <span className="text-xs font-mono font-semibold text-amber-400">
+                    Exp {estimated}
+                  </span>
+                ) : (
+                  <span className="text-xs font-mono text-amber-400">
+                    {estimated}
+                  </span>
+                )
               )}
 
               {/* Delay badge */}
@@ -407,6 +425,7 @@ export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
             platTimetable={cp.platTimetable}
             platPushport={cp.platPushport}
             isCancelled={cp.isCancelled}
+            cancelReason={cp.cancelReason ?? null}
             stopState={finalState}
             isLast={i === displayPoints.length - 1}
           />

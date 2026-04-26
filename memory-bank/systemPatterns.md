@@ -188,6 +188,39 @@ if (delay > 720) delay -= 1440;   // Scheduled is next day
 - nginx `add_header` inheritance: don't duplicate in API proxy (Helmet handles it)
 - Kafka SASL_SSL: credentials via environment variables, never committed
 
+## Train Status Determination Logic
+
+The `determineTrainStatus()` function in `boards.ts` computes a high-level status for each board row:
+
+1. **Cancelled** → `isCancelled === true`
+2. **No realtime** → `"scheduled"` (no Darwin data at all)
+3. **At platform** → `ataPushport` exists, no `atdPushport`
+4. **Departed** → `atdPushport` exists
+5. **No estimated time** → `"scheduled"` (platform data only, no timing data from Darwin)
+6. **Delayed** → `delay > 5` minutes (matches National Rail convention; 1-5 min = "on_time")
+7. **On time** → everything else with realtime data
+
+Key rules:
+- **Departure boards** use `etd` (estimated departure) for delay computation — `eta` is null at origin stops
+- **Arrival boards** use `eta` (estimated arrival) for delay computation
+- **Pushport-only values** for `eta`/`etd` in API response — never fall back to timetable. When pushport confirms the schedule, `etd === std`; when no pushport data, `etd = null`
+- **`delayMinutes`** sourced from DB `delay_minutes` (computed by consumer) as primary; recomputed only if null
+- **Departed trains** have `etd = null` because Darwin clears the estimated departure after actual departure; `atdPushport` holds the actual time
+
+## Frontend Display Logic
+
+### ServiceRow (board row)
+- **On time**: When `hasRealtime && etd === std` → green "On time" label
+- **Delayed**: When `hasRealtime && etd ≠ std` → strikethrough scheduled time, amber "Exp XX:XX"
+- **Scheduled only**: When `!hasRealtime || etd === null` → just show scheduled time
+- **Early**: `delayMinutes < 0` → green "-N min"
+- **Cancelled**: Red "Cancelled" with optional reason
+
+### CallingPoints (service detail)
+- Same treatment per calling point: "On time" / "Exp XX:XX" / actual time for visited stops
+- Cancel reasons shown with `cancelReason` prop
+- Platform badges show live vs booked with visual distinction
+
 ## Key Decisions
 
 | Decision | Choice | Why |
@@ -212,3 +245,6 @@ if (delay > 720) delay -= 1440;   // Scheduled is next day
 | **Daily seed** | **Cron container at 03:00** | SFTP-delivered PP Timetable files processed nightly |
 | **Consumer SQL** | **postgres.js (raw)** | Performance for high-volume writes |
 | **API SQL** | **Drizzle ORM** | Type-safe queries with autocomplete |
+| **Train status** | **`etd` for departures, `eta` for arrivals** | `eta` is null at origin stops; must use `etd` for departure boards |
+| **Delay threshold** | **`delay > 5` = "delayed"** | Matches National Rail convention (1-5 min = "on time") |
+| **Pushport-only eta/etd** | **Never fall back to timetable** | When pushport confirms schedule, `etd === std`; when no data, `etd = null` |

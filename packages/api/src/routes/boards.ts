@@ -96,14 +96,20 @@ function computeDelayMinutes(
 
 /**
  * Determine high-level train status for the board row.
+ *
+ * Uses both eta and etd for delay detection — on departure boards,
+ * eta is null at origin stops (no public arrival), so etd must be used.
+ * On arrival boards, eta is the primary indicator.
  */
 function determineTrainStatus(
   isCancelled: boolean,
   hasRealtime: boolean,
   eta: string | null,
+  etd: string | null,
   ata: string | null,
   atd: string | null,
   std: string | null,
+  boardType: "departures" | "arrivals",
 ): TrainStatus {
   if (isCancelled) return "cancelled";
   if (!hasRealtime) return "scheduled";
@@ -111,7 +117,14 @@ function determineTrainStatus(
   if (ata && !atd) return "at_platform";
   if (atd) return "departed";
 
-  const delay = computeDelayMinutes(std, eta, null);
+  // Use etd for departure boards, eta for arrival boards
+  const estimatedTime = boardType === "departures" ? (etd || eta) : (eta || etd);
+
+  // If we have no estimated time from Darwin, we can't confirm "on time"
+  // Return "scheduled" when platform data exists but no timing data
+  if (!estimatedTime) return "scheduled";
+
+  const delay = computeDelayMinutes(std, estimatedTime, null);
   if (delay !== null && delay > 5) return "delayed";
 
   return "on_time";
@@ -550,8 +563,11 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         eta = "Cancelled";
         etd = "Cancelled";
       } else {
-        eta = entry.etaPushport ?? entry.ptaTimetable ?? null;
-        etd = entry.etdPushport ?? entry.ptdTimetable ?? null;
+        // Use pushport-only values for estimates — do NOT fall back to timetable.
+        // When pushport matches timetable, it means Darwin confirms the schedule.
+        // When no pushport data, eta/etd are null (frontend shows scheduled-only).
+        eta = entry.etaPushport ?? null;
+        etd = entry.etdPushport ?? null;
       }
 
       // Use platSource from DB if available, otherwise compute from platform values
@@ -565,18 +581,22 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       const displayPlatform = entry.platTimetable;
       const livePlatform = entry.platPushport;
 
-      const delayMinutes = computeDelayMinutes(
+      // Use DB delay_minutes (computed by consumer) when available.
+      // Only recompute if DB value is null and we have pushport data.
+      const delayMinutes = entry.delayMinutes ?? computeDelayMinutes(
         entry.ptdTimetable || entry.ptaTimetable,
         eta || etd,
         entry.ataPushport || entry.atdPushport,
-      );
+      ) ?? null;
       let trainStatus = determineTrainStatus(
         isCancelled,
         hasRealtime,
         eta,
+        etd,
         entry.ataPushport,
         entry.atdPushport,
         entry.ptdTimetable || entry.ptaTimetable,
+        boardType,
       );
 
       const cpList: HybridCallingPoint[] = callingPattern

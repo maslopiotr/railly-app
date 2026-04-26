@@ -42,6 +42,7 @@ interface CpUpdate {
   updatedAt: string;
   delayMinutes: number | null;
   delayReason: string | null;
+  cancelReason: string | null;
 }
 
 /**
@@ -405,6 +406,18 @@ export async function handleTrainStatus(
         const atdPushport = loc.atd?.trim() || null;
         const platPushport = loc.platform?.trim() || null;
 
+        // Extract per-location cancel reason from Darwin lateReason/cancelReason
+        // Per-location cancel reason: check loc.lateReason (for delay reasons on cancelled stops)
+        // and fall back to the service-level cancelReason for cancelled locations
+        const locCancelReason = (() => {
+          const lr = loc.lateReason as Record<string, unknown> | undefined;
+          if (lr?.reasontext) return String(lr.reasontext);
+          if (lr?.code) return String(lr.code);
+          // If this location is cancelled, propagate the service-level cancel reason
+          if (loc.cancelled === true && cancelReasonText) return cancelReasonText;
+          return null;
+        })();
+
         // Determine platform source:
         // Priority: suppressed > confirmed/altered > default comparison
         // - null: no platform data from Darwin
@@ -470,6 +483,7 @@ export async function handleTrainStatus(
           updatedAt: generatedAt,
           delayMinutes,
           delayReason: ((loc as unknown as Record<string, unknown>).delayReason as string | null) ?? null,
+          cancelReason: locCancelReason,
         });
       }
 
@@ -531,6 +545,7 @@ export async function handleTrainStatus(
             detach_front = ${cp.detachFront},
             delay_minutes = ${cp.delayMinutes},
             delay_reason = ${cp.delayReason},
+            cancel_reason = COALESCE(${cp.cancelReason}, calling_points.cancel_reason),
             source_darwin = true,
             updated_at = ${cp.updatedAt}::timestamp with time zone,
             ts_generated_at = ${generatedAt}::timestamp with time zone
