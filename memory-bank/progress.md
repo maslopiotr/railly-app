@@ -27,6 +27,21 @@
 - ✅ Backfilled 107,689 rows in production DB
 - ✅ After fix: 0 inconsistent journeys, all today's 21,755 journeys have `source_darwin=true`
 
+### BUG-029: Phase 4 NULL timetable_updated_at + Phase 5 stale duplicates — FIXED ✅
+- ✅ Phase 4 stale detection missed CPs with NULL `timetable_updated_at` (newly added column)
+- ✅ Phase 5 stale duplicate merge matched on (journey_rid, tpl) instead of (journey_rid, sequence)
+- ✅ Fixed: Added `OR timetable_updated_at IS NULL` to Phase 4 WHERE clause
+- ✅ Fixed: Phase 5 now correctly merges/deletes stale duplicates by (journey_rid, tpl)
+- ✅ Fixed TypeScript errors: `rowCount` cast on `RowList` type
+- ✅ Full re-seed completed successfully: 43,650 journeys, 794,133 CPs
+- ✅ Darwin replay running: 16,473 service_rt, 281,452 Darwin CPs (in progress)
+
+### Database Rebuild (2026-04-26 evening)
+- ✅ Truncated all data tables (journeys, calling_points, service_rt, skipped_locations, darwin_errors)
+- ✅ Seed completed: 43,650 journeys, 794,133 timetable CPs, 12,102 locations, 43 TOCs
+- ✅ Darwin replay running (processing ~1M events from April 26th)
+- ✅ API and consumer services started
+
 ### Earlier Fixes (2026-04-26)
 - ✅ BUG-006-revised: skipped_locations table + isPass matching fix
 - ✅ BUG-023: CRS backfill (42% → 0.8% missing)

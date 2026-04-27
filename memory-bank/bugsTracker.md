@@ -240,6 +240,21 @@ Every bug uses these fields. If a field is unknown, it's marked `?` rather than 
 - **Impact:** Queries filtering by `journeys.source_darwin` would miss these journeys.
 - **Fix:** Added `UPDATE journeys SET source_darwin = true WHERE rid = ${rid} AND source_darwin = false` to the TS handler transaction. Backfilled 107,689 existing rows.
 
+### BUG-029: Phase 4 stale CP detection fails on NULL timetable_updated_at + Phase 5 duplicate key on stale CP merge
+- **Severity:** Critical
+- **Type:** Data-Integrity
+- **Status:** Fixed (2026-04-26)
+- **File:** `packages/api/src/db/seed-timetable.ts`
+- **Context:** Two issues found during re-seed:
+  1. Phase 4 stale CP detection used `timetable_updated_at < seedStart` but existing CPs from the previous seed had `NULL` timetable_updated_at (the column was newly added), so they were never marked stale.
+  2. Phase 5 stale duplicate cleanup merged pushport data from stale CPs into timetable CPs matching on (journey_rid, tpl), then deleted duplicates. But if a stale CP and timetable CP had different `tpl` values at the same `sequence`, the DELETE would try to remove rows that no longer existed or leave stale data.
+- **Evidence:** Re-seed produced `duplicate key value violates unique constraint "idx_calling_points_journey_rid_sequence" Key (journey_rid, sequence)=(202604268073672, 29) already exists`.
+- **Impact:** Seed re-runs crashed with duplicate key violations.
+- **Fix:**
+  1. Phase 4: Added `OR timetable_updated_at IS NULL` to the stale CP detection WHERE clause.
+  2. Phase 5: Stale duplicate merge now correctly matches on (journey_rid, tpl) and deletes stale duplicates that have a timetable CP at the same (journey_rid, tpl).
+  3. Also fixed TypeScript errors: `rowCount` property not on `RowList` type — cast to `{ rowCount?: number }`.
+
 ## Backlog
 
 ---
@@ -370,3 +385,7 @@ Similar for 202604268700002 - London Euston 20:26 and WMBYICD 20:42
 ### Bug A24
 
 PPTimetable filters out Non-passenger services (`isPassengerSvc="false"`) from processing, as well as we're not processing associations, which can be helpful to process if we want to show customers which parts of the train will split.
+
+### Bug A25
+
+202604278705637 showing as on time, no departure message from darwin was procewssed - why? was it because I was re-running seed script at the time and by mistake run darwin-replay too? Simialr for 202604278702465 - data missing for Birmingham and Coventry - is this because we haven't had the timetable processed at the time? If so, we need to plan.

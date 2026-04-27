@@ -723,7 +723,7 @@ async function seed() {
       AND stale_cp.tpl = tt_cp.tpl
       AND tt_cp.source_timetable = true
   `);
-  const mergeCount = mergeResult.rowCount ?? 0;
+  const mergeCount = (mergeResult as { rowCount?: number }).rowCount ?? 0;
   console.log(`   Merged pushport data from ${mergeCount} stale duplicates into timetable CPs`);
 
   // Delete stale duplicate CPs that have a timetable CP at the same (journey_rid, tpl)
@@ -738,7 +738,7 @@ async function seed() {
           AND tt_cp.source_timetable = true
       )
   `);
-  const deleteCount = deleteResult.rowCount ?? 0;
+  const deleteCount = (deleteResult as { rowCount?: number }).rowCount ?? 0;
   console.log(`   Deleted ${deleteCount} stale duplicate CPs`);
   logElapsed("Phase 5", phase5Start);
 
