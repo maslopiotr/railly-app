@@ -240,20 +240,21 @@ Every bug uses these fields. If a field is unknown, it's marked `?` rather than 
 - **Impact:** Queries filtering by `journeys.source_darwin` would miss these journeys.
 - **Fix:** Added `UPDATE journeys SET source_darwin = true WHERE rid = ${rid} AND source_darwin = false` to the TS handler transaction. Backfilled 107,689 existing rows.
 
-### BUG-029: Phase 4 stale CP detection fails on NULL timetable_updated_at + Phase 5 duplicate key on stale CP merge
+### BUG-029: Duplicate key violation on `idx_calling_points_journey_rid_sequence` during re-seed
 - **Severity:** Critical
 - **Type:** Data-Integrity
-- **Status:** Fixed (2026-04-26)
-- **File:** `packages/api/src/db/seed-timetable.ts`
-- **Context:** Two issues found during re-seed:
-  1. Phase 4 stale CP detection used `timetable_updated_at < seedStart` but existing CPs from the previous seed had `NULL` timetable_updated_at (the column was newly added), so they were never marked stale.
-  2. Phase 5 stale duplicate cleanup merged pushport data from stale CPs into timetable CPs matching on (journey_rid, tpl), then deleted duplicates. But if a stale CP and timetable CP had different `tpl` values at the same `sequence`, the DELETE would try to remove rows that no longer existed or leave stale data.
-- **Evidence:** Re-seed produced `duplicate key value violates unique constraint "idx_calling_points_journey_rid_sequence" Key (journey_rid, sequence)=(202604268073672, 29) already exists`.
-- **Impact:** Seed re-runs crashed with duplicate key violations.
+- **Status:** Fixed (2026-04-27, multiple iterations)
+- **File:** `packages/api/src/db/seed-timetable.ts`, `packages/consumer/src/handlers/schedule.ts`
+- **Context:** Re-seeding the timetable caused `duplicate key value violates unique constraint "idx_calling_points_journey_rid_sequence"` errors. Multiple root causes found and fixed across iterations:
+  1. Phase 4 stale CP detection used `timetable_updated_at < seedStart` but existing CPs had NULL `timetable_updated_at` (newly added column).
+  2. Phase 5 stale duplicate cleanup had issues with DELETE matching.
+  3. **Schedule handler VSTP path** (`schedule.ts` lines 382-408): The VSTP branch did DELETE + plain INSERT without ON CONFLICT. When the seed process or a concurrent TS message had already inserted rows for the same (journey_rid, sequence), the INSERT failed with duplicate key violation. This was the primary cause of the reported error.
+- **Evidence:** `Key (journey_rid, sequence)=(202604268073672, 29) already exists` — VSTP schedule handler INSERT conflicted with existing CP rows.
+- **Impact:** Seed re-runs and concurrent Darwin messages crashed with duplicate key violations.
 - **Fix:**
-  1. Phase 4: Added `OR timetable_updated_at IS NULL` to the stale CP detection WHERE clause.
-  2. Phase 5: Stale duplicate merge now correctly matches on (journey_rid, tpl) and deletes stale duplicates that have a timetable CP at the same (journey_rid, tpl).
-  3. Also fixed TypeScript errors: `rowCount` property not on `RowList` type — cast to `{ rowCount?: number }`.
+  1. Phase 4: Added `OR timetable_updated_at IS NULL` to stale CP detection.
+  2. Phase 5: Fixed stale duplicate merge matching.
+  3. **VSTP schedule handler**: Changed from DELETE-all + INSERT to selective-DELETE + UPSERT. Now deletes only stale CPs (sequences not in new schedule), then INSERTs with `ON CONFLICT (journey_rid, sequence) DO UPDATE SET` to handle concurrent inserts safely.
 
 ## Backlog
 
@@ -389,3 +390,26 @@ PPTimetable filters out Non-passenger services (`isPassengerSvc="false"`) from p
 ### Bug A25
 
 202604278705637 showing as on time, no departure message from darwin was procewssed - why? was it because I was re-running seed script at the time and by mistake run darwin-replay too? Simialr for 202604278702465 - data missing for Birmingham and Coventry - is this because we haven't had the timetable processed at the time? If so, we need to plan.
+
+### Bug A26
+For 202604278005543 that was delayed today, when viewing that service at 20:02, Birmingham International was showing with the flag "Next" for the next stop, but the train was delayed and expected 20:20. The "next" flag should have been showing at the actual next stop where the train hasn't arrived yet. Also, when viewed for Birmingham New Street station, it has a banner "At platform Coventry" when viewing that specific train from Birmingham New Street station, which is techincially correct as the train is at coventry. but when viewed from Birmingham New Street it should just say how much delay or something.
+
+### Bug A27
+202604277664544 shows as "unknown" when viewed via stations/BHI/202604277664544?name=BIRMINGHAM%2520INTERNATIONAL.
+
+### Bug 28
+202604278706878 does not show as departed from Euston.
+
+### Bug 29
+How do we process pta, ptd, ata, atd, eta, etd etc? are these always in HH:MM format or do they sometimes are HH:MM:SS? and if so, do we normalise these to HH:MM?
+
+**Status: Fixed (2026-04-27).** Added `normaliseTime()` in parser that truncates `HH:MM:SS` to `HH:MM` for all Darwin pushport time fields. Also added `weta_pushport`/`wetd_pushport` columns (char(5)) to store working estimated times from `arr.wet`/`dep.wet`, which are the key fallback when `ptd` is absent but `wet` is present. 3,278 CPs already populated with wet data from live Darwin feed.
+
+### Bug 30
+202604277602363 is running delayed, but does not show as delayed on user side when viewed via stations/EUS/202604277602363?name=EUSTON%2520LONDON - all stations are showing as green (on time) apart from one calling point - Berkswell 19:21 Exp 19:39 +18 min.
+
+### Bug 31
+202604278706546 when viewed at 20:46 does not show as departed from Birmingham International, but it has departed, and when viewed via stations/BHI/202604278706546?name=BIRMINGHAM%2520INTERNATIONAL in the callings points, shows as green (departed) but then says expected 20:45. Marston Green is showing with the flag "Next".
+
+### Bug 32
+stations/BHI/202604276772376?name=BIRMINGHAM%2520INTERNATIONAL when viewed from birminghan international at 20:39 is showing up as "Approaching Birmingham International" but it is scheduled to arrive 21:41. This is misleading.

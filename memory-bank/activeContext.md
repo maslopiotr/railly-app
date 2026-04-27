@@ -1,46 +1,44 @@
 # Active Context
 
-## Current Focus: BUG-029 Fixed + Full Database Rebuild In Progress
+## Current Focus: Duplicate Key Fix + Wet Time Data Pipeline
 
-### Just Completed (2026-04-26 evening)
+### Just Completed (2026-04-27)
 
-**BUG-029: Phase 4 NULL timetable_updated_at + Phase 5 stale duplicates** — Fixed:
-- Phase 4 stale detection missed CPs with NULL `timetable_updated_at` (newly added column)
-- Phase 5 stale duplicate merge had incorrect matching — now matches on (journey_rid, tpl)
-- TypeScript `rowCount` errors fixed with type assertion
-- Full database rebuild initiated: truncate → seed → replay
+**BUG-029: Duplicate key violation on re-seed (final fix)** — Fixed:
+- Root cause: Schedule handler VSTP path did DELETE-all + plain INSERT without ON CONFLICT
+- When seed or concurrent TS had already inserted rows for same (journey_rid, sequence), INSERT failed
+- Fixed: Changed VSTP path to selective-DELETE + UPSERT with ON CONFLICT DO UPDATE
 
-**Database Rebuild Status**:
-- ✅ All data tables truncated (journeys, calling_points, service_rt, etc.)
-- ✅ Timetable seed completed: 43,650 journeys, 794,133 CPs, 12,102 locations, 43 TOCs
-- 🔄 Darwin replay running: ~16,473 service_rt, ~281,452 Darwin CPs (processing ~1M events)
-- ✅ API and consumer services started (consumer picking up live data)
-
-**BUG-027 + BUG-028** were also fixed this session (see progress.md).
+**Bug 29: Time normalisation + working estimated times** — Fixed:
+- Added `normaliseTime()` in parser: truncates `HH:MM:SS` → `HH:MM` for all pushport time fields
+- Added `weta_pushport`/`wetd_pushport` columns (char(5)) to schema
+- Updated parser to extract `arr.wet`/`dep.wet`/`pass.wet` from Darwin TS messages
+- Updated TS handler to store wet times in all INSERT/UPDATE statements
+- Updated `matchLocationsToSequences` to route PP stops to PP DB rows (was previously skipping them)
+- 3,278 CPs already populated with wet data from live Darwin feed
 
 ### Key Architecture: Source-Separated UPSERT
 
 The seed and consumer never overwrite each other's data:
 - **Seed** UPSERTs timetable columns only (`_timetable` fields, `source_timetable`, `day_offset`)
 - **Consumer** UPSERTs pushport columns only (`_pushport` fields, `source_darwin`)
-- **`source_timetable`/`source_darwin`** flags track which source owns each row
-- **`timetable_updated_at`** timestamp enables stale CP detection (Phase 4 + Phase 5 cleanup)
-- **`journeys.source_darwin`** now set by all three handlers: schedule, trainStatus, and createDarwinStub
+- **All consumer INSERTs** use ON CONFLICT DO UPDATE (BUG-029 fix: VSTP path now safe)
+- **`weta_pushport`/`wetd_pushport`** store working estimated times from `arr.wet`/`dep.wet`
+- **`normaliseTime()`** ensures all pushport times are HH:MM (char(5))
 
 ### Files Changed This Session
-- `packages/api/src/db/schema.ts` — Added `timetableUpdatedAt` column
-- `packages/api/src/db/seed-timetable.ts` — Full rewrite to UPSERT approach + Phase 4/5 fixes
-- `packages/consumer/src/handlers/schedule.ts` — Full rewrite to source-separated approach
-- `packages/consumer/src/handlers/trainStatus.ts` — Added journey source_darwin update (BUG-028)
-- `packages/consumer/src/replay.ts` — New Darwin event replay script
-- `docker-compose.yml` — Added replay service definition
-- `packages/api/drizzle/meta/0001_add_timetable_updated_at.sql` — Migration
+- `packages/api/src/db/schema.ts` — Added `wetaPushport`/`wetdPushport` columns
+- `packages/shared/src/types/darwin.ts` — Added `weta`/`wetd` to `DarwinTSLocation`
+- `packages/consumer/src/parser.ts` — Added `normaliseTime()`, extract `arr.wet`/`dep.wet`/`pass.wet`
+- `packages/consumer/src/handlers/trainStatus.ts` — Store wet times, PP stop matching
+- `packages/consumer/src/handlers/schedule.ts` — VSTP path: ON CONFLICT instead of plain INSERT
+- `packages/api/drizzle/meta/0002_add_wet_columns.sql` — Migration
 - `packages/api/drizzle/meta/_journal.json` — Updated journal
-- `memory-bank/bugsTracker.md` — Added BUG-027, BUG-028, BUG-029
+- `memory-bank/bugsTracker.md` — Updated BUG-029, Bug 29
 - `memory-bank/progress.md` — Updated progress
 
 ### Next Steps (Priority Order)
-1. **Wait for replay to complete** then verify data
-2. **BUG-023 Remaining**: Add TRX/ZZY to stations seed; board query fallback for NULL CRS
-3. **BUG-021**: Mobile UI fix (ServiceRow, DepartureBoard responsive layout)
-4. **P1-P3 Message Handlers**: OW (P1), Association (P2), trackingID (P3)
+1. **Board query: Multi-level COALESCE** with wet times as fallback
+2. **Frontend: Cascading display logic** using wet/eta/etd/ptd priorities
+3. **BUG-023 Remaining**: Add TRX/ZZY to stations seed; board query fallback for NULL CRS
+4. **BUG-021**: Mobile UI fix

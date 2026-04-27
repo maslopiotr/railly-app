@@ -48,23 +48,42 @@
 - ✅ BUG-024: VSTP PP-only services — OPOR/OPIP/OPDT handling
 - ✅ BUG-026: Seed deletes Darwin-only CPs — superseded by BUG-027
 
+## Completed (2026-04-27)
+
+### BUG-029: Duplicate key violation on re-seed (final fix) ✅
+- ✅ Root cause: Schedule handler VSTP path did DELETE-all + plain INSERT without ON CONFLICT
+- ✅ Fixed: Changed VSTP path to selective-DELETE + UPSERT with ON CONFLICT DO UPDATE
+- ✅ Re-seed completed successfully, zero duplicate key errors
+
+### Bug 29: Time normalisation + working estimated times ✅
+- ✅ Added `normaliseTime()` in parser to truncate `HH:MM:SS` → `HH:MM` for all pushport time fields
+- ✅ Added `weta_pushport`/`wetd_pushport` columns (char(5)) to store working estimated times
+- ✅ Updated parser to extract `arr.wet`/`dep.wet`/`pass.wet` from Darwin TS messages
+- ✅ Updated TS handler to store wet times and process PP stops (matching by wtp_timetable)
+- ✅ Updated Darwin types to include `weta`/`wetd` on `DarwinTSLocation`
+- ✅ Database migration applied, 3,278 CPs already populated with wet data from live feed
+- ✅ Consumer processing live data without errors
+
+### PP Stop Matching Fix ✅
+- ✅ `matchLocationsToSequences` now routes `isPass=true` locations to PP DB rows instead of skipping
+- ✅ PP locations use `wtp` for matching instead of `wtd`/`ptd`
+- ✅ Added `wtp_timetable` to existing rows query for PP matching
+
 ## Next Session Plan
 
-### Priority 1: BUG-023 Remaining — Board Query Fallback
+### Priority 1: Board Query — Multi-level COALESCE with wet times
+1. Update board query to use `COALESCE(ptd_timetable, wetd_pushport, etd_pushport)` for departure times
+2. Use `weta_pushport` as fallback when `eta_pushport` is missing
+3. This will fix services that show missing departure times when `ptd` is absent but `wet` is present
+
+### Priority 2: BUG-023 Remaining — Board Query Fallback
 1. Add TRX (Troon Harbour) and ZZY (Paddington Low Level) to `seed-stations.ts`
 2. Modify board query: when `crs` is NULL, use `tpl` + `location_ref.name` for display
-3. Test that all services appear on boards regardless of CRS availability
 
-### Priority 2: BUG-021 — Mobile UI Fix
+### Priority 3: BUG-021 — Mobile UI Fix
 1. Audit current `ServiceRow.tsx` and `DepartureBoard.tsx` at 320px, 375px, 414px
 2. Reduce time column width, add text truncation
 3. Move operator below destination on mobile
-4. Ensure status column wraps
-
-### Priority 3: P1-P3 Message Handlers
-1. OW (Station Messages) — P1
-2. Association — P2
-3. trackingID — P3
 
 ## Known Issues Summary
 

@@ -381,12 +381,24 @@ export async function handleSchedule(
         }
       } else {
         // ── VSTP PATH (no timetable source) ─────────────────────────────────
-        // We own all the data, so DELETE + INSERT is safe.
-        // No seed data to conflict with — this service isn't in PPTimetable.
+        // Use UPSERT instead of DELETE + INSERT to avoid duplicate key violations
+        // when the seed process or a concurrent TS message has already inserted
+        // rows for this (journey_rid, sequence) — BUG-029.
+        // First delete CPs that are no longer in the schedule (stale),
+        // then upsert current CPs.
 
-        await tx`
-          DELETE FROM calling_points WHERE journey_rid = ${rid}
-        `;
+        // Delete stale CPs that aren't in the new schedule
+        const cpSequences = cps.map((cp) => cp.sequence);
+        if (cpSequences.length > 0) {
+          await tx`
+            DELETE FROM calling_points
+            WHERE journey_rid = ${rid} AND sequence != ALL(${cpSequences})
+          `;
+        } else {
+          await tx`
+            DELETE FROM calling_points WHERE journey_rid = ${rid}
+          `;
+        }
 
         for (const cp of cps) {
           await tx`
@@ -405,6 +417,21 @@ export async function handleSchedule(
               ${cp.isCancelled}, ${cp.cancelReason}, ${cp.dayOffset},
               false, true
             )
+            ON CONFLICT (journey_rid, sequence) DO UPDATE SET
+              ssd = EXCLUDED.ssd,
+              stop_type = EXCLUDED.stop_type,
+              tpl = EXCLUDED.tpl,
+              pta_timetable = EXCLUDED.pta_timetable,
+              ptd_timetable = EXCLUDED.ptd_timetable,
+              wta_timetable = EXCLUDED.wta_timetable,
+              wtd_timetable = EXCLUDED.wtd_timetable,
+              wtp_timetable = EXCLUDED.wtp_timetable,
+              plat_timetable = EXCLUDED.plat_timetable,
+              act = EXCLUDED.act,
+              is_cancelled = EXCLUDED.is_cancelled,
+              cancel_reason = EXCLUDED.cancel_reason,
+              day_offset = EXCLUDED.day_offset,
+              source_darwin = true
           `;
         }
       }

@@ -214,14 +214,26 @@ export function parseDarwinMessage(raw: Buffer | string | null): DarwinMessage |
             //   pass: { et: "17:02", at: "17:05", src: "TD" }
             // These must be flattened to eta/etd/ata/atd for the handler.
 
+            // Normalise time to HH:MM — Darwin sends HH:MM for public times,
+            // but we truncate HH:MM:SS to HH:MM for consistency and storage
+            const normaliseTime = (t: string | undefined): string | undefined => {
+              if (!t) return undefined;
+              const trimmed = t.trim();
+              if (trimmed.length >= 5) return trimmed.slice(0, 5); // "HH:MM:SS" → "HH:MM"
+              return trimmed || undefined;
+            };
+
             // Extract arrival estimates/actuals from arr
             if (l.arr && typeof l.arr === "object") {
               const arr = l.arr as Record<string, unknown>;
               if (arr.et && typeof arr.et === "string" && arr.et.trim()) {
-                l.eta = arr.et.trim();
+                l.eta = normaliseTime(arr.et);
               }
               if (arr.at && typeof arr.at === "string" && arr.at.trim()) {
-                l.ata = arr.at.trim();
+                l.ata = normaliseTime(arr.at);
+              }
+              if (arr.wet && typeof arr.wet === "string" && arr.wet.trim()) {
+                l.weta = normaliseTime(arr.wet);
               }
             }
 
@@ -229,10 +241,13 @@ export function parseDarwinMessage(raw: Buffer | string | null): DarwinMessage |
             if (l.dep && typeof l.dep === "object") {
               const dep = l.dep as Record<string, unknown>;
               if (dep.et && typeof dep.et === "string" && dep.et.trim()) {
-                l.etd = dep.et.trim();
+                l.etd = normaliseTime(dep.et);
               }
               if (dep.at && typeof dep.at === "string" && dep.at.trim()) {
-                l.atd = dep.at.trim();
+                l.atd = normaliseTime(dep.at);
+              }
+              if (dep.wet && typeof dep.wet === "string" && dep.wet.trim()) {
+                l.wetd = normaliseTime(dep.wet);
               }
             }
 
@@ -241,10 +256,13 @@ export function parseDarwinMessage(raw: Buffer | string | null): DarwinMessage |
             if (l.pass && typeof l.pass === "object") {
               const pass = l.pass as Record<string, unknown>;
               if (pass.et && typeof pass.et === "string" && pass.et.trim()) {
-                if (!l.etd) l.etd = pass.et.trim();
+                if (!l.etd) l.etd = normaliseTime(pass.et);
               }
               if (pass.at && typeof pass.at === "string" && pass.at.trim()) {
-                if (!l.atd) l.atd = pass.at.trim();
+                if (!l.atd) l.atd = normaliseTime(pass.at);
+              }
+              if (pass.wet && typeof pass.wet === "string" && pass.wet.trim()) {
+                if (!l.wetd) l.wetd = normaliseTime(pass.wet);
               }
             }
 

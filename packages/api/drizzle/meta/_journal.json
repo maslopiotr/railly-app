@@ -15,6 +15,13 @@
       "when": 1777073200000,
       "tag": "0001_add_timetable_updated_at",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777160147000,
+      "tag": "0002_add_wet_columns",
+      "breakpoints": true
     }
   ]
 }

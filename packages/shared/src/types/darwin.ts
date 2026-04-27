@@ -150,6 +150,8 @@ export interface DarwinTSLocation {
   // ── Flattened time fields (populated by parser from nested + flat et) ──
   ata?: string; // Actual time arrived (from arr.at)
   atd?: string; // Actual time departed (from dep.at or pass.at)
+  weta?: string; // Working estimated time of arrival (from arr.wet, normalised to HH:MM)
+  wetd?: string; // Working estimated time of departure (from dep.wet or pass.wet, normalised to HH:MM)
   et?: string; // Estimated time (flat, arrival or departure)
   eta?: string; // Estimated time of arrival (from arr.et)
   etd?: string; // Estimated time of departure (from dep.et or pass.et)

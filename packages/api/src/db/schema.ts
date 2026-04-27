@@ -103,6 +103,8 @@ export const callingPoints = pgTable(
     etdPushport: char("etd_pushport", { length: 5 }), // Estimated departure HH:MM
     ataPushport: char("ata_pushport", { length: 5 }), // Actual arrival HH:MM
     atdPushport: char("atd_pushport", { length: 5 }), // Actual departure HH:MM
+    wetaPushport: char("weta_pushport", { length: 5 }), // Working estimated arrival HH:MM (from arr.wet)
+    wetdPushport: char("wetd_pushport", { length: 5 }), // Working estimated departure HH:MM (from dep.wet)
     platPushport: varchar("plat_pushport", { length: 5 }), // Live platform from Darwin
     platSource: varchar("plat_source", { length: 10 }), // confirmed/altered/suppressed/etc (derived)
     platConfirmed: boolean("plat_confirmed").default(false).notNull(), // Platform confirmed by train describer (Darwin conf)
