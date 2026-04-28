@@ -257,7 +257,7 @@ router.get("/:rid", async (req, res, next) => {
     const points = await db
       .select({
         journeyRid: callingPoints.journeyRid,
-        sequence: callingPoints.sequence,
+        sortTime: callingPoints.sortTime,
         stopType: callingPoints.stopType,
         tpl: callingPoints.tpl,
         crs: callingPoints.crs,
@@ -271,7 +271,7 @@ router.get("/:rid", async (req, res, next) => {
       })
       .from(callingPoints)
       .where(eq(callingPoints.journeyRid, rid))
-      .orderBy(asc(callingPoints.sequence));
+      .orderBy(asc(callingPoints.dayOffset), asc(callingPoints.sortTime));
 
     // Get location names for calling points
     const tpls = points.map((p) => p.tpl);
@@ -301,7 +301,7 @@ router.get("/:rid", async (req, res, next) => {
     const callingPointsResponse = points.map((p) => {
       const loc = locNames.get(p.tpl);
       return {
-        sequence: p.sequence,
+        sortTime: p.sortTime,
         stopType: p.stopType as "OR" | "DT" | "IP" | "PP" | "OPOR" | "OPIP" | "OPDT",
         tpl: p.tpl,
         crs: p.crs || loc?.crs || null,

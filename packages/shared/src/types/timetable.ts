@@ -4,7 +4,7 @@
 
 /** A single calling point within a journey (origin, intermediate stop, destination, etc.) */
 export interface TimetableCallingPoint {
-  sequence: number;
+  sortTime: string; // Natural key: timetable-derived time (HH:MM)
   stopType: "OR" | "DT" | "IP" | "PP" | "OPOR" | "OPIP" | "OPDT";
   tpl: string;
   crs: string | null;

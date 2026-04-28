@@ -23,36 +23,6 @@ Every bug uses these fields. If a field is unknown, it's marked `?` rather than 
 
 ---
 
-### BUG-001: Seed reprocesses all files daily — high RAM and slow
-- **Severity:** Critical
-- **Type:** Bug
-- **Status:** Fixed (2026-04-26)
-- **Context:** Seed now uses `--incremental` flag with mtime checking + 03:00-05:00 polling daemon with state tracking.
-
-### BUG-002: Duplicate calling stations on services
-- **Severity:** High
-- **Type:** Bug
-- **Status:** Fixed (2026-04-26)
-- **Context:** Removed "missing locations" insert. Fixed 1,012,441 phantom CP rows. Only 10 true duplicates remain (legitimate circular routes).
-
-### BUG-003: Calling points show departure time from previous station
-- **Severity:** Critical
-- **Type:** Data-Integrity
-- **Status:** Fixed (2026-04-26)
-- **Context:** Schedule handler sorts locations chronologically. TS handler uses time-based matching for circular trips.
-
-### BUG-004: Darwin TS pta/ptd overlap with PPTimetable
-- **Severity:** Medium
-- **Type:** Design-Question
-- **Status:** Fixed (2026-04-26)
-- **Context:** Source-separated schema: `_timetable` columns written by seed, `_pushport` columns by consumer.
-
-### BUG-005: Schedule deduplication race condition
-- **Severity:** High
-- **Type:** Data-Integrity
-- **Status:** Fixed (2026-04-26)
-- **Context:** `generated_at` check moved inside transaction with `FOR UPDATE` lock.
-
 ### BUG-006: TS handler skips unknown TIPLOCs — noisy warnings
 - **Severity:** Medium
 - **Type:** Bug
@@ -413,3 +383,10 @@ How do we process pta, ptd, ata, atd, eta, etd etc? are these always in HH:MM fo
 
 ### Bug 32
 stations/BHI/202604276772376?name=BIRMINGHAM%2520INTERNATIONAL when viewed from birminghan international at 20:39 is showing up as "Approaching Birmingham International" but it is scheduled to arrive 21:41. This is misleading.
+
+### Bug 33
+202604278706885 is showing as on time when viewed from Milton Keynes departure board before it actually departed, but it has been delayed departure.
+
+### Bug 34
+
+For timetable seed, we need to find a way to track hash of the processed files, so even if the files were uploaded within the last 12hrs, they won't get processed twice.

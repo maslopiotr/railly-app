@@ -260,7 +260,7 @@ function incrementType(type: string): void {
 
 // ── Deactivated handler ───────────────────────────────────────────────────────
 
-async function handleDeactivated(rid: string): Promise<void> {
+export async function handleDeactivated(rid: string): Promise<void> {
   await sql.begin(async (tx) => {
     // deactivated means the service is removed from the active Darwin set.
     // This happens when a service completes its journey OR is cancelled.

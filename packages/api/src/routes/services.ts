@@ -56,7 +56,6 @@ router.get("/:serviceId", async (req, res, next) => {
     // ── Query 2: Get calling points with real-time data ─────────────────
     const points = await db
       .select({
-        sequence: callingPoints.sequence,
         stopType: callingPoints.stopType,
         tpl: callingPoints.tpl,
         crs: callingPoints.crs,
@@ -87,7 +86,7 @@ router.get("/:serviceId", async (req, res, next) => {
       .from(callingPoints)
       .leftJoin(locationRef, eq(callingPoints.tpl, locationRef.tpl))
       .where(eq(callingPoints.journeyRid, rid))
-      .orderBy(asc(callingPoints.sequence));
+      .orderBy(asc(callingPoints.dayOffset), asc(callingPoints.sortTime));
 
     // ── Query 3: Get TOC name ─────────────────────────────────────────
     let tocName: string | null = null;
@@ -132,7 +131,6 @@ router.get("/:serviceId", async (req, res, next) => {
         const displayEtd = isCpCancelled ? "Cancelled" : (cp.etdPushport ?? cp.ptdTimetable ?? null);
 
         return {
-          sequence: cp.sequence,
           stopType: cp.stopType,
           tpl: cp.tpl,
           crs: cp.crs ?? null,

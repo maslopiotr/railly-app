@@ -60,7 +60,7 @@ interface ParsedJourney {
 }
 
 interface ParsedCallingPoint {
-  sequence: number;
+  sortTime: string; // Natural key: timetable-derived time (HH:MM), stable for unique constraint
   stopType: string;
   tpl: string;
   plat: string | null;
@@ -172,7 +172,6 @@ function parseTimetableXml(
 
   let currentJourney: ParsedJourney | null = null;
   let currentPoints: ParsedCallingPoint[] = [];
-  let pointSeq = 0;
   let currentPoint: Partial<ParsedCallingPoint> | null = null;
 
   parser.onopentag = (node: sax.Tag) => {
@@ -191,7 +190,6 @@ function parseTimetableXml(
         isPassenger: attrs.isPassengerSvc !== "false",
       };
       currentPoints = [];
-      pointSeq = 0;
     } else if (
       name === "OR" ||
       name === "DT" ||
@@ -203,7 +201,6 @@ function parseTimetableXml(
     ) {
       const tpl = (attrs.tpl || attrs.ftl || "").trim();
       currentPoint = {
-        sequence: pointSeq,
         stopType: name,
         tpl,
         plat: attrs.plat || null,
@@ -214,7 +211,6 @@ function parseTimetableXml(
         wtp: attrs.wtp || null,
         act: attrs.act ? attrs.act.trim() : null,
       };
-      pointSeq++;
     }
   };
 
@@ -316,6 +312,26 @@ function computeDayOffsets(points: ParsedCallingPoint[]): void {
       prevMinutes = currentMinutes;
     }
   }
+}
+
+/**
+ * Compute sort_time from timetable times — the natural key for ordering.
+ * Uses timetable-only times (never pushport) because these are stable
+ * and don't change with real-time updates.
+ * Priority: wtd > ptd > wtp > wta > pta > '00:00' (fallback)
+ * Truncates HH:MM:SS to HH:MM for consistency (working times are VARCHAR(8)).
+ */
+function computeSortTime(pt: {
+  wtd: string | null;
+  ptd: string | null;
+  wtp: string | null;
+  wta: string | null;
+  pta: string | null;
+}): string {
+  const raw = pt.wtd || pt.ptd || pt.wtp || pt.wta || pt.pta;
+  if (!raw) return "00:00";
+  // Truncate HH:MM:SS to HH:MM
+  return raw.length > 5 ? raw.substring(0, 5) : raw;
 }
 
 // ── Helper: read and decompress gzipped XML ───────────────────────────────────
@@ -538,7 +554,7 @@ async function seed() {
         }
 
         // ── Step 2: Upsert calling points (timetable columns only) ──────────
-        // ON CONFLICT (journey_rid, sequence): update timetable columns only.
+        // ON CONFLICT (journey_rid, tpl, day_offset, sort_time, stop_type): update timetable columns only.
         // Pushport columns are NEVER overwritten by the seed.
         // This eliminates the DELETE + re-insert + re-apply cycle that caused
         // duplicate key violations and data loss of Darwin-only CPs (BUG-027).
@@ -552,7 +568,7 @@ async function seed() {
 
             pointRows.push({
               journeyRid: rid,
-              sequence: pt.sequence,
+              sortTime: computeSortTime(pt),
               ssd: ssd,
               stopType: pt.stopType,
               tpl: pt.tpl,
@@ -581,7 +597,7 @@ async function seed() {
             .insert(callingPoints)
             .values(insertBatch)
             .onConflictDoUpdate({
-              target: [callingPoints.journeyRid, callingPoints.sequence],
+              target: [callingPoints.journeyRid, callingPoints.tpl, callingPoints.dayOffset, callingPoints.sortTime, callingPoints.stopType],
               set: {
                 // Timetable columns — seed is the authority
                 ssd: sql`EXCLUDED.ssd`,
@@ -600,6 +616,7 @@ async function seed() {
                 wtpTimetable: sql`EXCLUDED.wtp_timetable`,
                 act: sql`EXCLUDED.act`,
                 dayOffset: sql`EXCLUDED.day_offset`,
+                sortTime: sql`EXCLUDED.sort_time`,
                 timetableUpdatedAt: sql`NOW()`,
                 // Pushport columns: NOT listed — preserved from Darwin
               },

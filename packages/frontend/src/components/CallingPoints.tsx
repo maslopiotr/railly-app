@@ -9,7 +9,7 @@
  * - Prominent current train position indicator
  *
  * Midnight crossover: Times are normalized to be monotonically increasing
- * based on the calling point sequence.
+ * based on the calling point sort_time.
  */
 
 import type { HybridCallingPoint } from "@railly-app/shared";

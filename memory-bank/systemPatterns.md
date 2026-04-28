@@ -24,7 +24,7 @@ Darwin Push Port Kafka → Consumer → PostgreSQL (real-time overlay)
 2. Phase 1: Parse reference files (`_ref_v{n}.xml.gz`) for TIPLOC→CRS mapping + TOC names
 3. Phase 2: Parse timetable files (`_v{n}.xml.gz`) for journeys + calling points
 4. Upsert to PostgreSQL with `ON CONFLICT (rid) DO UPDATE` for journeys
-5. For calling points: **UPSERT-only approach** — `ON CONFLICT (journey_rid, sequence) DO UPDATE`:
+5. For calling points: **UPSERT-only approach** — `ON CONFLICT (journey_rid, tpl, day_offset, sort_time, stop_type) DO UPDATE`:
    - Seed writes ONLY `_timetable` columns (never touches `_pushport` columns)
    - On conflict: update timetable columns, set `source_timetable=true`, `timetable_updated_at=NOW()`
    - CRS/name: `COALESCE(EXCLUDED.crs, calling_points.crs)` — don't overwrite Darwin-filled values with NULL
@@ -74,7 +74,8 @@ isPassenger BOOLEAN DEFAULT TRUE
 ```sql
 id SERIAL PRIMARY KEY,
 journey_rid VARCHAR(20) REFERENCES journeys(rid),
-sequence INTEGER NOT NULL,
+sequence INTEGER NOT NULL,           -- Deprecated: being replaced by natural key (Phase 5 drops this)
+sort_time CHAR(5) NOT NULL,          -- Natural key ordering: timetable-derived time (HH:MM)
 ssd CHAR(10),                       -- Denormalised from journeys for direct querying
 stop_type VARCHAR(5) NOT NULL,     -- OR, DT, IP, PP, OPOR, OPIP, OPDT
 tpl VARCHAR(10) NOT NULL,          -- TIPLOC
@@ -106,7 +107,7 @@ detach_front BOOLEAN DEFAULT FALSE, -- Front coaches detach at this stop
 ts_generated_at TIMESTAMP WITH TIME ZONE,  -- TS message timestamp for per-CP dedup
 updated_at TIMESTAMP WITH TIME ZONE,       -- Last Darwin message
 timetable_updated_at TIMESTAMP WITH TIME ZONE  -- Last PPTimetable seed update (stale detection)
--- UNIQUE(journey_rid, sequence)
+-- UNIQUE(journey_rid, tpl, day_offset, sort_time, stop_type)  -- Natural key (replaces sequence)
 ```
 
 ### Service Real-Time State
@@ -167,16 +168,21 @@ await sql.begin(async (tx) => {
 // Each calling point checks its own ts_generated_at before overwriting
 ```
 
-### Calling Point Sequence Ordering
-Darwin schedule `locations` array orders IPs first, then PPs — NOT chronologically. PPTimetable XML uses chronological order. The schedule handler MUST sort locations by time (`wtd || ptd || wtp || wta || pta`) before assigning sequence numbers. This ensures alignment with PPTimetable seed data and correct TS matching.
+### Calling Point Ordering (Natural Key)
+Calling points are ordered by `(day_offset, sort_time)` — `sort_time` is derived from timetable times: `COALESCE(wtd, ptd, wtp, wta, pta, '00:00')`, truncated to HH:MM. The natural key `(journey_rid, tpl, day_offset, sort_time, stop_type)` uniquely identifies each CP without artificial sequence numbers. This eliminates:
+- Data loss when Darwin adds stops not in the timetable (no renumbering needed)
+- Race conditions from sequence renumbering
+- PP+IP ambiguity (different `stop_type` disambiguates)
+
+Darwin schedule `locations` array orders IPs first, then PPs — NOT chronologically. The schedule handler MUST sort locations by time before inserting.
 
 **Source-separated UPSERT approach (BUG-027 fix)**:
-- **Timetable-sourced services** (`source_timetable=true`): Schedule handler matches Darwin locations to existing CPs by TIPLOC and UPDATEs pushport columns only. Never deletes or re-inserts. New Darwin-only locations get INSERTed with `source_timetable=false`. This eliminates the duplicate key violation that occurred when the old DELETE+re-insert approach reassigned sequence numbers.
-- **VSTP services** (`source_timetable=false`): DELETE + INSERT is safe since we own all the data and there's no seed conflict.
-- **Seed**: UPSERT-only — `ON CONFLICT (journey_rid, sequence) DO UPDATE` writes only `_timetable` columns. Never deletes rows. Uses `timetable_updated_at` for stale CP detection.
+- **Timetable-sourced services** (`source_timetable=true`): Schedule handler matches Darwin locations to existing CPs by TIPLOC and UPDATEs pushport columns only. Never deletes or re-inserts. New Darwin-only locations get INSERTed with `source_timetable=false` using natural key ON CONFLICT. This eliminates the duplicate key violation that occurred when the old DELETE+re-insert approach reassigned sequence numbers.
+- **VSTP services** (`source_timetable=false`): DELETE + INSERT is safe since we own all the data and there's no seed conflict. Uses natural key ON CONFLICT for safety.
+- **Seed**: UPSERT-only — `ON CONFLICT (journey_rid, tpl, day_offset, sort_time, stop_type) DO UPDATE` writes only `_timetable` columns. Never deletes rows. Uses `timetable_updated_at` for stale CP detection.
 
 ### TS Location Matching
-TS messages don't include sequence numbers. Match by TIPLOC on non-PP stops, with time-based disambiguation for circular trips (same TIPLOC visited twice). Compare TS location's planned time (`wtd || ptd || wta || pta`) against DB timetable time to find the closest match within 60 minutes.
+TS messages don't include sequence numbers. Match by `(TIPLOC, time)` using `matchLocationsToCps()` which returns a Map of TS location index → CP `id` (primary key). Non-PP locations match against non-PP DB rows; PP locations match against PP DB rows. For circular trips (same TIPLOC visited twice), the planned time disambiguates which visit this TS location refers to. Unmatched locations are silently skipped (Darwin-only route waypoints). New CPs for VSTP services are INSERTed using the natural key `(journey_rid, tpl, day_offset, sort_time, stop_type)`.
 
 ### Midnight-Safe Delay Calculation
 ```ts

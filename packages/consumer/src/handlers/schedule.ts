@@ -20,7 +20,6 @@ import { sql } from "../db.js";
  */
 interface ExistingCpRow {
   id: number;
-  sequence: number;
   tpl: string;
   sourceTimetable: boolean;
   sourceDarwin: boolean;
@@ -70,6 +69,25 @@ function parseTimeToMinutes(time: string | null | undefined): number {
   const m = time.match(/^(\d{2}):(\d{2})(?::(\d{2}))?$/);
   if (!m) return -1;
   return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+}
+
+/**
+ * Compute sort_time from timetable times — the natural key for ordering.
+ * Uses timetable-only times (never pushport) because these are stable
+ * and don't change with real-time updates.
+ * Priority: wtd > ptd > wtp > wta > pta > '00:00' (fallback)
+ * Truncates HH:MM:SS to HH:MM for consistency.
+ */
+function computeSortTime(pt: {
+  wtd: string | null | undefined;
+  ptd: string | null | undefined;
+  wtp: string | null | undefined;
+  wta: string | null | undefined;
+  pta: string | null | undefined;
+}): string {
+  const raw = pt.wtd || pt.ptd || pt.wtp || pt.wta || pt.pta;
+  if (!raw) return "00:00";
+  return raw.length > 5 ? raw.substring(0, 5) : raw;
 }
 
 /**
@@ -131,7 +149,7 @@ export async function handleSchedule(
   let dayOffset = 0;
   let prevMinutes = -1;
   const cps = sortedLocations
-    .map((loc: DarwinScheduleLocation, idx: number) => {
+    .map((loc: DarwinScheduleLocation) => {
       const tpl = loc.tpl?.trim();
       if (!tpl) {
         console.warn(`   ⚠️ Schedule ${rid}: location missing tpl — skipping`);
@@ -149,7 +167,6 @@ export async function handleSchedule(
 
       return {
         rid,
-        sequence: idx,
         ssd,
         stopType: loc.stopType || "IP",
         tpl,
@@ -230,7 +247,7 @@ export async function handleSchedule(
       // ── Fetch existing CPs for this RID ──
       const existingCpRows = await tx`
         SELECT
-          id, sequence, tpl, source_timetable, source_darwin,
+          id, tpl, source_timetable, source_darwin,
           eta_pushport, etd_pushport, ata_pushport, atd_pushport,
           plat_pushport, plat_source,
           delay_minutes, delay_reason,
@@ -251,7 +268,6 @@ export async function handleSchedule(
       // Parse existing CPs
       const existingCps: ExistingCpRow[] = existingCpRows.map((row) => ({
         id: Number(row.id),
-        sequence: Number(row.sequence),
         tpl: String(row.tpl || ""),
         sourceTimetable: Boolean(row.source_timetable),
         sourceDarwin: Boolean(row.source_darwin),
@@ -326,11 +342,10 @@ export async function handleSchedule(
             `;
           } else {
             // ── No match: INSERT new Darwin-only CP ──
-            // Assign sequence that doesn't conflict with existing CPs
-            // Use a high sequence number to avoid conflicts with timetable sequences
+            const sortTime = computeSortTime(cp);
             await tx`
               INSERT INTO calling_points (
-                journey_rid, sequence, ssd, stop_type, tpl,
+                journey_rid, sort_time, ssd, stop_type, tpl,
                 crs, name,
                 pta_timetable, ptd_timetable,
                 wta_timetable, wtd_timetable, wtp_timetable,
@@ -338,7 +353,7 @@ export async function handleSchedule(
                 is_cancelled, cancel_reason, day_offset,
                 source_timetable, source_darwin
               ) VALUES (
-                ${cp.rid}, ${cp.sequence}, ${cp.ssd}, ${cp.stopType}, ${cp.tpl},
+                ${cp.rid}, ${sortTime}, ${cp.ssd}, ${cp.stopType}, ${cp.tpl},
                 NULL, NULL,
                 ${cp.pta}::varchar(5), ${cp.ptd}::varchar(5),
                 ${cp.wta}::varchar(8), ${cp.wtd}::varchar(8), ${cp.wtp}::varchar(8),
@@ -346,9 +361,10 @@ export async function handleSchedule(
                 ${cp.isCancelled}, ${cp.cancelReason}, ${cp.dayOffset},
                 false, true
               )
-              ON CONFLICT (journey_rid, sequence) DO UPDATE SET
+              ON CONFLICT (journey_rid, tpl, day_offset, sort_time, stop_type) DO UPDATE SET
                 stop_type = EXCLUDED.stop_type,
                 tpl = EXCLUDED.tpl,
+                sort_time = EXCLUDED.sort_time,
                 pta_timetable = COALESCE(EXCLUDED.pta_timetable, calling_points.pta_timetable),
                 ptd_timetable = COALESCE(EXCLUDED.ptd_timetable, calling_points.ptd_timetable),
                 wta_timetable = COALESCE(EXCLUDED.wta_timetable, calling_points.wta_timetable),
@@ -381,46 +397,38 @@ export async function handleSchedule(
         }
       } else {
         // ── VSTP PATH (no timetable source) ─────────────────────────────────
-        // Use UPSERT instead of DELETE + INSERT to avoid duplicate key violations
-        // when the seed process or a concurrent TS message has already inserted
-        // rows for this (journey_rid, sequence) — BUG-029.
-        // First delete CPs that are no longer in the schedule (stale),
-        // then upsert current CPs.
-
-        // Delete stale CPs that aren't in the new schedule
-        const cpSequences = cps.map((cp) => cp.sequence);
-        if (cpSequences.length > 0) {
-          await tx`
-            DELETE FROM calling_points
-            WHERE journey_rid = ${rid} AND sequence != ALL(${cpSequences})
-          `;
-        } else {
-          await tx`
-            DELETE FROM calling_points WHERE journey_rid = ${rid}
-          `;
-        }
+        // For VSTP services, we own all data. Delete existing CPs and re-insert
+        // with the natural key. This is safe because:
+        // - VSTP has no timetable source — no pushport columns to preserve
+        // - A concurrent TS may have added CPs — ON CONFLICT handles that
+        // Delete all existing CPs first, then insert fresh.
+        await tx`
+          DELETE FROM calling_points WHERE journey_rid = ${rid}
+        `;
 
         for (const cp of cps) {
+          const sortTime = computeSortTime(cp);
           await tx`
             INSERT INTO calling_points (
-              journey_rid, sequence, ssd, stop_type, tpl,
+              journey_rid, sort_time, ssd, stop_type, tpl,
               pta_timetable, ptd_timetable,
               wta_timetable, wtd_timetable, wtp_timetable,
               plat_timetable, act,
               is_cancelled, cancel_reason, day_offset,
               source_timetable, source_darwin
             ) VALUES (
-              ${cp.rid}, ${cp.sequence}, ${cp.ssd}, ${cp.stopType}, ${cp.tpl},
+              ${cp.rid}, ${sortTime}, ${cp.ssd}, ${cp.stopType}, ${cp.tpl},
               ${cp.pta}::varchar(5), ${cp.ptd}::varchar(5),
               ${cp.wta}::varchar(8), ${cp.wtd}::varchar(8), ${cp.wtp}::varchar(8),
               ${cp.plat}::varchar(5), ${cp.act},
               ${cp.isCancelled}, ${cp.cancelReason}, ${cp.dayOffset},
               false, true
             )
-            ON CONFLICT (journey_rid, sequence) DO UPDATE SET
+            ON CONFLICT (journey_rid, tpl, day_offset, sort_time, stop_type) DO UPDATE SET
               ssd = EXCLUDED.ssd,
               stop_type = EXCLUDED.stop_type,
               tpl = EXCLUDED.tpl,
+              sort_time = EXCLUDED.sort_time,
               pta_timetable = EXCLUDED.pta_timetable,
               ptd_timetable = EXCLUDED.ptd_timetable,
               wta_timetable = EXCLUDED.wta_timetable,

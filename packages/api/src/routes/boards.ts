@@ -319,7 +319,6 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
     const scheduledResults = await db
       .select({
         rid: callingPoints.journeyRid,
-        sequence: callingPoints.sequence,
         stopType: callingPoints.stopType,
         tpl: callingPoints.tpl,
         crs: callingPoints.crs,
@@ -444,7 +443,6 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
     const allCallingPoints = await db
       .select({
         journeyRid: callingPoints.journeyRid,
-        sequence: callingPoints.sequence,
         stopType: callingPoints.stopType,
         tpl: callingPoints.tpl,
         crs: callingPoints.crs,
@@ -478,7 +476,7 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       .from(callingPoints)
       .leftJoin(locationRef, eq(callingPoints.tpl, locationRef.tpl))
       .where(inArray(callingPoints.journeyRid, uniqueRids))
-      .orderBy(asc(callingPoints.sequence));
+        .orderBy(asc(callingPoints.dayOffset), asc(callingPoints.sortTime));
 
     const callingPatternMap = new Map<string, typeof allCallingPoints>();
     for (const cp of allCallingPoints) {

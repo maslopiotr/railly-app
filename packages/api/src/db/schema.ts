@@ -81,8 +81,8 @@ export const callingPoints = pgTable(
     journeyRid: varchar("journey_rid", { length: 20 })
       .notNull()
       .references(() => journeys.rid, { onDelete: "cascade" }),
-    sequence: integer("sequence").notNull(), // Order within journey
-    ssd: char("ssd", { length: 10 }), // Denormalized from journeys for direct querying
+    sortTime: char("sort_time", { length: 5 }).notNull(), // Natural key ordering: timetable-derived time (HH:MM)
+    ssd: char("ssd", { length: 10 }), // Denormalised from journeys for direct querying
     stopType: varchar("stop_type", { length: 5 }).notNull(), // OR, DT, IP, PP, OPOR, OPIP, OPDT
     tpl: varchar("tpl", { length: 10 }).notNull(), // TIPLOC code
     crs: char("crs", { length: 3 }), // CRS code (from location_ref lookup)
@@ -125,9 +125,14 @@ export const callingPoints = pgTable(
     index("idx_calling_points_journey_rid").on(table.journeyRid),
     index("idx_calling_points_crs").on(table.crs),
     index("idx_calling_points_tpl").on(table.tpl),
-    uniqueIndex("idx_calling_points_journey_rid_sequence").on(
+    // Natural key unique index — replaces old sequence-based index (which was dropped)
+    // Includes stop_type to handle PP+IP at same TIPLOC/time (e.g., WOKING vs WOKINGJ)
+    uniqueIndex("idx_calling_points_natural").on(
       table.journeyRid,
-      table.sequence,
+      table.tpl,
+      table.dayOffset,
+      table.sortTime,
+      table.stopType,
     ),
     // Composite indexes for board query patterns
     // Board query uses (crs, ssd) — composite index replaces separate crs + ssd indexes for this pattern

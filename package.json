@@ -28,7 +28,9 @@
     "db:seed": "npm run db:seed --workspace=packages/api",
     "db:seed-timetable": "tsx packages/api/src/db/seed-timetable.ts",
     "db:seed-timetable:incremental": "tsx packages/api/src/db/seed-timetable.ts --incremental",
-    "db:studio": "npm run db:studio --workspace=packages/api"
+    "db:studio": "npm run db:studio --workspace=packages/api",
+    "replay": "npm run replay --workspace=packages/consumer",
+    "replay:date": "npm run replay --workspace=packages/consumer --"
   },
   "engines": {
     "node": ">=22.0.0"

@@ -24,8 +24,8 @@ import type { DarwinTS, DarwinTSLocation } from "@railly-app/shared";
 import { sql } from "../db.js";
 
 interface CpUpdate {
+  id: number; // CP primary key for updates
   rid: string;
-  sequence: number;
   tpl: string;
   etaPushport: string | null;
   etdPushport: string | null;
@@ -116,7 +116,10 @@ function parseTimeToMinutes(time: string | null | undefined): number {
 }
 
 /**
- * Match TS locations to existing calling point sequences.
+ * Match TS locations to existing calling points by (TIPLOC, time).
+ *
+ * Returns a Map from TS location index → CP id (primary key).
+ * Using id instead of sequence means UPDATEs are simpler and more robust.
  *
  * Strategy: Match by TIPLOC + time, separated by stop type:
  * - Non-PP (isPass=false) locations match against non-PP DB rows (IP/OR/DT)
@@ -131,16 +134,16 @@ function parseTimeToMinutes(time: string | null | undefined): number {
  * Unmatched locations are silently skipped — we only UPDATE existing CP rows,
  * never INSERT new ones for known services (prevents route waypoint contamination).
  */
-function matchLocationsToSequences(
+function matchLocationsToCps(
   tsLocations: DarwinTSLocation[],
-  dbRows: Array<{ sequence: number; tpl: string; stop_type: string; pta_timetable: string | null; ptd_timetable: string | null; wtp_timetable: string | null }>,
+  dbRows: Array<{ id: number; tpl: string; stop_type: string; pta_timetable: string | null; ptd_timetable: string | null; wtp_timetable: string | null }>,
 ): Map<number, number> {
-  const matches = new Map<number, number>(); // tsLoc index → db sequence
+  const matches = new Map<number, number>(); // tsLoc index → cp id
 
   // Separate DB rows by stop type for correct matching
   const nonPPRows = dbRows.filter((r) => r.stop_type !== "PP");
   const ppRows = dbRows.filter((r) => r.stop_type === "PP");
-  const usedSequences = new Set<number>();
+  const usedIds = new Set<number>();
 
   for (let locIdx = 0; locIdx < tsLocations.length; locIdx++) {
     const loc = tsLocations[locIdx];
@@ -160,7 +163,7 @@ function matchLocationsToSequences(
 
     // Find candidate rows with matching TIPLOC that haven't been used yet
     const candidates = candidatePool.filter(
-      (r) => r.tpl === tpl && !usedSequences.has(r.sequence),
+      (r) => r.tpl === tpl && !usedIds.has(r.id),
     );
 
     if (candidates.length === 0) {
@@ -170,8 +173,8 @@ function matchLocationsToSequences(
 
     if (candidates.length === 1) {
       // Single match — use it directly
-      matches.set(locIdx, candidates[0].sequence);
-      usedSequences.add(candidates[0].sequence);
+      matches.set(locIdx, candidates[0].id);
+      usedIds.add(candidates[0].id);
       continue;
     }
 
@@ -199,17 +202,17 @@ function matchLocationsToSequences(
 
       // Only accept if the time difference is reasonable (< 60 minutes)
       if (bestDiff < 60) {
-        matches.set(locIdx, bestMatch.sequence);
-        usedSequences.add(bestMatch.sequence);
+        matches.set(locIdx, bestMatch.id);
+        usedIds.add(bestMatch.id);
       } else {
         // Fallback: use first unused candidate (preserves order)
-        matches.set(locIdx, candidates[0].sequence);
-        usedSequences.add(candidates[0].sequence);
+        matches.set(locIdx, candidates[0].id);
+        usedIds.add(candidates[0].id);
       }
     } else {
       // No time available for matching — use first unused candidate
-      matches.set(locIdx, candidates[0].sequence);
-      usedSequences.add(candidates[0].sequence);
+      matches.set(locIdx, candidates[0].id);
+      usedIds.add(candidates[0].id);
     }
   }
 
@@ -286,7 +289,14 @@ async function createDarwinStub(
     }
   }
 
-  // Create calling points from TS locations
+  // Compute sort_time helper — timetable-only, same logic as schedule handler
+  const computeStubSortTime = (loc: DarwinTSLocation): string => {
+    const raw = loc.wtd || loc.ptd || loc.wtp || loc.wta || loc.pta;
+    if (!raw) return "00:00";
+    return raw.length > 5 ? raw.substring(0, 5) : raw;
+  };
+
+  // Create calling points from TS locations — using natural key
   for (let idx = 0; idx < locations.length; idx++) {
     const loc = locations[idx];
     const tpl = loc.tpl?.trim();
@@ -295,6 +305,7 @@ async function createDarwinStub(
     const crsData = crsLookup.get(tpl);
     const crs = crsData?.crs || null;
     const name = crsData?.name || null;
+    const sortTime = computeStubSortTime(loc);
 
     const etaPushport = loc.eta?.trim() || null;
     const etdPushport = loc.etd?.trim() || null;
@@ -313,7 +324,7 @@ async function createDarwinStub(
 
     await tx`
       INSERT INTO calling_points (
-        journey_rid, sequence, ssd, stop_type, tpl, crs, name,
+        journey_rid, sort_time, ssd, stop_type, tpl, crs, name,
         eta_pushport, etd_pushport, ata_pushport, atd_pushport,
         weta_pushport, wetd_pushport,
         plat_pushport,
@@ -322,7 +333,7 @@ async function createDarwinStub(
         source_timetable, source_darwin,
         updated_at, ts_generated_at
       ) VALUES (
-        ${rid}, ${idx}, ${ssd}, 'IP', ${tpl}, ${crs}, ${name},
+        ${rid}, ${sortTime}, ${ssd}, 'IP', ${tpl}, ${crs}, ${name},
         ${etaPushport}, ${etdPushport}, ${ataPushport}, ${atdPushport},
         ${wetaPushport}, ${wetdPushport},
         ${platPushport},
@@ -332,7 +343,7 @@ async function createDarwinStub(
         false, true,
         ${generatedAt}::timestamp with time zone, ${generatedAt}::timestamp with time zone
       )
-      ON CONFLICT (journey_rid, sequence) DO UPDATE SET
+      ON CONFLICT (journey_rid, tpl, day_offset, sort_time, stop_type) DO UPDATE SET
         eta_pushport = EXCLUDED.eta_pushport,
         etd_pushport = EXCLUDED.etd_pushport,
         ata_pushport = EXCLUDED.ata_pushport,
@@ -344,6 +355,7 @@ async function createDarwinStub(
         plat_is_suppressed = EXCLUDED.plat_is_suppressed,
         delay_minutes = EXCLUDED.delay_minutes,
         delay_reason = EXCLUDED.delay_reason,
+        sort_time = EXCLUDED.sort_time,
         source_darwin = true,
         updated_at = EXCLUDED.updated_at,
         ts_generated_at = EXCLUDED.ts_generated_at
@@ -423,12 +435,13 @@ export async function handleTrainStatus(
         }
       }
 
-      // ── Query existing calling points to match by sequence ─────────────────
+      // ── Query existing calling points including id for natural key matching ─
       const existingRows = await tx`
-        SELECT sequence, tpl, stop_type, pta_timetable, ptd_timetable, wtp_timetable, plat_timetable
+        SELECT id, tpl, stop_type, sort_time, day_offset,
+               pta_timetable, ptd_timetable, wtp_timetable, plat_timetable
         FROM calling_points
         WHERE journey_rid = ${rid}
-        ORDER BY sequence
+        ORDER BY day_offset, sort_time
       `;
 
       // ── If no calling points exist, create a Darwin stub ───────────────────
@@ -440,131 +453,157 @@ export async function handleTrainStatus(
         return;
       }
 
-      // ── Check if this is a VSTP service (needed for inserting missing stops) ──
-      const journeyRow = await tx`
-        SELECT is_passenger, source_timetable FROM journeys WHERE rid = ${rid}
-      `;
-      const isVstpService = journeyRow.length > 0 && !journeyRow[0].source_timetable;
-
-      // ── Match TS locations to existing sequences ──────────────────────────
-      const matches = matchLocationsToSequences(
+      // ── Match TS locations to existing CPs by TIPLOC + time ────────────────
+      const matches = matchLocationsToCps(
         locations,
-        existingRows as unknown as Array<{ sequence: number; tpl: string; stop_type: string; pta_timetable: string | null; ptd_timetable: string | null; wtp_timetable: string | null }>,
+        existingRows as unknown as Array<{ id: number; tpl: string; stop_type: string; pta_timetable: string | null; ptd_timetable: string | null; wtp_timetable: string | null }>,
       );
 
-      // ── BUG-024: Insert new CP rows for unmatched passenger stops on VSTP services ──
-      // VSTP services often have PP-only calling points from their schedule message.
-      // When TS sends real passenger stops (KNGX, BHM, etc.) that don't match any
-      // existing non-PP row, we INSERT new rows so the real-time data is preserved.
-      if (isVstpService) {
-        // Collect unmatched passenger stops (not isPass, has planned times)
-        const unmatchedPassengerStops: Array<{ locIdx: number; loc: DarwinTSLocation }> = [];
-        for (let locIdx = 0; locIdx < locations.length; locIdx++) {
-          const loc = locations[locIdx];
-          const tpl = loc.tpl?.trim();
-          if (!tpl) continue;
-          if (loc.isPass === true) continue;
-          if (matches.has(locIdx)) continue;
-          // Must have planned times (passenger stop, not just operational)
-          if (loc.pta || loc.ptd || loc.wta || loc.wtd) {
-            unmatchedPassengerStops.push({ locIdx, loc });
-          }
+      // ── Insert new CP rows for unmatched passenger stops ──
+      // With the natural key (journey_rid, tpl, day_offset, sort_time, stop_type),
+      // it's safe to INSERT new CPs for ALL services — timetable and VSTP alike.
+      // Darwin often sends stops not in the timetable (extra calling points, diversions).
+      // ON CONFLICT handles the case where a schedule message already inserted this stop.
+      const unmatchedPassengerStops: Array<{ locIdx: number; loc: DarwinTSLocation }> = [];
+      for (let locIdx = 0; locIdx < locations.length; locIdx++) {
+        const loc = locations[locIdx];
+        const tpl = loc.tpl?.trim();
+        if (!tpl) continue;
+        if (loc.isPass === true) continue; // PP stops are handled separately by matching
+        if (matches.has(locIdx)) continue;
+        // Must have planned times (passenger stop, not just operational)
+        if (loc.pta || loc.ptd || loc.wta || loc.wtd) {
+          unmatchedPassengerStops.push({ locIdx, loc });
         }
+      }
 
-        if (unmatchedPassengerStops.length > 0) {
-          // Find max existing sequence number for this service
-          const maxSeqRow = await tx`
-            SELECT COALESCE(MAX(sequence), -1) as max_seq FROM calling_points WHERE journey_rid = ${rid}
+      if (unmatchedPassengerStops.length > 0) {
+        // Bulk-fetch CRS codes from location_ref for all unmatched TIPLOCs
+        const unmatchedTpls = [...new Set(unmatchedPassengerStops.map((u) => u.loc.tpl?.trim()).filter(Boolean) as string[])];
+        const crsLookup = new Map<string, { crs: string | null; name: string | null }>();
+        if (unmatchedTpls.length > 0) {
+          const crsRows = await tx`
+            SELECT tpl, crs, name FROM location_ref WHERE tpl = ANY(${unmatchedTpls})
           `;
-          let nextSequence = (maxSeqRow[0]?.max_seq ?? -1) + 1;
-
-          // Bulk-fetch CRS codes from location_ref for all unmatched TIPLOCs
-          const unmatchedTpls = [...new Set(unmatchedPassengerStops.map((u) => u.loc.tpl?.trim()).filter(Boolean))];
-          const crsLookup = new Map<string, { crs: string | null; name: string | null }>();
-          if (unmatchedTpls.length > 0) {
-            const crsRows = await tx`
-              SELECT tpl, crs, name FROM location_ref WHERE tpl = ANY(${unmatchedTpls})
-            `;
-            for (const row of crsRows) {
-              crsLookup.set(row.tpl, { crs: row.crs, name: row.name });
-            }
-          }
-
-          for (const { loc } of unmatchedPassengerStops) {
-            const tpl = loc.tpl!.trim();
-            const crsData = crsLookup.get(tpl);
-            const crs = crsData?.crs || null;
-            const name = crsData?.name || null;
-
-            // Determine stop type from TS location flags
-            let stopType = "IP"; // Default intermediate
-            if (loc.isOrigin === true && loc.isDestination !== true) {
-              stopType = "OR";
-            } else if (loc.isDestination === true && loc.isOrigin !== true) {
-              stopType = "DT";
-            } else if (loc.isOrigin === true && loc.isDestination === true) {
-              // Single-stop service — treat as origin
-              stopType = "OR";
-            }
-
-            const etaPushport = loc.eta?.trim() || null;
-            const etdPushport = loc.etd?.trim() || null;
-            const ataPushport = loc.ata?.trim() || null;
-            const atdPushport = loc.atd?.trim() || null;
-            const wetaPushport = loc.weta?.trim() || null;
-            const wetdPushport = loc.wetd?.trim() || null;
-            const platPushport = loc.platform?.trim() || null;
-
-            const delayMinutes = computeDelayMinutes(
-              loc.ptd || loc.wtd || null,
-              etdPushport,
-              atdPushport,
-            );
-
-            await tx`
-              INSERT INTO calling_points (
-                journey_rid, sequence, ssd, stop_type, tpl, crs, name,
-                pta_timetable, ptd_timetable, wta_timetable, wtd_timetable,
-                eta_pushport, etd_pushport, ata_pushport, atd_pushport,
-                weta_pushport, wetd_pushport,
-                plat_pushport,
-                is_cancelled, plat_is_suppressed,
-                delay_minutes, delay_reason,
-                source_timetable, source_darwin,
-                updated_at, ts_generated_at
-              ) VALUES (
-                ${rid}, ${nextSequence}, ${tsSsd}, ${stopType}, ${tpl}, ${crs}, ${name},
-                ${loc.pta || null}, ${loc.ptd || null}, ${loc.wta || null}, ${loc.wtd || null},
-                ${etaPushport}, ${etdPushport}, ${ataPushport}, ${atdPushport},
-                ${wetaPushport}, ${wetdPushport},
-                ${platPushport},
-                ${loc.cancelled === true}, ${loc.platIsSuppressed === true},
-                ${delayMinutes},
-                ${((loc as unknown as Record<string, unknown>).delayReason as string | null) ?? null},
-                false, true,
-                ${generatedAt}::timestamp with time zone, ${generatedAt}::timestamp with time zone
-              )
-              ON CONFLICT (journey_rid, sequence) DO UPDATE SET
-                eta_pushport = EXCLUDED.eta_pushport,
-                etd_pushport = EXCLUDED.etd_pushport,
-                ata_pushport = EXCLUDED.ata_pushport,
-                atd_pushport = EXCLUDED.atd_pushport,
-                weta_pushport = EXCLUDED.weta_pushport,
-                wetd_pushport = EXCLUDED.wetd_pushport,
-                plat_pushport = EXCLUDED.plat_pushport,
-                is_cancelled = EXCLUDED.is_cancelled,
-                plat_is_suppressed = EXCLUDED.plat_is_suppressed,
-                delay_minutes = EXCLUDED.delay_minutes,
-                delay_reason = EXCLUDED.delay_reason,
-                source_darwin = true,
-                updated_at = EXCLUDED.updated_at,
-                ts_generated_at = EXCLUDED.ts_generated_at
-            `;
-
-            nextSequence++;
-            insertedNewStops++;
+          for (const row of crsRows) {
+            crsLookup.set(row.tpl, { crs: row.crs, name: row.name });
           }
         }
+
+        // Helper for sort_time computation
+        const computeNewSortTime = (loc: DarwinTSLocation): string => {
+          const raw = loc.wtd || loc.ptd || loc.wtp || loc.wta || loc.pta;
+          if (!raw) return "00:00";
+          return raw.length > 5 ? raw.substring(0, 5) : raw;
+        };
+
+        // Compute day_offset for new stops
+        // Find the maximum day_offset from existing CPs for this journey
+        const maxDayOffset = existingRows.reduce((max, r) => {
+          const d = r.day_offset as number ?? 0;
+          return d > max ? d : max;
+        }, 0);
+
+        // For each unmatched stop, compute day_offset based on time crossing midnight
+        let prevMinutes = -1;
+        let currentDayOffset = existingRows.length > 0 
+          ? maxDayOffset // Start from the max existing day_offset
+          : 0;
+
+        for (const { loc } of unmatchedPassengerStops) {
+          const tpl = loc.tpl!.trim();
+          const crsData = crsLookup.get(tpl);
+          const crs = crsData?.crs || null;
+          const name = crsData?.name || null;
+          const sortTime = computeNewSortTime(loc);
+
+          // Determine stop type from TS location flags
+          let stopType = "IP"; // Default intermediate
+          if (loc.isOrigin === true && loc.isDestination !== true) {
+            stopType = "OR";
+          } else if (loc.isDestination === true && loc.isOrigin !== true) {
+            stopType = "DT";
+          } else if (loc.isOrigin === true && loc.isDestination === true) {
+            stopType = "OR";
+          }
+
+          // Compute day_offset for this stop
+          const timeStr = loc.wtd || loc.ptd || loc.wtp || loc.wta || loc.pta;
+          const currentMinutes = parseTimeToMinutes(timeStr);
+          if (currentMinutes >= 0 && prevMinutes >= 0) {
+            if (currentMinutes < prevMinutes && prevMinutes >= 1200) {
+              currentDayOffset++;
+            }
+          }
+          if (currentMinutes >= 0) prevMinutes = currentMinutes;
+
+          const dayOffset = currentDayOffset;
+
+          const etaPushport = loc.eta?.trim() || null;
+          const etdPushport = loc.etd?.trim() || null;
+          const ataPushport = loc.ata?.trim() || null;
+          const atdPushport = loc.atd?.trim() || null;
+          const wetaPushport = loc.weta?.trim() || null;
+          const wetdPushport = loc.wetd?.trim() || null;
+          const platPushport = loc.platform?.trim() || null;
+
+          const delayMinutes = computeDelayMinutes(
+            loc.ptd || loc.wtd || null,
+            etdPushport,
+            atdPushport,
+          );
+
+          await tx`
+            INSERT INTO calling_points (
+              journey_rid, sort_time, ssd, stop_type, tpl, crs, name,
+              day_offset,
+              pta_timetable, ptd_timetable, wta_timetable, wtd_timetable,
+              eta_pushport, etd_pushport, ata_pushport, atd_pushport,
+              weta_pushport, wetd_pushport,
+              plat_pushport,
+              is_cancelled, plat_is_suppressed,
+              delay_minutes, delay_reason,
+              source_timetable, source_darwin,
+              updated_at, ts_generated_at
+            ) VALUES (
+              ${rid}, ${sortTime}, ${tsSsd}, ${stopType}, ${tpl}, ${crs}, ${name},
+              ${dayOffset},
+              ${loc.pta || null}, ${loc.ptd || null}, ${loc.wta || null}, ${loc.wtd || null},
+              ${etaPushport}, ${etdPushport}, ${ataPushport}, ${atdPushport},
+              ${wetaPushport}, ${wetdPushport},
+              ${platPushport},
+              ${loc.cancelled === true}, ${loc.platIsSuppressed === true},
+              ${delayMinutes},
+              ${((loc as unknown as Record<string, unknown>).delayReason as string | null) ?? null},
+              false, true,
+              ${generatedAt}::timestamp with time zone, ${generatedAt}::timestamp with time zone
+            )
+            ON CONFLICT (journey_rid, tpl, day_offset, sort_time, stop_type) DO UPDATE SET
+              eta_pushport = EXCLUDED.eta_pushport,
+              etd_pushport = EXCLUDED.etd_pushport,
+              ata_pushport = EXCLUDED.ata_pushport,
+              atd_pushport = EXCLUDED.atd_pushport,
+              weta_pushport = EXCLUDED.weta_pushport,
+              wetd_pushport = EXCLUDED.wetd_pushport,
+              plat_pushport = EXCLUDED.plat_pushport,
+              is_cancelled = EXCLUDED.is_cancelled,
+              plat_is_suppressed = EXCLUDED.plat_is_suppressed,
+              delay_minutes = EXCLUDED.delay_minutes,
+              delay_reason = EXCLUDED.delay_reason,
+              sort_time = EXCLUDED.sort_time,
+              source_darwin = true,
+              updated_at = EXCLUDED.updated_at,
+              ts_generated_at = EXCLUDED.ts_generated_at
+          `;
+
+          insertedNewStops++;
+        }
+      }
+
+      // ── Track which unmatched stops were successfully inserted ────────────
+      const insertedLocIdxs = new Set<number>();
+      for (const { locIdx } of unmatchedPassengerStops) {
+        insertedLocIdxs.add(locIdx);
       }
 
       // ── Build calling_points updates with resolved sequence numbers ────────
@@ -575,9 +614,12 @@ export async function handleTrainStatus(
         const tpl = loc.tpl?.trim();
         if (!tpl) continue;
 
-        const sequence = matches.get(locIdx);
-        if (sequence === undefined) {
-          // Unmatched Darwin location — skip and record for investigation
+        const cpId = matches.get(locIdx);
+        if (cpId === undefined) {
+          // Skip if this location was already inserted as a new CP
+          if (insertedLocIdxs.has(locIdx)) continue;
+
+          // Unmatched Darwin location — record for investigation
           skippedInMessage++;
           // Classify reason using Darwin location's own properties:
           // - isOrigin/isDestination with no match → critical (data loss)
@@ -621,52 +663,37 @@ export async function handleTrainStatus(
 
         // Determine platform source:
         // Priority: suppressed > confirmed/altered > default comparison
-        // - null: no platform data from Darwin
-        // - "suppressed": Darwin marked platform as suppressed (may change)
-        // - "confirmed": Platform confirmed by train describer OR matches timetable
-        // - "altered": Platform differs from timetable
         let platSource: string | null = null;
         const platConfirmed = loc.confirmed === true;
         const platFromTd = loc.platSourcedFromTIPLOC === true;
         if (platPushport) {
+          // Look up matched CP by id for timetable platform comparison
+          const matchedRow = (existingRows as unknown as Array<{ id: number; plat_timetable: string | null }>)
+            .find((r) => r.id === cpId);
+          const bookedPlat = matchedRow?.plat_timetable?.trim() || null;
+
           if (loc.platIsSuppressed === true) {
             platSource = "suppressed";
           } else if (platConfirmed || platFromTd) {
-            // Confirmed by train describer — but check if it differs from timetable
-            const existingRow = (existingRows as unknown as Array<{ sequence: number; plat_timetable: string | null }>)
-              .find((r) => r.sequence === sequence);
-            const bookedPlat = existingRow?.plat_timetable?.trim() || null;
-            if (bookedPlat && platPushport !== bookedPlat) {
-              platSource = "altered"; // Confirmed BUT different from timetable
-            } else {
-              platSource = "confirmed"; // Confirmed and matches timetable (or no timetable platform)
-            }
+            platSource = (bookedPlat && platPushport !== bookedPlat) ? "altered" : "confirmed";
           } else {
-            // No special flags — compare against timetable
-            const existingRow = (existingRows as unknown as Array<{ sequence: number; plat_timetable: string | null }>)
-              .find((r) => r.sequence === sequence);
-            const bookedPlat = existingRow?.plat_timetable?.trim() || null;
-            if (bookedPlat && platPushport !== bookedPlat) {
-              platSource = "altered"; // Differs from timetable
-            } else {
-              platSource = "confirmed"; // Matches timetable or no timetable platform
-            }
+            platSource = (bookedPlat && platPushport !== bookedPlat) ? "altered" : "confirmed";
           }
         }
 
-        // Get scheduled times from existing row for delay computation
-        const existingRow = (existingRows as unknown as Array<{ sequence: number; pta_timetable: string | null; ptd_timetable: string | null }>)
-          .find((r) => r.sequence === sequence);
-        const schedArr = existingRow?.pta_timetable || null;
-        const schedDep = existingRow?.ptd_timetable || null;
+        // Get scheduled times from matched row for delay computation
+        const matchedRow = (existingRows as unknown as Array<{ id: number; pta_timetable: string | null; ptd_timetable: string | null }>)
+          .find((r) => r.id === cpId);
+        const schedArr = matchedRow?.pta_timetable || null;
+        const schedDep = matchedRow?.ptd_timetable || null;
 
         const delayArr = computeDelayMinutes(schedArr, etaPushport, ataPushport);
         const delayDep = computeDelayMinutes(schedDep, etdPushport, atdPushport);
         const delayMinutes = delayDep !== null ? delayDep : (delayArr !== null ? delayArr : null);
 
         cpUpdates.push({
+          id: cpId,
           rid,
-          sequence,
           tpl,
           etaPushport,
           etdPushport,
@@ -722,12 +749,12 @@ export async function handleTrainStatus(
         WHERE rid = ${rid} AND source_darwin = false
       `;
 
-      // ── Update each calling point — ONLY _pushport columns ─────────────────
+      // ── Update each calling point by id — ONLY _pushport columns ────────────
       for (const cp of cpUpdates) {
-        // Check dedup: stored ts_generated_at
+        // Check dedup: stored ts_generated_at (by primary key)
         const existingCp = await tx`
           SELECT ts_generated_at FROM calling_points
-          WHERE journey_rid = ${cp.rid} AND sequence = ${cp.sequence}
+          WHERE id = ${cp.id}
           FOR UPDATE
         `;
 
@@ -763,7 +790,7 @@ export async function handleTrainStatus(
             source_darwin = true,
             updated_at = ${cp.updatedAt}::timestamp with time zone,
             ts_generated_at = ${generatedAt}::timestamp with time zone
-          WHERE journey_rid = ${cp.rid} AND sequence = ${cp.sequence}
+          WHERE id = ${cp.id}
         `;
       }
 

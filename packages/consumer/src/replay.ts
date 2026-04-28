@@ -20,6 +20,7 @@ import "./env.js";
 import { sql, closeDb } from "./db.js";
 import { handleSchedule } from "./handlers/schedule.js";
 import { handleTrainStatus } from "./handlers/trainStatus.js";
+import { handleDeactivated } from "./handlers/index.js";
 import type { DarwinMessage } from "@railly-app/shared";
 
 // ── Configuration ──────────────────────────────────────────────────────────────
@@ -29,7 +30,7 @@ const LOG_EVERY = 1000;
 
 // Parse CLI args
 const args = process.argv.slice(2);
-let targetDate = "2026-04-26"; // Default
+let targetDate = "2026-04-27"; // Default
 
 const dateArg = args.findIndex((a) => a.startsWith("--date"));
 if (dateArg >= 0) {
@@ -189,33 +190,7 @@ async function replayMessageType(
         if (message.deactivated) {
           for (const d of message.deactivated) {
             try {
-              const rid = d.rid;
-              const movementData = await sql`
-                SELECT COUNT(*) as cp_count,
-                  COUNT(*) FILTER (WHERE ata_pushport IS NOT NULL OR atd_pushport IS NOT NULL) as moved
-                FROM calling_points
-                WHERE journey_rid = ${rid}
-              `;
-              const hasMovement = movementData.length > 0 && Number(movementData[0].moved) > 0;
-
-              if (!hasMovement) {
-                await sql`
-                  UPDATE service_rt
-                  SET is_cancelled = true, last_updated = NOW()
-                  WHERE rid = ${rid}
-                `;
-                await sql`
-                  UPDATE calling_points
-                  SET is_cancelled = true
-                  WHERE journey_rid = ${rid}
-                `;
-              } else {
-                await sql`
-                  UPDATE service_rt
-                  SET last_updated = NOW()
-                  WHERE rid = ${rid}
-                `;
-              }
+              await handleDeactivated(d.rid);
               typeMetrics.processed++;
             } catch (err) {
               typeMetrics.errors++;

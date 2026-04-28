@@ -1,44 +1,31 @@
 # Active Context
 
-## Current Focus: Duplicate Key Fix + Wet Time Data Pipeline
+## Current Focus: Natural Key Migration — Complete ✅
 
-### Just Completed (2026-04-27)
+### Completed This Session (2026-04-27)
 
-**BUG-029: Duplicate key violation on re-seed (final fix)** — Fixed:
-- Root cause: Schedule handler VSTP path did DELETE-all + plain INSERT without ON CONFLICT
-- When seed or concurrent TS had already inserted rows for same (journey_rid, sequence), INSERT failed
-- Fixed: Changed VSTP path to selective-DELETE + UPSERT with ON CONFLICT DO UPDATE
+**Natural Key Migration: Replaced `sequence` with `(journey_rid, tpl, day_offset, sort_time, stop_type)`** — Complete:
+- ✅ Added `sort_time CHAR(5) NOT NULL` column to `calling_points`
+- ✅ Created unique index `idx_calling_points_natural` on `(journey_rid, tpl, day_offset, sort_time, stop_type)`
+- ✅ Deduplicated 861 rows that violated the natural key
+- ✅ Dropped old `idx_calling_points_journey_rid_sequence` index
+- ✅ Rewrote `matchLocationsToCps()`: matches by `(tpl, time)` → returns CP `id` instead of `sequence`
+- ✅ All ON CONFLICT clauses use natural key `(journey_rid, tpl, day_offset, sort_time, stop_type)`
+- ✅ API queries use `ORDER BY day_offset, sort_time` instead of `ORDER BY sequence`
+- ✅ Removed `isVstpService` guard: TS handler inserts unmatched passenger stops for ALL services
+- ✅ Fixed double-counting of inserted stops in skipped log
+- ✅ **Dropped `sequence` column from DB and all code** — Phase 5 complete
+- ✅ All packages compile and Docker builds pass
+- ✅ Consumer, API, and board queries verified working
 
-**Bug 29: Time normalisation + working estimated times** — Fixed:
-- Added `normaliseTime()` in parser: truncates `HH:MM:SS` → `HH:MM` for all pushport time fields
-- Added `weta_pushport`/`wetd_pushport` columns (char(5)) to schema
-- Updated parser to extract `arr.wet`/`dep.wet`/`pass.wet` from Darwin TS messages
-- Updated TS handler to store wet times in all INSERT/UPDATE statements
-- Updated `matchLocationsToSequences` to route PP stops to PP DB rows (was previously skipping them)
-- 3,278 CPs already populated with wet data from live Darwin feed
-
-### Key Architecture: Source-Separated UPSERT
-
-The seed and consumer never overwrite each other's data:
-- **Seed** UPSERTs timetable columns only (`_timetable` fields, `source_timetable`, `day_offset`)
-- **Consumer** UPSERTs pushport columns only (`_pushport` fields, `source_darwin`)
-- **All consumer INSERTs** use ON CONFLICT DO UPDATE (BUG-029 fix: VSTP path now safe)
-- **`weta_pushport`/`wetd_pushport`** store working estimated times from `arr.wet`/`dep.wet`
-- **`normaliseTime()`** ensures all pushport times are HH:MM (char(5))
-
-### Files Changed This Session
-- `packages/api/src/db/schema.ts` — Added `wetaPushport`/`wetdPushport` columns
-- `packages/shared/src/types/darwin.ts` — Added `weta`/`wetd` to `DarwinTSLocation`
-- `packages/consumer/src/parser.ts` — Added `normaliseTime()`, extract `arr.wet`/`dep.wet`/`pass.wet`
-- `packages/consumer/src/handlers/trainStatus.ts` — Store wet times, PP stop matching
-- `packages/consumer/src/handlers/schedule.ts` — VSTP path: ON CONFLICT instead of plain INSERT
-- `packages/api/drizzle/meta/0002_add_wet_columns.sql` — Migration
-- `packages/api/drizzle/meta/_journal.json` — Updated journal
-- `memory-bank/bugsTracker.md` — Updated BUG-029, Bug 29
-- `memory-bank/progress.md` — Updated progress
+### Natural Key Design
+- **journey_rid** — which service
+- **tpl** — which location (TIPLOC)
+- **day_offset** — overnight/next-day stops (0=same day, 1=next day)
+- **sort_time** — timetable-derived time (HH:MM), stable across seed/consumer updates
+- **stop_type** — handles PP+IP at same TIPLOC/time
 
 ### Next Steps (Priority Order)
 1. **Board query: Multi-level COALESCE** with wet times as fallback
 2. **Frontend: Cascading display logic** using wet/eta/etd/ptd priorities
-3. **BUG-023 Remaining**: Add TRX/ZZY to stations seed; board query fallback for NULL CRS
-4. **BUG-021**: Mobile UI fix
+3. **Investigate schedule handler "missing tpl" warning** (likely cosmetic)
