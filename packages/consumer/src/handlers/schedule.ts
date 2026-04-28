@@ -2,17 +2,18 @@
  * Darwin Push Port: Schedule message handler (P0)
  *
  * Schedule messages contain full train schedules.
- * Uses source-separated UPSERT approach:
- * - Timetable-sourced services: match by TIPLOC, update pushport columns only
- * - VSTP services: DELETE + INSERT (we own all data, no seed conflict)
- * - Always set source_darwin = true on upserted rows
- *
- * This eliminates the DELETE + re-insert + re-apply cycle that caused
- * duplicate key violations (BUG-027) and data loss of Darwin-only CPs.
+ * Uses source-separated UPSERT approach for both timetable and VSTP services:
+ * - Match Darwin locations to existing CPs by TIPLOC
+ * - Timetable-sourced: update pushport columns, preserve timetable columns
+ * - VSTP: update timetable columns, preserve pushport columns
+ * - Unmatched locations: INSERT with natural key UPSERT
+ * - Unmatched existing CPs: left as-is (data preserved for historical analysis)
+ * - Never DELETE calling points — preserves pushport data from TS messages
  */
 
 import type { DarwinSchedule, DarwinScheduleLocation } from "@railly-app/shared";
 import { sql } from "../db.js";
+import { logDarwinSkip } from "./index.js";
 
 /**
  * Preserved pushport data for a calling point, used to match
@@ -104,10 +105,11 @@ function deriveSsdFromRid(rid: string): string {
 /**
  * Process a schedule message: upsert calling pattern into PostgreSQL.
  *
- * Source-separated approach:
- * - Timetable-sourced services: match by TIPLOC, update pushport columns only
- * - VSTP services: DELETE + INSERT (we own all data)
- * - New Darwin-only locations: INSERT with source_timetable=false
+ * Both timetable-sourced and VSTP services use UPSERT (no DELETE):
+ * - Timetable-sourced: match by TIPLOC, update pushport columns, preserve timetable
+ * - VSTP: match by TIPLOC, update timetable columns, preserve pushport
+ * - Unmatched locations: INSERT with natural key UPSERT
+ * - Unmatched existing CPs: left as-is (data preserved for historical analysis)
  */
 export async function handleSchedule(
   schedule: DarwinSchedule,
@@ -117,6 +119,7 @@ export async function handleSchedule(
 
   if (!rid) {
     console.warn("   ⚠️ Schedule message missing RID — skipping");
+    await logDarwinSkip("schedule", null, "MISSING_RID", "Schedule message missing RID", JSON.stringify(schedule).slice(0, 500));
     return;
   }
 
@@ -145,14 +148,16 @@ export async function handleSchedule(
     return minA - minB;
   });
 
-  // Build calling points with sequence numbers and day_offset
+  // Build calling points with day_offset and collect skip info
   let dayOffset = 0;
   let prevMinutes = -1;
+  const skippedTpls: Array<{ tpl: string; raw: string }> = [];
   const cps = sortedLocations
     .map((loc: DarwinScheduleLocation) => {
       const tpl = loc.tpl?.trim();
       if (!tpl) {
         console.warn(`   ⚠️ Schedule ${rid}: location missing tpl — skipping`);
+        skippedTpls.push({ tpl: "", raw: JSON.stringify(loc).slice(0, 200) });
         return null;
       }
       // Compute day_offset: when time wraps from evening to morning, increment
@@ -377,71 +382,97 @@ export async function handleSchedule(
           }
         }
 
-        // ── Clean up: mark unmatched existing CPs as no longer sourced from Darwin ──
-        // This handles the case where a schedule message removes locations that
-        // were in a previous schedule. Don't delete them — they might still have
-        // timetable data. Just clear source_darwin.
-        if (matchedCpIds.size < existingCps.length) {
-          const unmatchedIds = existingCps
-            .filter((cp) => !matchedCpIds.has(cp.id))
-            .map((cp) => cp.id);
+      } else {
+        // ── VSTP PATH (no timetable source) ─────────────────────────────────
+        // Same UPSERT approach as timetable-sourced, but update timetable columns
+        // (schedule IS the timetable for VSTP) and preserve pushport columns
+        // (accumulated by TS messages — we must not lose real-time data).
+        // No DELETE — unmatched CPs are left as-is for historical analysis.
 
-          // Only clear source_darwin on CPs that had it (not timetable-only CPs)
-          if (unmatchedIds.length > 0) {
+        // Build TIPLOC-keyed map (array for circular trips)
+        const cpByTpl = new Map<string, ExistingCpRow[]>();
+        for (const cp of existingCps) {
+          const arr = cpByTpl.get(cp.tpl) || [];
+          arr.push(cp);
+          cpByTpl.set(cp.tpl, arr);
+        }
+
+        // Track which existing CPs have been matched (by id)
+        const matchedCpIds = new Set<number>();
+
+        // Process each Darwin location
+        for (const cp of cps) {
+          const tplEntries = cpByTpl.get(cp.tpl) || [];
+          // Find first unmatched entry (for circular trips)
+          const match = tplEntries.find((e) => !matchedCpIds.has(e.id));
+
+          if (match) {
+            // ── Match found: UPDATE timetable columns, preserve pushport ──
+            matchedCpIds.add(match.id);
+
+            // Guard: don't overwrite pushport data if a more recent TS message updated it
+            const tsGuard = match.tsGeneratedAt
+              ? sql`AND (ts_generated_at IS NULL OR ts_generated_at = ${match.tsGeneratedAt}::timestamp with time zone)`
+              : sql`AND ts_generated_at IS NULL`;
+
             await tx`
               UPDATE calling_points
-              SET source_darwin = false
-              WHERE id = ANY(${unmatchedIds}) AND source_darwin = true
+              SET
+                pta_timetable = ${cp.pta}::varchar(5),
+                ptd_timetable = ${cp.ptd}::varchar(5),
+                wta_timetable = ${cp.wta}::varchar(8),
+                wtd_timetable = ${cp.wtd}::varchar(8),
+                wtp_timetable = ${cp.wtp}::varchar(8),
+                plat_timetable = ${cp.plat}::varchar(5),
+                act = ${cp.act},
+                sort_time = ${computeSortTime(cp)},
+                stop_type = ${cp.stopType},
+                day_offset = ${cp.dayOffset},
+                is_cancelled = ${cp.isCancelled},
+                cancel_reason = ${cp.cancelReason},
+                source_darwin = true
+              WHERE id = ${match.id}
+                ${tsGuard}
+            `;
+          } else {
+            // ── No match: INSERT new CP with timetable columns from schedule ──
+            const sortTime = computeSortTime(cp);
+            await tx`
+              INSERT INTO calling_points (
+                journey_rid, sort_time, ssd, stop_type, tpl,
+                pta_timetable, ptd_timetable,
+                wta_timetable, wtd_timetable, wtp_timetable,
+                plat_timetable, act,
+                is_cancelled, cancel_reason, day_offset,
+                source_timetable, source_darwin
+              ) VALUES (
+                ${cp.rid}, ${sortTime}, ${cp.ssd}, ${cp.stopType}, ${cp.tpl},
+                ${cp.pta}::varchar(5), ${cp.ptd}::varchar(5),
+                ${cp.wta}::varchar(8), ${cp.wtd}::varchar(8), ${cp.wtp}::varchar(8),
+                ${cp.plat}::varchar(5), ${cp.act},
+                ${cp.isCancelled}, ${cp.cancelReason}, ${cp.dayOffset},
+                false, true
+              )
+              ON CONFLICT (journey_rid, tpl, day_offset, sort_time, stop_type) DO UPDATE SET
+                stop_type = EXCLUDED.stop_type,
+                tpl = EXCLUDED.tpl,
+                sort_time = EXCLUDED.sort_time,
+                pta_timetable = COALESCE(EXCLUDED.pta_timetable, calling_points.pta_timetable),
+                ptd_timetable = COALESCE(EXCLUDED.ptd_timetable, calling_points.ptd_timetable),
+                wta_timetable = COALESCE(EXCLUDED.wta_timetable, calling_points.wta_timetable),
+                wtd_timetable = COALESCE(EXCLUDED.wtd_timetable, calling_points.wtd_timetable),
+                wtp_timetable = COALESCE(EXCLUDED.wtp_timetable, calling_points.wtp_timetable),
+                plat_timetable = COALESCE(EXCLUDED.plat_timetable, calling_points.plat_timetable),
+                act = COALESCE(EXCLUDED.act, calling_points.act),
+                is_cancelled = EXCLUDED.is_cancelled,
+                cancel_reason = EXCLUDED.cancel_reason,
+                day_offset = EXCLUDED.day_offset,
+                source_darwin = true
             `;
           }
         }
-      } else {
-        // ── VSTP PATH (no timetable source) ─────────────────────────────────
-        // For VSTP services, we own all data. Delete existing CPs and re-insert
-        // with the natural key. This is safe because:
-        // - VSTP has no timetable source — no pushport columns to preserve
-        // - A concurrent TS may have added CPs — ON CONFLICT handles that
-        // Delete all existing CPs first, then insert fresh.
-        await tx`
-          DELETE FROM calling_points WHERE journey_rid = ${rid}
-        `;
-
-        for (const cp of cps) {
-          const sortTime = computeSortTime(cp);
-          await tx`
-            INSERT INTO calling_points (
-              journey_rid, sort_time, ssd, stop_type, tpl,
-              pta_timetable, ptd_timetable,
-              wta_timetable, wtd_timetable, wtp_timetable,
-              plat_timetable, act,
-              is_cancelled, cancel_reason, day_offset,
-              source_timetable, source_darwin
-            ) VALUES (
-              ${cp.rid}, ${sortTime}, ${cp.ssd}, ${cp.stopType}, ${cp.tpl},
-              ${cp.pta}::varchar(5), ${cp.ptd}::varchar(5),
-              ${cp.wta}::varchar(8), ${cp.wtd}::varchar(8), ${cp.wtp}::varchar(8),
-              ${cp.plat}::varchar(5), ${cp.act},
-              ${cp.isCancelled}, ${cp.cancelReason}, ${cp.dayOffset},
-              false, true
-            )
-            ON CONFLICT (journey_rid, tpl, day_offset, sort_time, stop_type) DO UPDATE SET
-              ssd = EXCLUDED.ssd,
-              stop_type = EXCLUDED.stop_type,
-              tpl = EXCLUDED.tpl,
-              sort_time = EXCLUDED.sort_time,
-              pta_timetable = EXCLUDED.pta_timetable,
-              ptd_timetable = EXCLUDED.ptd_timetable,
-              wta_timetable = EXCLUDED.wta_timetable,
-              wtd_timetable = EXCLUDED.wtd_timetable,
-              wtp_timetable = EXCLUDED.wtp_timetable,
-              plat_timetable = EXCLUDED.plat_timetable,
-              act = EXCLUDED.act,
-              is_cancelled = EXCLUDED.is_cancelled,
-              cancel_reason = EXCLUDED.cancel_reason,
-              day_offset = EXCLUDED.day_offset,
-              source_darwin = true
-          `;
-        }
+        // Note: unmatched existing CPs are left as-is — their data is preserved
+        // for historical analysis. No source_darwin=false marking needed.
       }
 
       // ── If this schedule marks the service as cancelled, propagate to all CPs ──
@@ -455,6 +486,20 @@ export async function handleSchedule(
     });
 
     console.log(`   ✅ Schedule upserted: ${rid} (${cps.length} calling points)`);
+
+    // Log skipped locations to darwin_audit and skipped_locations
+    if (skippedTpls.length > 0) {
+      for (const skip of skippedTpls) {
+        await logDarwinSkip("schedule", rid, "MISSING_TPL", `Schedule ${rid}: location missing tpl`, skip.raw);
+        // Also persist to skipped_locations for per-location investigation
+        try {
+          await sql`
+            INSERT INTO skipped_locations (rid, tpl, ssd, reason, message_type)
+            VALUES (${rid}, ${skip.tpl || "UNKNOWN"}, ${ssd}, ${"Missing TIPLOC in schedule location"}, 'schedule')
+          `;
+        } catch { /* Don't let skip logging fail the main processing */ }
+      }
+    }
   } catch (err) {
     console.error(`   ❌ Schedule upsert failed for ${rid}:`, (err as Error).message);
     throw err;

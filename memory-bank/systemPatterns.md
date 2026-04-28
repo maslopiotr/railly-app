@@ -30,9 +30,10 @@ Darwin Push Port Kafka → Consumer → PostgreSQL (real-time overlay)
    - CRS/name: `COALESCE(EXCLUDED.crs, calling_points.crs)` — don't overwrite Darwin-filled values with NULL
    - Pushport columns NOT listed in `SET` clause — preserved from consumer
 6. Phase 3: Backfill CRS codes and names from `location_ref` for CPs missing them
-7. Phase 4: Stale CP cleanup:
+7. Phase 4: Stale CP marking:
    - Mark CPs with `source_timetable=true` but `timetable_updated_at < seed_start` as `source_timetable=false`
-   - Delete CPs where both `source_timetable=false` AND `source_darwin=false` (true orphans)
+   - All timetable columns (pta, ptd, wta, wtd, wtp, act, plat) are PRESERVED for historical analysis
+   - No CPs are ever deleted — Darwin Push Port handles cancellations
 8. `dayOffset` computed using same time priority as Darwin consumer: `wtd > ptd > wtp > wta > pta`
 9. `parseTimeToMinutes` handles both "HH:MM" and "HH:MM:SS" formats
 10. Filter to passenger services only (`isPassengerSvc !== "false"`)
@@ -74,7 +75,7 @@ isPassenger BOOLEAN DEFAULT TRUE
 ```sql
 id SERIAL PRIMARY KEY,
 journey_rid VARCHAR(20) REFERENCES journeys(rid),
-sequence INTEGER NOT NULL,           -- Deprecated: being replaced by natural key (Phase 5 drops this)
+-- sequence column DROPPED (removed 2026-04-27)
 sort_time CHAR(5) NOT NULL,          -- Natural key ordering: timetable-derived time (HH:MM)
 ssd CHAR(10),                       -- Denormalised from journeys for direct querying
 stop_type VARCHAR(5) NOT NULL,     -- OR, DT, IP, PP, OPOR, OPIP, OPDT
@@ -126,7 +127,7 @@ ts_generated_at TIMESTAMP WITH TIME ZONE,     -- TS message timestamp (TS dedup)
 last_updated TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 ```
 
-### Darwin Events (Audit Log)
+### Darwin Events (Raw Audit Log)
 ```sql
 id SERIAL PRIMARY KEY,
 message_type VARCHAR(20) NOT NULL, -- TS, schedule, deactivated, OW, etc.
@@ -135,6 +136,18 @@ raw_json VARCHAR(20000),           -- Truncated raw message
 generated_at TIMESTAMP WITH TIME ZONE,  -- From Darwin message
 received_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 processed_at TIMESTAMP WITH TIME ZONE
+```
+
+### Darwin Audit (Structured Error/Skip Log)
+```sql
+id SERIAL PRIMARY KEY,
+message_type VARCHAR(20),          -- TS, schedule, etc.
+rid VARCHAR(20),                   -- Nullable
+severity VARCHAR(10) DEFAULT 'error', -- error, skip, warning
+error_code VARCHAR(50),            -- MISSING_RID, MISSING_TPL, etc.
+message TEXT,                       -- Human-readable description
+raw_data TEXT,                      -- Truncated raw message
+created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 ```
 
 ## Darwin Push Port Message Processing
@@ -178,7 +191,7 @@ Darwin schedule `locations` array orders IPs first, then PPs — NOT chronologic
 
 **Source-separated UPSERT approach (BUG-027 fix)**:
 - **Timetable-sourced services** (`source_timetable=true`): Schedule handler matches Darwin locations to existing CPs by TIPLOC and UPDATEs pushport columns only. Never deletes or re-inserts. New Darwin-only locations get INSERTed with `source_timetable=false` using natural key ON CONFLICT. This eliminates the duplicate key violation that occurred when the old DELETE+re-insert approach reassigned sequence numbers.
-- **VSTP services** (`source_timetable=false`): DELETE + INSERT is safe since we own all the data and there's no seed conflict. Uses natural key ON CONFLICT for safety.
+- **VSTP services** (`source_timetable=false`): Same UPSERT approach — match by TIPLOC, update timetable columns (schedule IS the timetable for VSTP), preserve pushport columns (accumulated by TS messages). Never deletes CPs. Unmatched existing CPs left as-is for historical analysis.
 - **Seed**: UPSERT-only — `ON CONFLICT (journey_rid, tpl, day_offset, sort_time, stop_type) DO UPDATE` writes only `_timetable` columns. Never deletes rows. Uses `timetable_updated_at` for stale CP detection.
 
 ### TS Location Matching
@@ -266,6 +279,8 @@ Key rules:
 | **Message types** | **All from day one** | Quality info for end users |
 | **Deduplication** | **`generated_at` / `ts_generated_at` + `FOR UPDATE`** | Separate timestamps for schedule vs TS dedup; prevents race conditions |
 | **Source separation** | **`_timetable` / `_pushport` column suffixes** | Seed and consumer write to different columns; no overwrites; board shows source indicators |
+| **No DELETE on CPs** | **Never delete calling points** | Preserves all data for historical analysis; Darwin announces cancellations |
+| **VSTP UPSERT** | **Same pattern as timetable-sourced** | Schedule IS the timetable for VSTP — writes `_timetable` cols; TS writes `_pushport` cols |
 | **Deactivated handler** | **Conditional cancellation** | Checks for movement data before marking cancelled; Darwin `deactivated` ≠ cancelled |
 | **Monitoring** | **Prometheus + Grafana** | Free, self-hosted, Docker-friendly |
 | **Daily seed** | **Cron container at 03:00** | SFTP-delivered PP Timetable files processed nightly |

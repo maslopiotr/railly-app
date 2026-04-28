@@ -62,8 +62,8 @@ METRICS_INTERVAL_MS=30000
 ## Consumer Handlers
 | Handler | File | Priority | Description |
 |---------|------|----------|-------------|
-| `schedule` | `handlers/schedule.ts` | P0 | Upserts journeys + calling points with real-time preservation, dedup via `generated_at` |
-| `TS` | `handlers/trainStatus.ts` | P0 | Updates calling points by composite key `(tpl, pta, ptd)`, inserts VSTP stubs |
+| `schedule` | `handlers/schedule.ts` | P0 | Upserts journeys + calling points. Both timetable & VSTP use TIPLOC matching (no DELETE). Timetable path: updates pushport cols, preserves timetable. VSTP path: updates timetable cols, preserves pushport. Dedup via `generated_at`. Never deletes CPs. |
+| `TS` | `handlers/trainStatus.ts` | P0 | Updates calling points by natural key `(journey_rid, tpl, day_offset, sort_time, stop_type)`, creates Darwin stubs for unknown RIDs, inserts unmatched passenger stops |
 | `deactivated` | `handlers/index.ts` | P0 | Conditionally sets `is_cancelled = true` — checks for movement data first (Darwin `deactivated` ≠ cancelled) |
 | `OW` | `handlers/index.ts` (stub) | P1 | Logs only — Phase 2 implementation |
 | `association` | `handlers/index.ts` (stub) | P2 | Logs only — Phase 2 implementation |
@@ -95,14 +95,18 @@ SELECT message_type, generated_at, processed_at
 
 -- Check calling points with real-time data for a service
 SELECT tpl, ptd_timetable, etd_pushport, atd_pushport, is_cancelled, delay_minutes
-  FROM calling_points WHERE journey_rid = '202604248708107' ORDER BY sequence;
+  FROM calling_points WHERE journey_rid = '202604248708107' ORDER BY day_offset, sort_time;
 
 -- Check service real-time state
 SELECT rid, is_cancelled, cancel_reason, delay_reason, platform, generated_at
   FROM service_rt WHERE rid = '202604248708107';
 
--- Find recent errors
-SELECT * FROM darwin_errors ORDER BY created_at DESC LIMIT 20;
+-- Find recent audit entries (errors, skips, warnings)
+SELECT severity, message_type, error_code, count(*) 
+  FROM darwin_audit GROUP BY severity, message_type, error_code ORDER BY count(*) DESC LIMIT 20;
+
+-- Find recent skipped locations
+SELECT message_type, reason, count(*) FROM skipped_locations GROUP BY message_type, reason ORDER BY count(*) DESC;
 ```
 
 ### Key File Paths

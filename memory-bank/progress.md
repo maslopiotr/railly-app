@@ -2,6 +2,24 @@
 
 ## Completed (2026-04-28)
 
+### VSTP Schedule Handler: DELETE → UPSERT — FIXED ✅
+- ✅ Replaced VSTP DELETE+INSERT with UPSERT (same pattern as timetable-sourced path)
+- ✅ VSTP schedule now matches by TIPLOC, updates timetable columns, preserves pushport
+- ✅ Removed `source_darwin=false` marking for unmatched CPs in both paths
+- ✅ No calling points are ever deleted — all data preserved for historical analysis
+- ✅ Verified: schedule upserts working, 0 errors, 100% success rate
+
+### Seed Phase 4: Preserve Timetable Data — FIXED ✅
+- ✅ Phase 4 now only marks `source_timetable=false` on stale CPs
+- ✅ All timetable columns (pta, ptd, wta, wtd, wtp, act, plat) are PRESERVED
+- ✅ Removed orphan CP deletion and Phase 5 duplicate merge/delete
+- ✅ Darwin Push Port handles cancellations — we don't need to infer them
+
+### Darwin Audit Table: `darwin_errors` → `darwin_audit` ✅
+- ✅ Renamed with `severity` column (`error`, `skip`, `warning`)
+- ✅ `logDarwinAudit()` + convenience wrappers `logDarwinError()` and `logDarwinSkip()`
+- ✅ Added `message_type` column to `skipped_locations`
+
 ### Parser Bug: OR/DT/OPOR/OPDT as Arrays — FIXED ✅
 - ✅ Darwin sends OR/DT/OPOR/OPDT as arrays when services have multiple origin/destination stops
 - ✅ Parser now uses `Array.isArray()` check for ALL location types

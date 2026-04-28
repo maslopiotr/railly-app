@@ -1,28 +1,39 @@
 # Active Context
 
-## Current Focus: Parser Bug Fix + Darwin Audit Table — Complete ✅
+## Current Focus: Data Preservation & Audit Improvements — Complete ✅
 
 ### Completed This Session (2026-04-28)
 
-**Parser Bug: OR/DT/OPOR/OPDT not handled as arrays** — Fixed:
-- ✅ Darwin sends OR/DT/OPOR/OPDT as arrays when services have multiple origin/destination stops
-- ✅ Parser now uses `Array.isArray()` check for all location types (OR, OPOR, DT, OPDT, IP, OPIP, PP)
-- ✅ Verified: RID 202604287111933 now has 21 calling points (was completely skipped before)
+**1. Parser Bug: OR/DT/OPOR/OPDT not handled as arrays** — Fixed:
+- Parser now uses `Array.isArray()` check for ALL location types
+- Verified: RID 202604287111933 now has 21 calling points (was completely skipped)
 
-**Darwin Audit Table: Renamed `darwin_errors` → `darwin_audit`**:
-- ✅ Added `severity` column (`error`, `skip`, `warning`) — defaults to `error` for backward compat
-- ✅ All existing 2,298 error records preserved with severity=`error`
-- ✅ New `logDarwinAudit()` function with convenience wrappers:
-  - `logDarwinError()` — logs exceptions (severity=`error`)
-  - `logDarwinSkip()` — logs intentionally skipped messages (severity=`skip`)
-- ✅ Added `message_type` column to `skipped_locations` table (defaults to `'TS'`)
-- ✅ Schedule handler logs `MISSING_RID` and `MISSING_TPL` skips to both `darwin_audit` and `skipped_locations`
-- ✅ TS handler logs `MISSING_RID` skips to `darwin_audit`
+**2. Darwin Audit Table: `darwin_errors` → `darwin_audit`**:
+- Added `severity` column (`error`, `skip`, `warning`) — defaults to `error`
+- `logDarwinAudit()` + `logDarwinError()` + `logDarwinSkip()` convenience wrappers
+- Added `message_type` column to `skipped_locations` table
+- Schedule/TS handlers log skips to both `darwin_audit` and `skipped_locations`
 
-**Verification**:
-- ✅ Consumer rebuilt and deployed — 0 errors, 100% success rate
-- ✅ 0 missed schedule RIDs for April 28 (live processing covers all services)
-- ✅ `darwin_audit` table operational with `severity` and `error_code` indexes
+**3. VSTP Schedule Handler: DELETE → UPSERT** — Critical fix:
+- Replaced `DELETE FROM calling_points WHERE journey_rid = ${rid}` with TIPLOC matching + UPSERT
+- VSTP path now: match by TIPLOC, update timetable columns, **preserve pushport columns**
+- 18,465 VSTP services / 108K CPs no longer lose real-time data on re-schedule
+- 773 services that had TS-before-schedule ordering — pushport data now preserved
+
+**4. Seed Phase 4: Preserve Timetable Data**:
+- Phase 4 only marks `source_timetable=false` on stale CPs — timetable columns PRESERVED
+- Removed orphan CP deletion and Phase 5 duplicate merge/delete
+- "Never delete calling points" is now the consistent principle across all handlers
+
+**5. Removed `source_darwin=false` marking**:
+- Unmatched CPs in both schedule paths are left as-is
+- If Darwin created a CP, it stays Darwin-sourced regardless of later schedule changes
+
+### Key Design Decisions (This Session)
+- **No DELETE on calling points**: All data preserved for historical analysis. Darwin announces cancellations.
+- **Column ownership**: `_timetable` = planned times (seed or schedule), `_pushport` = real-time (TS handler)
+- **VSTP schedule IS the timetable**: Schedule writes `_timetable` columns for VSTP, TS writes `_pushport`
+- **Audit trail**: `darwin_audit` (severity-aware) + `skipped_locations` (with message_type) for investigation
 
 ### Natural Key Design (from previous session)
 - **journey_rid** — which service
@@ -32,6 +43,4 @@
 - **stop_type** — handles PP+IP at same TIPLOC/time
 
 ### Next Steps (Priority Order)
-1. **Board query: Multi-level COALESCE** with wet times as fallback
-2. **Frontend: Cascading display logic** using wet/eta/etd/ptd priorities
-3. **Replay April 27 darwin_events** if needed for data completeness
+3. **BUG-021: Mobile UI Fix**
