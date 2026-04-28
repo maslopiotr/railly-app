@@ -219,6 +219,14 @@ if (delay > 720) delay -= 1440;   // Scheduled is next day
 - Time-based calling point dots: green=arrived, yellow=next, grey=future, red=cancelled
 - UK timezone: `Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London" })` everywhere
 
+### ⚠️ Tailwind v4 CSS Specificity Trap
+In Tailwind v4, `@apply` generates CSS rules with the **same specificity as utility classes**. If a custom CSS class (e.g., `.service-main { @apply flex items-center }`) appears **later** in the CSS output than a utility class (e.g., `hidden` which is `display: none`), the custom class **wins** — overriding `display: none` with `display: flex`.
+
+**Rule**: Never put `display` (flex/block/hidden) in `@apply` custom classes. Instead:
+- Use Tailwind utility classes (`flex`, `hidden`, `sm:flex`) directly on the HTML element
+- Only put non-display properties (`gap`, `padding`, `cursor`, colors, etc.) in `@apply`
+- This ensures responsive visibility utilities (`hidden`, `sm:flex`) always take precedence
+
 ## Security
 - Input validation: regex whitelist, max length, Drizzle ORM parameterized queries
 - Rate limiting: 100 req/min per IP, 10kb body limit, 30s timeout

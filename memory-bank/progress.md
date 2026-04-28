@@ -74,13 +74,17 @@
 1. Use wet times in calling point display
 2. Show appropriate time based on available data
 
-### Priority 3: BUG-021 — Mobile UI Fix
+### BUG-021: ServiceRow Mobile UI — FIXED ✅
+- ✅ Root cause: `.service-main` CSS had `@apply flex items-center` which overrode `hidden` in Tailwind v4 (equal specificity)
+- ✅ Fix: Removed `flex items-center` from `.service-main` CSS, added `items-center` as Tailwind class on element
+- ✅ Status logic now uses `service.trainStatus` from backend (handles `etd === std` → "on_time")
+- ✅ Mobile: 2-line compact layout. Tablet+: inline row with status badge
 
 ## Known Issues Summary
 
 | Bug | Severity | Status | Impact |
 |-----|----------|--------|--------|
 | BUG-023: CRS gap remaining | Critical | Partially Fixed | 2 missing CRS codes, board fallback needed |
-| BUG-021: Mobile UI | High | Active | Poor UX on mobile |
+| BUG-021: Mobile UI | High | Fixed | CSS specificity override in Tailwind v4 fixed |
 | BUG-022: VSTP duplicate PP | Low | Fixed | Eliminated by natural key (stop_type in unique constraint) |
 | BUG-025: CP stale timestamps | Low | Active | No data loss, observability gap |

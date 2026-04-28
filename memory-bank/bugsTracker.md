@@ -87,19 +87,18 @@ Every bug uses these fields. If a field is unknown, it's marked `?` rather than 
 - **Evidence:** Service `202604268706046` at BHM: DT stop with `ata=10:14`, `atd=NULL` → now shows "arrived".
 - **Impact:** Terminating trains no longer show "at platform" at their destination.
 
-### BUG-021: Mobile UI layout broken — destination hidden, time column too wide, status pushed off-screen
+### BUG-021: Mobile UI layout broken — both mobile and tablet layouts showing simultaneously
 - **Severity:** High
 - **Type:** Bug
-- **Status:** Active
-- **File:** `packages/frontend/src/components/ServiceRow.tsx`, `DepartureBoard.tsx`
-- **Context:** On mobile screens: destination text gets truncated/hidden, the time column takes too much space, table headers are hidden (bad UX), operator should show below destination or arrival, and train status text gets pushed beyond viewport.
-- **Fix-Direction:**
-  1. Reduce time column width — use compact time format
-  2. Add `truncate` / `overflow-hidden` on long destination names
-  3. Move operator below destination on mobile
-  4. Ensure status column wraps rather than overflows
-  5. Show table headers on mobile (even if abbreviated)
-  6. Test at 320px, 375px, and 414px widths
+- **Status:** Fixed (2026-04-28)
+- **File:** `packages/frontend/src/components/ServiceRow.tsx`, `index.css`
+- **Context:** On mobile screens, both the mobile layout (`sm:hidden`) and tablet/desktop layout (`hidden sm:flex service-main`) were rendering simultaneously. Root cause: `.service-main` CSS class had `@apply flex items-center` which generated `display: flex` — in Tailwind v4 this overrode the `hidden` utility (`display: none`) because `.service-main` appeared later in the CSS output with equal specificity.
+- **Fix Applied:**
+  1. Removed `flex items-center` from `.service-main` CSS class — now only applies `gap`, `padding`, `cursor`, `select`, and hover styles
+  2. Added `items-center` as a Tailwind utility class on the element (`hidden sm:flex items-center service-main`) — the `items-center` doesn't set `display`, so `hidden`/`sm:flex` control visibility correctly
+  3. Status logic now uses `service.trainStatus` from backend (handles `etd === std` → "on_time" correctly)
+  4. Mobile: 2-line compact — time+platform+destination on line 1, status on line 2
+  5. Tablet/Desktop: inline row with calling points preview (xl only) and status badge
 
 ### BUG-022: VSTP stubs create duplicate PP entries for circular routes
 - **Severity:** Low
@@ -393,3 +392,15 @@ For timetable seed, we need to find a way to track hash of the processed files, 
 
 ## Bug 35
 Service 202604288702699 is showing as scheduled but should be showing as cancelled - RTT is showing cancellation message: This service was cancelled due to a problem with signalling equipment (J3). - was it affected by the deletion of data that we fixed 21:00 on 28 April?
+
+202604287602243 is also showing as scheduled when viewed at 21:37, but RTT trains are already showing this one as cancelled - investigate.
+
+### Bug 36
+2026-04-28 20:40:55.489 UTC [74778] ERROR:  duplicate key value violates unique constraint "idx_calling_points_natural"
+2026-04-28 20:40:55.489 UTC [74778] DETAIL:  Key (journey_rid, tpl, day_offset, sort_time, stop_type)=(202604297172918, WWRTHNG, 0, 00:13, OPOR) already exists.
+
+2026-04-28 20:45:09.558 UTC [74778] ERROR:  duplicate key value violates unique constraint "idx_calling_points_natural"
+2026-04-28 20:45:09.558 UTC [74778] DETAIL:  Key (journey_rid, tpl, day_offset, sort_time, stop_type)=(202604288035211, DIDCOTP, 0, 21:15, OPOR) already exists.
+
+2026-04-28 20:55:00.292 UTC [77494] ERROR:  duplicate key value violates unique constraint "idx_calling_points_natural"
+2026-04-28 20:55:00.292 UTC [77494] DETAIL:  Key (journey_rid, tpl, day_offset, sort_time, stop_type)=(202604297172055, SLHDTRB, 0, 01:11, PP) already exists.
