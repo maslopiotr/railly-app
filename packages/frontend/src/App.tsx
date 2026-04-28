@@ -8,6 +8,7 @@ import { useFavourites } from "./hooks/useFavourites";
 import { useTheme } from "./hooks/useTheme";
 import { fetchBoard } from "./api/boards";
 import type { StationSearchResult, HybridBoardService } from "@railly-app/shared";
+import { normaliseStationName } from "@railly-app/shared";
 
 // Popular UK stations for quick access
 const POPULAR_STATIONS: StationSearchResult[] = [
@@ -105,7 +106,7 @@ function StationChips({
             onClick={() => onSelect(station)}
             className="chip-hover px-3 py-1.5 bg-gray-100 border border-gray-200 rounded-full text-sm text-gray-700 hover:bg-gray-200 hover:text-gray-900 hover:border-gray-300 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white dark:hover:border-slate-600 flex items-center gap-1.5"
           >
-            <span>{station.name}</span>
+            <span>{normaliseStationName(station.name)}</span>
             <span className="text-xs text-gray-400 font-mono dark:text-slate-500">{station.crsCode}</span>
           </button>
         ))}
@@ -438,7 +439,7 @@ function App() {
                       className="favourite-card group"
                       onClick={() => handleStationSelect(station)}
                     >
-                      <span className="favourite-card-name">{station.name}</span>
+                      <span className="favourite-card-name">{normaliseStationName(station.name)}</span>
                       <span className="favourite-card-crs">{station.crsCode}</span>
                       <button
                         className="favourite-card-remove"

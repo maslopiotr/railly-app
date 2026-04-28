@@ -164,7 +164,7 @@
 }
 
 .service-time {
-  @apply flex flex-col items-center justify-center min-w-[4.5rem];
+  @apply flex flex-col items-start justify-center;
 }
 
 .time-scheduled {
@@ -256,12 +256,6 @@
 
 .service-status {
   @apply flex items-center gap-1;
-}
-
-@media (min-width: 1024px) {
-  .service-status {
-    @apply w-16 justify-center;
-  }
 }
 
 .realtime-badge {
@@ -365,11 +359,11 @@
 
 @media (max-width: 639px) {
   .board-controls {
-    @apply flex-col items-start gap-2 py-2;
+    @apply flex-col items-stretch gap-2 py-2;
   }
 
   .board-controls-right {
-    @apply w-full justify-end;
+    @apply w-full justify-between;
   }
 
   .tab {
@@ -388,12 +382,12 @@
     dark:text-slate-400 dark:bg-slate-800 dark:border-slate-700;
 }
 
-.col-time { @apply w-24 shrink-0 text-right; }
-.col-platform { @apply w-20 shrink-0 text-center; }
+.col-time { @apply w-20 shrink-0 text-right; }
+.col-platform { @apply w-16 shrink-0 text-center; }
 .col-destination { @apply flex-1 min-w-0; }
 .col-calling { @apply w-64 shrink-0; }
-.col-operator { @apply w-40 shrink-0; }
-.col-status { @apply w-16 shrink-0 text-center; }
+.col-operator { @apply w-36 shrink-0; }
+.col-status { @apply w-auto shrink-0 text-center; }
 
 .board-legend {
   @apply flex flex-wrap gap-3 sm:gap-4 justify-center text-[10px] py-1.5

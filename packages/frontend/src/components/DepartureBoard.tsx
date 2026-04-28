@@ -8,6 +8,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { HybridBoardService, HybridBoardResponse, StationSearchResult } from "@railly-app/shared";
+import { normaliseStationName } from "@railly-app/shared";
 import { fetchBoard } from "../api/boards";
 import { ServiceRow } from "./ServiceRow";
 import { TimePicker } from "./TimePicker";
@@ -204,7 +205,7 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
             </button>
           )}
           <h2>
-            {board?.stationName || station.name}
+            {normaliseStationName(board?.stationName || station.name)}
             <span className="crs-badge">{station.crsCode}</span>
             {onToggleFavourite && (
               <button
@@ -269,8 +270,8 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
         </div>
       )}
 
-      {/* Platform legend */}
-      <div className="board-legend">
+      {/* Platform legend (desktop only) */}
+      <div className="board-legend hidden">
         <span className="legend-item">
           <span className="w-2 h-2 rounded-full bg-blue-600 dark:bg-blue-400 inline-block" /> Confirmed
         </span>
@@ -285,13 +286,14 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
         </span>
       </div>
 
-      {/* Table header (desktop only) - sticky */}
-      <div className="board-table-header">
-        <div className="col-time">Time</div>
-        <div className="col-platform">Plat</div>
-        <div className="col-destination">Destination</div>
-        <div className="col-operator">Operator</div>
-        <div className="col-status">Status</div>
+      {/* Table header (desktop only) — matches ServiceRow column widths */}
+      <div className="board-table-header hidden lg:flex">
+        <div className="w-16 shrink-0 text-right pr-1">Time</div>
+        <div className="w-14 shrink-0 text-center">Plat</div>
+        <div className="flex-1 min-w-0">Destination</div>
+        <div className="w-48 shrink-0 hidden xl:block">Calling at</div>
+        <div className="w-20 shrink-0 text-right">Status</div>
+        <div className="w-4 shrink-0" />
       </div>
 
       {/* Pull-to-refresh indicator */}

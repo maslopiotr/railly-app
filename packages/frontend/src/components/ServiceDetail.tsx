@@ -7,6 +7,7 @@
  */
 
 import type { HybridBoardService, PlatformSource } from "@railly-app/shared";
+import { normaliseStationName } from "@railly-app/shared";
 import { CallingPoints } from "./CallingPoints";
 import { LoadingIndicator } from "./LoadingIndicator";
 
@@ -143,7 +144,7 @@ export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefres
             )}
           </div>
           <div className="text-sm text-gray-500 dark:text-slate-400 truncate">
-            {destination?.name || destination?.crs || "Unknown"}
+            {normaliseStationName(destination?.name) || destination?.crs || "Unknown"}
           </div>
         </div>
 
@@ -211,7 +212,7 @@ export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefres
           <span>
             {service.currentLocation.status === "at_platform" ? "At platform" :
              service.currentLocation.status === "approaching" ? "Approaching" :
-             "Departed"} {service.currentLocation.name || service.currentLocation.crs || service.currentLocation.tpl}
+             "Departed"} {normaliseStationName(service.currentLocation.name) || service.currentLocation.crs || service.currentLocation.tpl}
           </span>
         </div>
       )}
@@ -290,9 +291,9 @@ export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefres
 
       {/* Route info */}
       <div className="mx-4 mt-4 flex items-center gap-2 text-xs text-gray-500 dark:text-slate-400">
-        <span>{origin?.name || origin?.crs || "Unknown"}</span>
+        <span>{normaliseStationName(origin?.name) || origin?.crs || "Unknown"}</span>
         <span className="text-gray-300 dark:text-slate-600">→</span>
-        <span>{destination?.name || destination?.crs || "Unknown"}</span>
+        <span>{normaliseStationName(destination?.name) || destination?.crs || "Unknown"}</span>
         {service.tocName && (
           <>
             <span className="text-gray-300 dark:text-slate-600">·</span>

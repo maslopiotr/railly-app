@@ -13,6 +13,7 @@
  */
 
 import type { HybridCallingPoint } from "@railly-app/shared";
+import { normaliseStationName } from "@railly-app/shared";
 
 interface CallingPointsProps {
   points: HybridCallingPoint[];
@@ -217,7 +218,7 @@ function CallingPointRow({
   stopState: StopState;
   isLast: boolean;
 }) {
-  const displayName = name || crs || "Unknown";
+  const displayName = normaliseStationName(name) || crs || "Unknown";
   const displayCrs = crs || "";
 
   const isCurrent = stopState === "current";
