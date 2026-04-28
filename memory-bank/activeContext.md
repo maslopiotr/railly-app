@@ -1,24 +1,30 @@
 # Active Context
 
-## Current Focus: Natural Key Migration — Complete ✅
+## Current Focus: Parser Bug Fix + Darwin Audit Table — Complete ✅
 
-### Completed This Session (2026-04-27)
+### Completed This Session (2026-04-28)
 
-**Natural Key Migration: Replaced `sequence` with `(journey_rid, tpl, day_offset, sort_time, stop_type)`** — Complete:
-- ✅ Added `sort_time CHAR(5) NOT NULL` column to `calling_points`
-- ✅ Created unique index `idx_calling_points_natural` on `(journey_rid, tpl, day_offset, sort_time, stop_type)`
-- ✅ Deduplicated 861 rows that violated the natural key
-- ✅ Dropped old `idx_calling_points_journey_rid_sequence` index
-- ✅ Rewrote `matchLocationsToCps()`: matches by `(tpl, time)` → returns CP `id` instead of `sequence`
-- ✅ All ON CONFLICT clauses use natural key `(journey_rid, tpl, day_offset, sort_time, stop_type)`
-- ✅ API queries use `ORDER BY day_offset, sort_time` instead of `ORDER BY sequence`
-- ✅ Removed `isVstpService` guard: TS handler inserts unmatched passenger stops for ALL services
-- ✅ Fixed double-counting of inserted stops in skipped log
-- ✅ **Dropped `sequence` column from DB and all code** — Phase 5 complete
-- ✅ All packages compile and Docker builds pass
-- ✅ Consumer, API, and board queries verified working
+**Parser Bug: OR/DT/OPOR/OPDT not handled as arrays** — Fixed:
+- ✅ Darwin sends OR/DT/OPOR/OPDT as arrays when services have multiple origin/destination stops
+- ✅ Parser now uses `Array.isArray()` check for all location types (OR, OPOR, DT, OPDT, IP, OPIP, PP)
+- ✅ Verified: RID 202604287111933 now has 21 calling points (was completely skipped before)
 
-### Natural Key Design
+**Darwin Audit Table: Renamed `darwin_errors` → `darwin_audit`**:
+- ✅ Added `severity` column (`error`, `skip`, `warning`) — defaults to `error` for backward compat
+- ✅ All existing 2,298 error records preserved with severity=`error`
+- ✅ New `logDarwinAudit()` function with convenience wrappers:
+  - `logDarwinError()` — logs exceptions (severity=`error`)
+  - `logDarwinSkip()` — logs intentionally skipped messages (severity=`skip`)
+- ✅ Added `message_type` column to `skipped_locations` table (defaults to `'TS'`)
+- ✅ Schedule handler logs `MISSING_RID` and `MISSING_TPL` skips to both `darwin_audit` and `skipped_locations`
+- ✅ TS handler logs `MISSING_RID` skips to `darwin_audit`
+
+**Verification**:
+- ✅ Consumer rebuilt and deployed — 0 errors, 100% success rate
+- ✅ 0 missed schedule RIDs for April 28 (live processing covers all services)
+- ✅ `darwin_audit` table operational with `severity` and `error_code` indexes
+
+### Natural Key Design (from previous session)
 - **journey_rid** — which service
 - **tpl** — which location (TIPLOC)
 - **day_offset** — overnight/next-day stops (0=same day, 1=next day)
@@ -28,4 +34,4 @@
 ### Next Steps (Priority Order)
 1. **Board query: Multi-level COALESCE** with wet times as fallback
 2. **Frontend: Cascading display logic** using wet/eta/etd/ptd priorities
-3. **Investigate schedule handler "missing tpl" warning** (likely cosmetic)
+3. **Replay April 27 darwin_events** if needed for data completeness

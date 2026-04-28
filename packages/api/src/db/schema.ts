@@ -200,30 +200,32 @@ export const darwinEvents = pgTable(
 );
 
 /**
- * Darwin errors — structured log of every consumer failure
+ * Darwin audit — structured log of every consumer failure, skip, or warning
+ * Severity levels: error (exception), skip (intentionally skipped), warning (processed with issues)
  * Used for debugging, replay, and alerting.
- * Partitioned by day; old partitions dropped after retention period.
  */
-export const darwinErrors = pgTable(
-  "darwin_errors",
+export const darwinAudit = pgTable(
+  "darwin_audit",
   {
     id: serial("id").primaryKey(),
     messageType: varchar("message_type", { length: 20 }).notNull(),
+    severity: varchar("severity", { length: 10 }).notNull().default("error"), // error, skip, warning
     rid: varchar("rid", { length: 20 }),
-    errorCode: varchar("error_code", { length: 100 }), // e.g. "UNDEFINED_VALUE", "FK_VIOLATION"
-    errorMessage: text("error_message"), // Full error message
-    rawJson: text("raw_json"), // Full message that caused the error
-    stackTrace: text("stack_trace"), // First 2000 chars of stack
+    errorCode: varchar("error_code", { length: 100 }), // e.g. "MISSING_RID", "MISSING_TPL", "PARSE_ERROR"
+    errorMessage: text("error_message"), // Human-readable description
+    rawJson: text("raw_json"), // Full message that caused the issue
+    stackTrace: text("stack_trace"), // First 2000 chars of stack (errors only)
     receivedAt: timestamp("received_at", { withTimezone: true }).defaultNow(),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }), // When fixed (null = unresolved)
     retryCount: integer("retry_count").default(0),
   },
   (table) => [
-    index("idx_darwin_errors_rid").on(table.rid),
-    index("idx_darwin_errors_message_type").on(table.messageType),
-    index("idx_darwin_errors_received_at").on(table.receivedAt),
-    index("idx_darwin_errors_error_code").on(table.errorCode),
-    index("idx_darwin_errors_resolved_at").on(table.resolvedAt),
+    index("idx_darwin_audit_rid").on(table.rid),
+    index("idx_darwin_audit_message_type").on(table.messageType),
+    index("idx_darwin_audit_received_at").on(table.receivedAt),
+    index("idx_darwin_audit_error_code").on(table.errorCode),
+    index("idx_darwin_audit_resolved_at").on(table.resolvedAt),
+    index("idx_darwin_audit_severity").on(table.severity),
   ],
 );
 
@@ -268,8 +270,8 @@ export type NewLocationRef = typeof locationRef.$inferInsert;
 export type NewServiceRt = typeof serviceRt.$inferInsert;
 /** Type for a service_rt row as read from the DB */
 export type ServiceRtRow = typeof serviceRt.$inferSelect;
-/** Type for inserting a darwin_errors row */
-export type NewDarwinError = typeof darwinErrors.$inferInsert;
+/** Type for inserting a darwin_audit row */
+export type NewDarwinAudit = typeof darwinAudit.$inferInsert;
 
 /**
  * Skipped locations — TIPLOCs that were in a Darwin TS message but had no

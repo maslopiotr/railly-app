@@ -125,10 +125,10 @@ function startMetricsLogging(): ReturnType<typeof setInterval> {
 
 // ── Retention Cleanup ──────────────────────────────────────────────────────────
 // Delete processed darwin_events older than 3 days.
-// Error records (darwin_errors) are kept indefinitely.
+// Audit records (darwin_audit) are kept indefinitely.
 // darwin_events with processed_at IS NULL (unprocessed) are also kept.
 
-const RETENTION_DAYS = parseInt(process.env.RETENTION_DAYS || "7", 10);
+const RETENTION_DAYS = parseInt(process.env.RETENTION_DAYS || "14", 10);
 const CLEANUP_INTERVAL_MS = parseInt(process.env.CLEANUP_INTERVAL_MS || "3600000", 10); // Default: 1 hour
 
 async function runRetentionCleanup(): Promise<number> {

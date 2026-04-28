@@ -1,5 +1,22 @@
 # Progress
 
+## Completed (2026-04-28)
+
+### Parser Bug: OR/DT/OPOR/OPDT as Arrays — FIXED ✅
+- ✅ Darwin sends OR/DT/OPOR/OPDT as arrays when services have multiple origin/destination stops
+- ✅ Parser now uses `Array.isArray()` check for ALL location types
+- ✅ Verified: RID 202604287111933 now has 21 calling points (was completely skipped before)
+
+### Darwin Audit Table: `darwin_errors` → `darwin_audit` ✅
+- ✅ Renamed `darwin_errors` → `darwin_audit` with `severity` column (`error`, `skip`, `warning`)
+- ✅ All 2,298 existing error records preserved with severity=`error`
+- ✅ `logDarwinAudit()` function with `logDarwinError()` and `logDarwinSkip()` convenience wrappers
+- ✅ Added `message_type` column to `skipped_locations` table
+- ✅ Schedule handler logs `MISSING_RID` and `MISSING_TPL` skips to `darwin_audit` + `skipped_locations`
+- ✅ TS handler logs `MISSING_RID` skips to `darwin_audit`
+- ✅ Empty TIPLOC warnings logged to `darwin_audit` for investigation
+- ✅ 0 missed schedule RIDs for April 28 (live processing covers all services)
+
 ## Completed (2026-04-27)
 
 ### Natural Key Migration: `sequence` → `(journey_rid, tpl, day_offset, sort_time, stop_type)` ✅ COMPLETE

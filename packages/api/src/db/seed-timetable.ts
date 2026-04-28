@@ -663,45 +663,32 @@ async function seed() {
   console.log(`   Backfilled ${crsBackfillCount} calling points with CRS/name from location_ref`);
   logElapsed("Phase 3", phase3Start);
 
-  // ── Phase 4: Clean up stale timetable CPs ──────────────────────────────────
+  // ── Phase 4: Mark stale timetable CPs ──────────────────────────────────
   // CPs that had source_timetable=true from a previous seed run but were not
-  // touched by this seed (timetable_updated_at < seed start) are stale:
-  // - If source_darwin=true: keep but mark source_timetable=false (Darwin still owns them)
-  // - If source_darwin=false: delete (orphan — no source owns them)
-  console.log("\n📋 Phase 4: Clean up stale timetable calling points...");
+  // touched by this seed (timetable_updated_at < seed start) are stale.
+  // We mark them as no longer in the current timetable but PRESERVE all timetable
+  // data (pta, ptd, wta, wtd, wtp, act, plat) for historical analysis.
+  // Darwin Push Port handles cancellations — we don't need to infer them.
+  // We do NOT delete orphan CPs — they may still have value for historical queries.
+  console.log("\n📋 Phase 4: Mark stale timetable calling points...");
   const phase4Start = Date.now();
 
-  // Mark stale timetable CPs as no longer sourced from timetable
+  // Mark stale timetable CPs as no longer sourced from current timetable
+  // BUT preserve all timetable columns for historical analysis
   const staleUpdateResult = await db
     .update(callingPoints)
     .set({
       sourceTimetable: false,
       timetableUpdatedAt: sql`NOW()`,
-      // Clear timetable columns on stale CPs
-      platTimetable: null,
-      ptaTimetable: null,
-      ptdTimetable: null,
-      wtaTimetable: null,
-      wtdTimetable: null,
-      wtpTimetable: null,
-      act: null,
+      // NOTE: timetable columns (pta, ptd, wta, wtd, wtp, act, plat) are PRESERVED
+      // for historical analysis. Darwin announces cancellations separately.
     })
     .where(
       sql`${callingPoints.sourceTimetable} = true AND (${callingPoints.timetableUpdatedAt} < ${new Date(seedStart).toISOString()}::timestamp with time zone OR ${callingPoints.timetableUpdatedAt} IS NULL)`,
     );
 
   const staleUpdateCount = (staleUpdateResult as unknown as { rowCount: number }).rowCount ?? 0;
-  console.log(`   Marked ${staleUpdateCount} stale timetable CPs as source_timetable=false`);
-
-  // Delete orphan CPs (no source at all)
-  const orphanDeleteResult = await db
-    .delete(callingPoints)
-    .where(
-      sql`${callingPoints.sourceTimetable} = false AND ${callingPoints.sourceDarwin} = false`,
-    );
-
-  const orphanDeleteCount = (orphanDeleteResult as unknown as { rowCount: number }).rowCount ?? 0;
-  console.log(`   Deleted ${orphanDeleteCount} orphan CPs (no source)`);
+  console.log(`   Marked ${staleUpdateCount} stale timetable CPs as source_timetable=false (timetable data preserved)`);
 
   // Verify with actual counts (Drizzle rowCount can be unreliable for large updates)
   const [staleVerify] = await db
@@ -713,51 +700,6 @@ async function seed() {
   }
 
   logElapsed("Phase 4", phase4Start);
-
-  // ── Phase 5: Clean up stale duplicate CPs ────────────────────────────────
-  // Stale CPs marked source_timetable=false but source_darwin=true may duplicate
-  // current timetable CPs at the same (journey_rid, tpl). When the old timetable
-  // had a longer route (e.g., continuing past Euston), the old CPs got Darwin data
-  // but are now redundant because the current timetable CP already has that data.
-  // Merge pushport data from stale duplicates into timetable CPs, then delete.
-  console.log("\n📋 Phase 5: Clean up stale duplicate calling points...");
-  const phase5Start = Date.now();
-
-  // Merge pushport data from stale duplicates into current timetable CPs
-  const mergeResult = await db.execute(sql`
-    UPDATE calling_points tt_cp
-    SET
-      eta_pushport = COALESCE(tt_cp.eta_pushport, stale_cp.eta_pushport),
-      etd_pushport = COALESCE(tt_cp.etd_pushport, stale_cp.etd_pushport),
-      ata_pushport = COALESCE(tt_cp.ata_pushport, stale_cp.ata_pushport),
-      atd_pushport = COALESCE(tt_cp.atd_pushport, stale_cp.atd_pushport),
-      plat_pushport = COALESCE(tt_cp.plat_pushport, stale_cp.plat_pushport),
-      plat_source = COALESCE(tt_cp.plat_source, stale_cp.plat_source)
-    FROM calling_points stale_cp
-    WHERE stale_cp.source_timetable = false
-      AND stale_cp.source_darwin = true
-      AND stale_cp.journey_rid = tt_cp.journey_rid
-      AND stale_cp.tpl = tt_cp.tpl
-      AND tt_cp.source_timetable = true
-  `);
-  const mergeCount = (mergeResult as { rowCount?: number }).rowCount ?? 0;
-  console.log(`   Merged pushport data from ${mergeCount} stale duplicates into timetable CPs`);
-
-  // Delete stale duplicate CPs that have a timetable CP at the same (journey_rid, tpl)
-  const deleteResult = await db.execute(sql`
-    DELETE FROM calling_points stale_cp
-    WHERE stale_cp.source_timetable = false
-      AND stale_cp.source_darwin = true
-      AND EXISTS (
-        SELECT 1 FROM calling_points tt_cp
-        WHERE tt_cp.journey_rid = stale_cp.journey_rid
-          AND tt_cp.tpl = stale_cp.tpl
-          AND tt_cp.source_timetable = true
-      )
-  `);
-  const deleteCount = (deleteResult as { rowCount?: number }).rowCount ?? 0;
-  console.log(`   Deleted ${deleteCount} stale duplicate CPs`);
-  logElapsed("Phase 5", phase5Start);
 
   // ── Verification ─────────────────────────────────────────────────────────
   console.log("\n📊 Verification:");

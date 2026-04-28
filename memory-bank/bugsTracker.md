@@ -390,3 +390,6 @@ stations/BHI/202604276772376?name=BIRMINGHAM%2520INTERNATIONAL when viewed from 
 ### Bug 34
 
 For timetable seed, we need to find a way to track hash of the processed files, so even if the files were uploaded within the last 12hrs, they won't get processed twice.
+
+## Bug 35
+Service 202604288702699 is showing as scheduled but should be showing as cancelled - RTT is showing cancellation message: This service was cancelled due to a problem with signalling equipment (J3). - was it affected by the deletion of data that we fixed 21:00 on 28 April?

@@ -22,6 +22,7 @@
 
 import type { DarwinTS, DarwinTSLocation } from "@railly-app/shared";
 import { sql } from "../db.js";
+import { logDarwinSkip } from "./index.js";
 
 interface CpUpdate {
   id: number; // CP primary key for updates
@@ -380,6 +381,7 @@ export async function handleTrainStatus(
 
   if (!rid) {
     console.warn("   ⚠️ TS message missing RID — skipping");
+    await logDarwinSkip("TS", null, "MISSING_RID", "TS message missing RID", JSON.stringify(ts).slice(0, 500));
     return;
   }
 
@@ -817,8 +819,8 @@ export async function handleTrainStatus(
       try {
         for (const skip of skippedDetails) {
           await sql`
-            INSERT INTO skipped_locations (rid, tpl, ssd, reason, ts_generated_at)
-            VALUES (${rid}, ${skip.tpl}, ${tsSsd}, ${skip.reason}, ${generatedAt}::timestamp with time zone)
+            INSERT INTO skipped_locations (rid, tpl, ssd, reason, message_type, ts_generated_at)
+            VALUES (${rid}, ${skip.tpl}, ${tsSsd}, ${skip.reason}, 'TS', ${generatedAt}::timestamp with time zone)
           `;
         }
       } catch (skipErr) {

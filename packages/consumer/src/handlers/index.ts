@@ -75,8 +75,36 @@ async function logDarwinEvent(
 }
 
 /**
- * Log a structured error to the darwin_errors table.
- * Uses INSERT ... ON CONFLICT DO NOTHING to avoid duplicates in the same second.
+ * Log an entry to the darwin_audit table.
+ * Severity: "error" (exception), "skip" (intentionally skipped), "warning" (processed with issues)
+ */
+async function logDarwinAudit(
+  messageType: string,
+  severity: "error" | "skip" | "warning",
+  rid: string | null,
+  errorCode: string,
+  errorMessage: string,
+  rawJson: string,
+  retryCount = 0,
+  stackTrace: string | null = null,
+): Promise<void> {
+  try {
+    await sql`
+      INSERT INTO darwin_audit (
+        message_type, severity, rid, error_code, error_message, raw_json, stack_trace, retry_count
+      ) VALUES (
+        ${messageType}, ${severity}, ${rid}, ${errorCode}, ${errorMessage.slice(0, 2000)},
+        ${rawJson.slice(0, 4990)}, ${stackTrace}, ${retryCount}
+      )
+    `;
+  } catch (logErr) {
+    // Last resort: don't let audit logging itself crash the consumer
+    console.error("   ⚠️ Audit log insert failed:", (logErr as Error).message);
+  }
+}
+
+/**
+ * Convenience: log an error entry (for caught exceptions).
  */
 async function logDarwinError(
   messageType: string,
@@ -90,20 +118,20 @@ async function logDarwinError(
     ?? "UNKNOWN";
   const errorMessage = error.message.slice(0, 2000);
   const stackTrace = error.stack?.slice(0, 1990) ?? null;
+  await logDarwinAudit(messageType, "error", rid, errorCode, errorMessage, rawJson, retryCount, stackTrace);
+}
 
-  try {
-    await sql`
-      INSERT INTO darwin_errors (
-        message_type, rid, error_code, error_message, raw_json, stack_trace, retry_count
-      ) VALUES (
-        ${messageType}, ${rid}, ${errorCode}, ${errorMessage},
-        ${rawJson.slice(0, 4990)}, ${stackTrace}, ${retryCount}
-      )
-    `;
-  } catch (logErr) {
-    // Last resort: don't let error logging itself crash the consumer
-    console.error("   ⚠️ Error log insert failed:", (logErr as Error).message);
-  }
+/**
+ * Convenience: log a skip entry (for intentionally skipped messages/locations).
+ */
+export async function logDarwinSkip(
+  messageType: string,
+  rid: string | null,
+  errorCode: string,
+  errorMessage: string,
+  rawJson: string = "",
+): Promise<void> {
+  await logDarwinAudit(messageType, "skip", rid, errorCode, errorMessage, rawJson);
 }
 
 /**

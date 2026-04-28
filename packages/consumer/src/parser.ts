@@ -334,14 +334,18 @@ export function parseDarwinMessage(raw: Buffer | string | null): DarwinMessage |
       if (!sched.locations && (sched.OR || sched.OPOR || sched.IP || sched.OPIP || sched.PP || sched.DT || sched.OPDT)) {
         const locations: unknown[] = [];
         if (sched.OR) {
-          const or = sched.OR as Record<string, unknown>;
-          or.stopType = "OR";
-          locations.push(or);
+          const orArray = Array.isArray(sched.OR) ? sched.OR : [sched.OR];
+          for (const or of orArray) {
+            (or as Record<string, unknown>).stopType = "OR";
+            locations.push(or);
+          }
         }
         if (sched.OPOR) {
-          const opor = sched.OPOR as Record<string, unknown>;
-          opor.stopType = "OPOR";
-          locations.push(opor);
+          const oporArray = Array.isArray(sched.OPOR) ? sched.OPOR : [sched.OPOR];
+          for (const opor of oporArray) {
+            (opor as Record<string, unknown>).stopType = "OPOR";
+            locations.push(opor);
+          }
         }
         if (sched.IP) {
           const ipArray = Array.isArray(sched.IP) ? sched.IP : [sched.IP];
@@ -365,14 +369,18 @@ export function parseDarwinMessage(raw: Buffer | string | null): DarwinMessage |
           }
         }
         if (sched.DT) {
-          const dt = sched.DT as Record<string, unknown>;
-          dt.stopType = "DT";
-          locations.push(dt);
+          const dtArray = Array.isArray(sched.DT) ? sched.DT : [sched.DT];
+          for (const dt of dtArray) {
+            (dt as Record<string, unknown>).stopType = "DT";
+            locations.push(dt);
+          }
         }
         if (sched.OPDT) {
-          const opdt = sched.OPDT as Record<string, unknown>;
-          opdt.stopType = "OPDT";
-          locations.push(opdt);
+          const opdtArray = Array.isArray(sched.OPDT) ? sched.OPDT : [sched.OPDT];
+          for (const opdt of opdtArray) {
+            (opdt as Record<string, unknown>).stopType = "OPDT";
+            locations.push(opdt);
+          }
         }
         sched.locations = locations;
       }
