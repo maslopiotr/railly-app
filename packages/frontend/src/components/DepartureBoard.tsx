@@ -287,7 +287,7 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
       </div>
 
       {/* Table header (desktop only) — matches ServiceRow column widths */}
-      <div className="board-table-header hidden lg:flex">
+      <div className="board-table-header flex">
         <div className="w-16 shrink-0 text-right pr-1">Time</div>
         <div className="w-14 shrink-0 text-center">Plat</div>
         <div className="flex-1 min-w-0">Destination</div>

@@ -182,8 +182,13 @@ export function ServiceRow({ service, isArrival, stationCrs, onSelect }: Service
             <span className="text-xs text-slate-500">Scheduled</span>
           )}
 
-          {isArrival && operatorText && (
-            <span className="text-[10px] text-slate-600 ml-1">{operatorText}</span>
+          {operatorText && (
+            <div className="text-xs text-slate-500 truncate">
+            <span className="text-[10px] text-slate-300 ml-1">{operatorText}</span>
+            {service.trainId && <span className="service-id ml-1">{service.trainId}</span>}
+            {service.length && <span className="service-length ml-1">· {service.length} coaches</span>}
+          </div>
+
           )}
         </div>
       </div>

@@ -22,6 +22,9 @@ import { logDarwinSkip } from "./index.js";
 interface ExistingCpRow {
   id: number;
   tpl: string;
+  sortTime: string;
+  stopType: string;
+  dayOffset: number;
   sourceTimetable: boolean;
   sourceDarwin: boolean;
   // Pushport columns (real-time data)
@@ -252,7 +255,8 @@ export async function handleSchedule(
       // ── Fetch existing CPs for this RID ──
       const existingCpRows = await tx`
         SELECT
-          id, tpl, source_timetable, source_darwin,
+          id, tpl, sort_time, stop_type, day_offset,
+          source_timetable, source_darwin,
           eta_pushport, etd_pushport, ata_pushport, atd_pushport,
           plat_pushport, plat_source,
           delay_minutes, delay_reason,
@@ -274,6 +278,9 @@ export async function handleSchedule(
       const existingCps: ExistingCpRow[] = existingCpRows.map((row) => ({
         id: Number(row.id),
         tpl: String(row.tpl || ""),
+        sortTime: String(row.sort_time || "00:00"),
+        stopType: String(row.stop_type || "IP"),
+        dayOffset: Number(row.day_offset ?? 0),
         sourceTimetable: Boolean(row.source_timetable),
         sourceDarwin: Boolean(row.source_darwin),
         etaPushport: row.eta_pushport ? String(row.eta_pushport) : null,
@@ -301,16 +308,15 @@ export async function handleSchedule(
 
       if (isTimetableSourced) {
         // ── TIMETABLE-SOURCED PATH ──────────────────────────────────────────
-        // Match Darwin locations to existing CPs by TIPLOC.
+        // Match Darwin locations to existing CPs by natural key (tpl, sort_time, stop_type).
         // Update pushport columns only — preserve timetable columns from seed.
         // Insert new Darwin-only CPs for locations not in timetable.
 
-        // Build TIPLOC-keyed map (array for circular trips)
-        const cpByTpl = new Map<string, ExistingCpRow[]>();
+        // Build natural-key map: (tpl, sortTime, stopType) → ExistingCpRow
+        const cpByNaturalKey = new Map<string, ExistingCpRow>();
         for (const cp of existingCps) {
-          const arr = cpByTpl.get(cp.tpl) || [];
-          arr.push(cp);
-          cpByTpl.set(cp.tpl, arr);
+          const key = `${cp.tpl}:${cp.sortTime}:${cp.stopType}`;
+          cpByNaturalKey.set(key, cp);
         }
 
         // Track which existing CPs have been matched (by id)
@@ -318,11 +324,11 @@ export async function handleSchedule(
 
         // Process each Darwin location
         for (const cp of cps) {
-          const tplEntries = cpByTpl.get(cp.tpl) || [];
-          // Find first unmatched entry (for circular trips)
-          const match = tplEntries.find((e) => !matchedCpIds.has(e.id));
+          const sortTime = computeSortTime(cp);
+          const key = `${cp.tpl}:${sortTime}:${cp.stopType}`;
+          const match = cpByNaturalKey.get(key);
 
-          if (match) {
+          if (match && !matchedCpIds.has(match.id)) {
             // ── Match found: UPDATE pushport columns only ──
             matchedCpIds.add(match.id);
 
@@ -347,7 +353,6 @@ export async function handleSchedule(
             `;
           } else {
             // ── No match: INSERT new Darwin-only CP ──
-            const sortTime = computeSortTime(cp);
             await tx`
               INSERT INTO calling_points (
                 journey_rid, sort_time, ssd, stop_type, tpl,
@@ -367,9 +372,6 @@ export async function handleSchedule(
                 false, true
               )
               ON CONFLICT (journey_rid, tpl, day_offset, sort_time, stop_type) DO UPDATE SET
-                stop_type = EXCLUDED.stop_type,
-                tpl = EXCLUDED.tpl,
-                sort_time = EXCLUDED.sort_time,
                 pta_timetable = COALESCE(EXCLUDED.pta_timetable, calling_points.pta_timetable),
                 ptd_timetable = COALESCE(EXCLUDED.ptd_timetable, calling_points.ptd_timetable),
                 wta_timetable = COALESCE(EXCLUDED.wta_timetable, calling_points.wta_timetable),
@@ -384,17 +386,16 @@ export async function handleSchedule(
 
       } else {
         // ── VSTP PATH (no timetable source) ─────────────────────────────────
-        // Same UPSERT approach as timetable-sourced, but update timetable columns
-        // (schedule IS the timetable for VSTP) and preserve pushport columns
-        // (accumulated by TS messages — we must not lose real-time data).
+        // Match Darwin locations to existing CPs by natural key (tpl, sort_time, stop_type).
+        // Update timetable columns (schedule IS the timetable for VSTP) and
+        // preserve pushport columns (accumulated by TS messages).
         // No DELETE — unmatched CPs are left as-is for historical analysis.
 
-        // Build TIPLOC-keyed map (array for circular trips)
-        const cpByTpl = new Map<string, ExistingCpRow[]>();
+        // Build natural-key map: (tpl, sortTime, stopType) → ExistingCpRow
+        const cpByNaturalKey = new Map<string, ExistingCpRow>();
         for (const cp of existingCps) {
-          const arr = cpByTpl.get(cp.tpl) || [];
-          arr.push(cp);
-          cpByTpl.set(cp.tpl, arr);
+          const key = `${cp.tpl}:${cp.sortTime}:${cp.stopType}`;
+          cpByNaturalKey.set(key, cp);
         }
 
         // Track which existing CPs have been matched (by id)
@@ -402,11 +403,11 @@ export async function handleSchedule(
 
         // Process each Darwin location
         for (const cp of cps) {
-          const tplEntries = cpByTpl.get(cp.tpl) || [];
-          // Find first unmatched entry (for circular trips)
-          const match = tplEntries.find((e) => !matchedCpIds.has(e.id));
+          const sortTime = computeSortTime(cp);
+          const key = `${cp.tpl}:${sortTime}:${cp.stopType}`;
+          const match = cpByNaturalKey.get(key);
 
-          if (match) {
+          if (match && !matchedCpIds.has(match.id)) {
             // ── Match found: UPDATE timetable columns, preserve pushport ──
             matchedCpIds.add(match.id);
 
@@ -415,6 +416,9 @@ export async function handleSchedule(
               ? sql`AND (ts_generated_at IS NULL OR ts_generated_at = ${match.tsGeneratedAt}::timestamp with time zone)`
               : sql`AND ts_generated_at IS NULL`;
 
+            // Note: sort_time, stop_type, day_offset are NOT updated because
+            // they are part of the natural key and already match.
+            // Updating them would risk colliding with another CP row.
             await tx`
               UPDATE calling_points
               SET
@@ -425,9 +429,6 @@ export async function handleSchedule(
                 wtp_timetable = ${cp.wtp}::varchar(8),
                 plat_timetable = ${cp.plat}::varchar(5),
                 act = ${cp.act},
-                sort_time = ${computeSortTime(cp)},
-                stop_type = ${cp.stopType},
-                day_offset = ${cp.dayOffset},
                 is_cancelled = ${cp.isCancelled},
                 cancel_reason = ${cp.cancelReason},
                 source_darwin = true
@@ -436,7 +437,6 @@ export async function handleSchedule(
             `;
           } else {
             // ── No match: INSERT new CP with timetable columns from schedule ──
-            const sortTime = computeSortTime(cp);
             await tx`
               INSERT INTO calling_points (
                 journey_rid, sort_time, ssd, stop_type, tpl,
@@ -454,9 +454,6 @@ export async function handleSchedule(
                 false, true
               )
               ON CONFLICT (journey_rid, tpl, day_offset, sort_time, stop_type) DO UPDATE SET
-                stop_type = EXCLUDED.stop_type,
-                tpl = EXCLUDED.tpl,
-                sort_time = EXCLUDED.sort_time,
                 pta_timetable = COALESCE(EXCLUDED.pta_timetable, calling_points.pta_timetable),
                 ptd_timetable = COALESCE(EXCLUDED.ptd_timetable, calling_points.ptd_timetable),
                 wta_timetable = COALESCE(EXCLUDED.wta_timetable, calling_points.wta_timetable),
@@ -466,7 +463,6 @@ export async function handleSchedule(
                 act = COALESCE(EXCLUDED.act, calling_points.act),
                 is_cancelled = EXCLUDED.is_cancelled,
                 cancel_reason = EXCLUDED.cancel_reason,
-                day_offset = EXCLUDED.day_offset,
                 source_darwin = true
             `;
           }

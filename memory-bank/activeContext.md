@@ -1,8 +1,30 @@
 # Active Context
 
-## Current Focus: Data Preservation & Audit Improvements — Complete ✅
+## Current Focus: PostgreSQL 23505 Fix — Complete ✅
 
-### Completed This Session (2026-04-28)
+### Completed This Session (2026-04-29)
+
+**1. PostgreSQL 23505 unique constraint violation fix** — Critical:
+- **Root cause**: Schedule handler matched CPs by TIPLOC only, then UPDATED `sort_time`/`stop_type`/`day_offset` on matched rows. When two CPs shared a TIPLOC (e.g., PP+IP at same junction, or origin+dest at same station), changing one CP's natural key could collide with the other → 23505 error.
+- **Fix in `schedule.ts`**: Changed matching from TIPLOC-only to natural key `(tpl, sort_time, stop_type)`. Removed natural key columns from UPDATE SET (they already match → no collision possible). Applied to both VSTP and timetable paths.
+- **Fix in `trainStatus.ts`**: Added `deriveStopType()` helper using Darwin's own `isOrigin`/`isDestination`/`isPass` flags. VSTP stubs use `OP*` conventions (OPOR/OPDT/OPIP), timetable services use public conventions (OR/DT/IP). Replaced hardcoded `'IP'` in `createDarwinStub` and old `OR`/`DT`/`IP` derivation in unmatched stops.
+- **Result**: Zero 23505 errors after fix. All messages processing cleanly.
+
+**2. Skipped locations analysis (29 April)**:
+- `passing_point_no_match`: 2.6M (expected — PPs not in timetable)
+- `passenger_stop_no_match`: 208K (historical, 0 new since restart)
+- `origin_no_match`: 0 (no data loss)
+- `destination_no_match`: 0 (no data loss)
+
+### Key Design Decisions (This Session)
+- **Natural key matching**: Schedule handler matches by `(tpl, sort_time, stop_type)` not just TIPLOC
+- **Never UPDATE natural key columns**: When a match is found by natural key, `sort_time`/`stop_type`/`day_offset` are NOT updated (they already match). Updating them risks collision.
+- **VSTP = operational**: VSTP services use `OP*` stop types (OPOR/OPIP/OPDT) because they don't appear in the public timetable
+- **Darwin flags = stop type data**: `isOrigin`/`isDestination`/`isPass` are Darwin-provided data equivalent to schedule's XML element names (OR/OPOR/IP/OPIP/PP/DT/OPDT)
+
+## Previous: Data Preservation & Audit Improvements — Complete ✅
+
+### Completed (2026-04-28)
 
 **1. Parser Bug: OR/DT/OPOR/OPDT not handled as arrays** — Fixed:
 - Parser now uses `Array.isArray()` check for ALL location types

@@ -395,7 +395,25 @@ Service 202604288702699 is showing as scheduled but should be showing as cancell
 
 202604287602243 is also showing as scheduled when viewed at 21:37, but RTT trains are already showing this one as cancelled - investigate.
 
-### Bug 36
+### Bug 36 — BUG-036: PostgreSQL 23505 unique constraint violation on `idx_calling_points_natural`
+- **Severity:** Critical
+- **Type:** Data-Integrity
+- **Status:** Fixed (2026-04-29)
+- **File:** `packages/consumer/src/handlers/schedule.ts`, `packages/consumer/src/handlers/trainStatus.ts`
+- **Context:** Schedule handler matched CPs by TIPLOC only, then UPDATED `sort_time`/`stop_type`/`day_offset` on the matched row. When two CPs shared a TIPLOC (e.g., PP+IP at same junction, OPOR+OPDT at same station), changing one CP's natural key values collided with the other CP → 23505 error. Also, `createDarwinStub` hardcoded `stop_type='IP'` for all TS stubs, creating 217 zombie IP rows that coexisted with proper OPIP/OPOR/OPDT rows.
+- **Evidence:**
+  - `Key (journey_rid, tpl, day_offset, sort_time, stop_type)=(202604297172918, WWRTHNG, 0, 00:13, OPOR) already exists`
+  - `Key (journey_rid, tpl, day_offset, sort_time, stop_type)=(202604288035211, DIDCOTP, 0, 21:15, OPOR) already exists`
+  - `Key (journey_rid, tpl, day_offset, sort_time, stop_type)=(202604297172055, SLHDTRB, 0, 01:11, PP) already exists`
+  - 209 VSTP services with zombie IP stubs coexisting with proper OP* rows
+- **Impact:** Schedule messages for VSTP services with circular routes or same-TIPLOC stops failed with 23505 errors. Pushport data not updated.
+- **Fix:**
+  1. **`schedule.ts`**: Changed matching from TIPLOC-only to natural key `(tpl, sort_time, stop_type)`. Removed natural key columns from UPDATE SET (they already match → no collision possible). Applied to both VSTP and timetable paths.
+  2. **`trainStatus.ts`**: Added `deriveStopType()` helper using Darwin's own `isOrigin`/`isDestination`/`isPass` flags. VSTP stubs use `OP*` conventions, timetable services use public conventions. Replaced hardcoded `'IP'` in `createDarwinStub` and old `OR`/`DT`/`IP` derivation in unmatched stops.
+  3. **Result**: Zero 23505 errors after fix. All messages processing cleanly.
+
+Original error examples:
+```
 2026-04-28 20:40:55.489 UTC [74778] ERROR:  duplicate key value violates unique constraint "idx_calling_points_natural"
 2026-04-28 20:40:55.489 UTC [74778] DETAIL:  Key (journey_rid, tpl, day_offset, sort_time, stop_type)=(202604297172918, WWRTHNG, 0, 00:13, OPOR) already exists.
 
@@ -404,3 +422,9 @@ Service 202604288702699 is showing as scheduled but should be showing as cancell
 
 2026-04-28 20:55:00.292 UTC [77494] ERROR:  duplicate key value violates unique constraint "idx_calling_points_natural"
 2026-04-28 20:55:00.292 UTC [77494] DETAIL:  Key (journey_rid, tpl, day_offset, sort_time, stop_type)=(202604297172055, SLHDTRB, 0, 01:11, PP) already exists.
+```
+
+### Train 202604298011062 showing as cancelled on NationalRail, Scheduled on our side
+Why train 202604298011062 is showing as scheduled, but it was cancelled? Investigate if there were any messages today 29 April for service 202604298011062.
+
+### Train 202604298050953 showing as cancelled on Natinal Rail but scheduled on our side

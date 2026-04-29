@@ -106,6 +106,28 @@ function computeDelayMinutes(scheduled: string | null, estimated: string | null,
 }
 
 /**
+ * Derive stop type from Darwin TS location flags.
+ * Darwin TS messages use isOrigin/isDestination/isPass instead of explicit stop types.
+ * For VSTP services (unknown RIDs), use OP* conventions:
+ *   isOrigin && !isDestination → OPOR (operational origin)
+ *   isDestination && !isOrigin → OPDT (operational destination)
+ *   isPass → PP (passing point)
+ *   isOrigin && isDestination → OPOR (both at same stop)
+ *   Default → OPIP (operational intermediate)
+ *
+ * For timetable services (known RIDs), use public conventions:
+ *   Same logic but without OP prefix: OR, DT, PP, IP
+ */
+function deriveStopType(loc: DarwinTSLocation, isVstp: boolean): string {
+  if (loc.isPass === true) return "PP";
+  const prefix = isVstp ? "OP" : "";
+  if (loc.isOrigin === true && loc.isDestination !== true) return `${prefix}OR`;
+  if (loc.isDestination === true && loc.isOrigin !== true) return `${prefix}DT`;
+  if (loc.isOrigin === true && loc.isDestination === true) return `${prefix}OR`;
+  return `${prefix}IP`;
+}
+
+/**
  * Parse "HH:MM" or "HH:MM:SS" time string to minutes since midnight.
  * Returns -1 for invalid/unparseable times.
  */
@@ -334,7 +356,7 @@ async function createDarwinStub(
         source_timetable, source_darwin,
         updated_at, ts_generated_at
       ) VALUES (
-        ${rid}, ${sortTime}, ${ssd}, 'IP', ${tpl}, ${crs}, ${name},
+        ${rid}, ${sortTime}, ${ssd}, ${deriveStopType(loc, true)}, ${tpl}, ${crs}, ${name},
         ${etaPushport}, ${etdPushport}, ${ataPushport}, ${atdPushport},
         ${wetaPushport}, ${wetdPushport},
         ${platPushport},
@@ -440,11 +462,18 @@ export async function handleTrainStatus(
       // ── Query existing calling points including id for natural key matching ─
       const existingRows = await tx`
         SELECT id, tpl, stop_type, sort_time, day_offset,
-               pta_timetable, ptd_timetable, wtp_timetable, plat_timetable
+               pta_timetable, ptd_timetable, wtp_timetable, plat_timetable,
+               source_timetable
         FROM calling_points
         WHERE journey_rid = ${rid}
         ORDER BY day_offset, sort_time
       `;
+
+      // Determine if this is a timetable-sourced or VSTP service
+      // (used for stop_type derivation in unmatched stops)
+      const isTimetableSourced = existingRows.some(
+        (r) => (r as Record<string, unknown>).source_timetable === true,
+      );
 
       // ── If no calling points exist, create a Darwin stub ───────────────────
       if (existingRows.length === 0) {
@@ -519,15 +548,9 @@ export async function handleTrainStatus(
           const name = crsData?.name || null;
           const sortTime = computeNewSortTime(loc);
 
-          // Determine stop type from TS location flags
-          let stopType = "IP"; // Default intermediate
-          if (loc.isOrigin === true && loc.isDestination !== true) {
-            stopType = "OR";
-          } else if (loc.isDestination === true && loc.isOrigin !== true) {
-            stopType = "DT";
-          } else if (loc.isOrigin === true && loc.isDestination === true) {
-            stopType = "OR";
-          }
+          // Determine stop type from Darwin TS location flags + service context
+          // VSTP services use OP* conventions, timetable services use public conventions
+          const stopType = deriveStopType(loc, !isTimetableSourced);
 
           // Compute day_offset for this stop
           const timeStr = loc.wtd || loc.ptd || loc.wtp || loc.wta || loc.pta;
@@ -816,6 +839,7 @@ export async function handleTrainStatus(
     if (skippedInMessage > 0) {
       skippedLocationsTotal += skippedInMessage;
       // Persist skipped locations to DB for data quality investigation
+      // (passing_point_no_match will be used for train location tracking)
       try {
         for (const skip of skippedDetails) {
           await sql`
