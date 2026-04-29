@@ -1,5 +1,22 @@
 # Progress
 
+## Completed (2026-04-29)
+
+### PostgreSQL Performance Optimisation ✅
+- ✅ Autovacuum tuning: `autovacuum_vacuum_scale_factor=0.05` on `calling_points` and `service_rt`
+- ✅ Batched `darwin_events` inserts: buffer 2500 rows, flush on threshold/30s timer/shutdown
+- ✅ `shared_buffers` increased 128MB → 512MB in docker-compose.yml
+- ✅ VACUUM FULL `darwin_events`: 6033MB → 2928MB
+- ✅ Deleted 4M+ old `darwin_events` (>2 days), RETENTION_DAYS=2
+- ✅ DB size: 7.2 GB → 4.1 GB (43% reduction)
+- ✅ Event buffer working: 0 failures, ~436 rows flushed per 30s cycle
+
+### PostgreSQL 23505 Unique Constraint Violation — FIXED ✅
+- ✅ Root cause: Schedule handler matched CPs by TIPLOC only, then UPDATED natural key columns
+- ✅ Fix: Match by `(tpl, sort_time, stop_type)`, never UPDATE natural key columns
+- ✅ `deriveStopType()` helper using Darwin's `isOrigin`/`isDestination`/`isPass` flags
+- ✅ Zero 23505 errors after fix
+
 ## Completed (2026-04-28)
 
 ### VSTP Schedule Handler: DELETE → UPSERT — FIXED ✅

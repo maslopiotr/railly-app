@@ -1,8 +1,31 @@
 # Active Context
 
-## Current Focus: PostgreSQL 23505 Fix — Complete ✅
+## Current Focus: PostgreSQL Performance Optimisation — Complete ✅
 
 ### Completed This Session (2026-04-29)
+
+**3. PostgreSQL Performance Optimisation**:
+- **Autovacuum tuning**: Set `autovacuum_vacuum_scale_factor=0.05` and `autovacuum_analyze_scale_factor=0.05` on `calling_points` and `service_rt` — vacuum at 5% row changes instead of default 20%
+- **Batched darwin_events inserts**: Replaced per-message INSERT with in-memory buffer (batch size 2500). Flush on: buffer full, 30-second timer, or graceful shutdown. Reduces transaction overhead ~25x
+- **shared_buffers increased**: 128MB → 512MB in docker-compose.yml. PostgreSQL restarted
+- **VACUUM FULL darwin_events**: Reclaimed disk from 6033MB → 2928MB
+- **Retention cleanup**: Deleted 4M+ old darwin_events (>2 days), RETENTION_DAYS reduced to 2
+
+**Current PostgreSQL state**:
+- DB size: 4.1 GB (down from 7.2 GB before cleanup)
+- shared_buffers: 512MB (was 128MB)
+- Cache hit ratio: ~81% (cumulative stat — includes pre-optimisation reads; will improve over time)
+- Consumer memory: ~115 MB (stable)
+- Event buffer: 2500 batch size, 30s flush interval, 0 failures
+
+**Key files changed**:
+- `packages/consumer/src/handlers/index.ts` — Event buffer (logDarwinEvent → buffered, flushEventBuffer, startEventBufferTimer)
+- `packages/consumer/src/index.ts` — Wired up buffer lifecycle (start/stop/flush on shutdown, metrics logging)
+- `docker-compose.yml` — Added `-c shared_buffers=512MB`
+
+## Previous: PostgreSQL 23505 Fix — Complete ✅
+
+### Earlier This Session (2026-04-29)
 
 **1. PostgreSQL 23505 unique constraint violation fix** — Critical:
 - **Root cause**: Schedule handler matched CPs by TIPLOC only, then UPDATED `sort_time`/`stop_type`/`day_offset` on matched rows. When two CPs shared a TIPLOC (e.g., PP+IP at same junction, or origin+dest at same station), changing one CP's natural key could collide with the other → 23505 error.

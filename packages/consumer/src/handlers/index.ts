@@ -22,6 +22,157 @@ import { handleSchedule } from "./schedule.js";
 import { handleTrainStatus } from "./trainStatus.js";
 import { sql } from "../db.js";
 
+// ── Event Buffer for batched darwin_events inserts ─────────────────────────────
+// Instead of one INSERT per message, buffer events and flush in batches.
+// Flush triggers: buffer reaches BATCH_SIZE, 30-second timer, or graceful shutdown.
+// Reduces transaction overhead from ~40 individual INSERTs/sec → ~1 batch INSERT every ~60 sec.
+
+const EVENT_BUFFER_BATCH_SIZE = parseInt(process.env.EVENT_BUFFER_BATCH_SIZE || "2500", 10);
+const EVENT_BUFFER_FLUSH_INTERVAL_MS = parseInt(process.env.EVENT_BUFFER_FLUSH_INTERVAL_MS || "30000", 10);
+const EVENT_BUFFER_MAX_SIZE = parseInt(process.env.EVENT_BUFFER_MAX_SIZE || "10000", 10);
+
+interface BufferedEvent {
+  messageType: string;
+  rid: string | null;
+  rawJson: string;
+  generatedAt: string;
+}
+
+/**
+ * EventBuffer — encapsulates batched darwin_events inserts.
+ *
+ * Thread safety: A flushing mutex prevents concurrent flushes (timer + threshold
+ * could fire simultaneously in Node.js microtask scheduling). On failure, the
+ * batch is re-queued at the front of the buffer so data is not lost.
+ */
+class EventBuffer {
+  private readonly buffer: BufferedEvent[] = [];
+  private isFlushing = false;
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private totalFlushed = 0;
+  private totalFailed = 0;
+
+  /**
+   * Add an event to the buffer. Triggers a flush if the buffer
+   * exceeds the batch size threshold.
+   */
+  add(event: BufferedEvent): void {
+    this.buffer.push(event);
+
+    // Guard against unbounded growth if flush is slow/failing
+    if (this.buffer.length > EVENT_BUFFER_MAX_SIZE) {
+      // Drop oldest events — audit data, not critical processing
+      const dropped = this.buffer.splice(0, this.buffer.length - EVENT_BUFFER_MAX_SIZE);
+      this.totalFailed += dropped.length;
+      console.error(`   ⚠️ Event buffer overflow: dropped ${dropped.length} oldest events (max: ${EVENT_BUFFER_MAX_SIZE})`);
+    }
+
+    if (this.buffer.length >= EVENT_BUFFER_BATCH_SIZE) {
+      this.flush().catch((err) => {
+        console.error("   ⚠️ Event buffer threshold flush error:", (err as Error).message);
+      });
+    }
+  }
+
+  /**
+   * Flush the buffer — batch INSERT all rows into darwin_events
+   * using a transaction with individual INSERT statements.
+   * Safe to call at any time (empty buffer is a no-op).
+   * Concurrent calls are serialised via the flushing mutex.
+   */
+  async flush(): Promise<void> {
+    if (this.buffer.length === 0 || this.isFlushing) return;
+
+    this.isFlushing = true;
+
+    // Take all rows from the buffer
+    const batch = this.buffer.splice(0);
+
+    try {
+      // Use a transaction to insert all rows in a single atomic batch.
+      // Individual INSERT statements with tagged template literals
+      // provide full type safety — no type assertions or hacks needed.
+      await sql.begin(async (tx) => {
+        for (const e of batch) {
+          await tx`
+            INSERT INTO darwin_events (
+              message_type, rid, raw_json, generated_at, processed_at
+            ) VALUES (
+              ${e.messageType}, ${e.rid}, ${e.rawJson}, ${e.generatedAt}, NOW()
+            )
+          `;
+        }
+      });
+
+      this.totalFlushed += batch.length;
+    } catch (err) {
+      // Re-queue the batch at the front so data is not lost
+      this.buffer.unshift(...batch);
+      this.totalFailed += batch.length;
+      console.error(
+        `   ⚠️ Event buffer flush failed (${batch.length} rows, re-queued):`,
+        (err as Error).message,
+      );
+    } finally {
+      this.isFlushing = false;
+    }
+  }
+
+  /**
+   * Start the time-based flush timer.
+   */
+  startTimer(): void {
+    if (this.timer) return;
+    this.timer = setInterval(() => {
+      this.flush().catch((err) => {
+        console.error("   ⚠️ Event buffer timer flush error:", (err as Error).message);
+      });
+    }, EVENT_BUFFER_FLUSH_INTERVAL_MS);
+    console.log(
+      `   📋 Event buffer: batch size ${EVENT_BUFFER_BATCH_SIZE}, ` +
+      `flush interval ${EVENT_BUFFER_FLUSH_INTERVAL_MS / 1000}s, ` +
+      `max size ${EVENT_BUFFER_MAX_SIZE}`,
+    );
+  }
+
+  /**
+   * Stop the time-based flush timer.
+   */
+  stopTimer(): void {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+  }
+
+  /**
+   * Get buffer stats for metrics logging.
+   */
+  getStats(): { buffered: number; flushed: number; failed: number } {
+    return {
+      buffered: this.buffer.length,
+      flushed: this.totalFlushed,
+      failed: this.totalFailed,
+    };
+  }
+}
+
+const eventBuffer = new EventBuffer();
+
+/** Public API — delegates to the singleton EventBuffer instance */
+export async function flushEventBuffer(): Promise<void> {
+  return eventBuffer.flush();
+}
+export function startEventBufferTimer(): void {
+  eventBuffer.startTimer();
+}
+export function stopEventBufferTimer(): void {
+  eventBuffer.stopTimer();
+}
+export function getEventBufferStats(): { buffered: number; flushed: number; failed: number } {
+  return eventBuffer.getStats();
+}
+
 /**
  * Metrics counters (simple in-memory; Prometheus will replace these).
  */
@@ -52,26 +203,17 @@ function extractDiagnosticRid(message: DarwinMessage): string | undefined {
 }
 
 /**
- * Log a Darwin message to the darwin_events audit table.
+ * Buffer a Darwin message for batched insertion into darwin_events.
+ * The actual INSERT happens when the buffer reaches EVENT_BUFFER_BATCH_SIZE,
+ * or on the 30-second timer, or on graceful shutdown.
  */
-async function logDarwinEvent(
+function logDarwinEvent(
   messageType: string,
   rid: string | null,
   rawJson: string,
   generatedAt: string,
-): Promise<void> {
-  try {
-    await sql`
-      INSERT INTO darwin_events (
-        message_type, rid, raw_json, generated_at, processed_at
-      ) VALUES (
-        ${messageType}, ${rid}, ${rawJson}, ${generatedAt}, NOW()
-      )
-    `;
-  } catch (err) {
-    // Don't let audit logging fail the main processing
-    console.error("   ⚠️ Audit log failed:", (err as Error).message);
-  }
+): void {
+  eventBuffer.add({ messageType, rid, rawJson, generatedAt });
 }
 
 /**
@@ -273,13 +415,13 @@ export async function handleDarwinMessage(
     await logDarwinError(message.type ?? "unknown", rid ?? null, error, rawJson);
   }
 
-  // Log to audit table (fire-and-forget)
+  // Buffer for batched insert into darwin_events (fire-and-forget)
   const messageType = message.schedule ? "schedule"
     : message.TS ? "TS"
     : message.deactivated ? "deactivated"
     : message.OW ? "OW"
     : "unknown";
-  await logDarwinEvent(messageType, rid ?? null, rawJson, generatedAt);
+  logDarwinEvent(messageType, rid ?? null, rawJson, generatedAt);
 }
 
 function incrementType(type: string): void {

@@ -8,7 +8,7 @@
 import "./env.js";
 import { Kafka, logLevel } from "kafkajs";
 import { sql, closeDb } from "./db.js";
-import { handleDarwinMessage, metrics } from "./handlers/index.js";
+import { handleDarwinMessage, metrics, startEventBufferTimer, stopEventBufferTimer, flushEventBuffer, getEventBufferStats } from "./handlers/index.js";
 import { skippedLocationsTotal } from "./handlers/trainStatus.js";
 import { parseDarwinMessage } from "./parser.js";
 
@@ -83,6 +83,15 @@ async function shutdown(signal: string): Promise<void> {
     cleanupInterval = null;
   }
 
+  // Flush remaining event buffer before disconnecting
+  stopEventBufferTimer();
+  try {
+    await flushEventBuffer();
+    console.log("   ✅ Event buffer flushed");
+  } catch (err) {
+    console.error("   ❌ Error flushing event buffer:", err);
+  }
+
   try {
     await consumer.disconnect();
     console.log("   ✅ Kafka consumer disconnected");
@@ -120,15 +129,19 @@ function startMetricsLogging(): ReturnType<typeof setInterval> {
       `   byType: ${JSON.stringify(metrics.byType)}`,
       `   skippedLocations: ${skippedLocationsTotal}`,
     );
+    const bufStats = getEventBufferStats();
+    console.log(
+      `   eventBuffer: ${bufStats.buffered} buffered, ${bufStats.flushed} flushed, ${bufStats.failed} failed`,
+    );
   }, METRICS_INTERVAL_MS);
 }
 
 // ── Retention Cleanup ──────────────────────────────────────────────────────────
-// Delete processed darwin_events older than 3 days.
+// Delete processed darwin_events older than RETENTION_DAYS (default 2 days during development).
 // Audit records (darwin_audit) are kept indefinitely.
 // darwin_events with processed_at IS NULL (unprocessed) are also kept.
 
-const RETENTION_DAYS = parseInt(process.env.RETENTION_DAYS || "14", 10);
+const RETENTION_DAYS = parseInt(process.env.RETENTION_DAYS || "2", 10);
 const CLEANUP_INTERVAL_MS = parseInt(process.env.CLEANUP_INTERVAL_MS || "3600000", 10); // Default: 1 hour
 
 async function runRetentionCleanup(): Promise<number> {
@@ -220,8 +233,9 @@ async function main(): Promise<void> {
     // KafkaJS will auto-restart when restart === true
   });
 
-  // Start metrics logging and retention cleanup
+  // Start metrics logging, event buffer, and retention cleanup
   metricsInterval = startMetricsLogging();
+  startEventBufferTimer();
   cleanupInterval = startRetentionCleanup();
 
   // Run the consumer with MANUAL commit for reliable offset tracking

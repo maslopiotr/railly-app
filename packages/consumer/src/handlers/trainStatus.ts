@@ -8,10 +8,12 @@
  * - TS handler ONLY writes _pushport columns (eta_pushport, etd_pushport, etc.)
  * - Never overwrites _timetable columns (preserved from PPTimetable seed)
  * - Creates Darwin stubs for unknown RIDs (VSTP — ad-hoc services)
- * - Matches TS locations to existing calling points by TIPLOC on non-PP stops
- * - For VSTP services with missing passenger stops, INSERTs new CP rows
+ * - Matches TS locations to existing calling points by TIPLOC + time
+ * - For unmatched locations (both passenger stops and passing points),
+ *   INSERTs new CP rows with real-time Darwin data
  *   (BUG-024: VSTP PP-only services lose real-time passenger stop data)
- * - Darwin-only locations with no passenger timing are silently skipped
+ * - Passing point (PP) locations with real-time data (eta/ata/wtp) are
+ *   stored for train location tracking between passenger stations
  *
  * Sequencing safety:
  * - `generated_at` on service_rt is owned by schedule handler (schedule dedup)
@@ -490,27 +492,32 @@ export async function handleTrainStatus(
         existingRows as unknown as Array<{ id: number; tpl: string; stop_type: string; pta_timetable: string | null; ptd_timetable: string | null; wtp_timetable: string | null }>,
       );
 
-      // ── Insert new CP rows for unmatched passenger stops ──
+      // ── Insert new CP rows for unmatched stops (passenger + passing points) ──
       // With the natural key (journey_rid, tpl, day_offset, sort_time, stop_type),
       // it's safe to INSERT new CPs for ALL services — timetable and VSTP alike.
       // Darwin often sends stops not in the timetable (extra calling points, diversions).
+      // PP locations are also inserted — they carry real-time data (eta/ata/wtp)
+      // used for train location tracking between passenger stations.
       // ON CONFLICT handles the case where a schedule message already inserted this stop.
-      const unmatchedPassengerStops: Array<{ locIdx: number; loc: DarwinTSLocation }> = [];
+      const unmatchedStops: Array<{ locIdx: number; loc: DarwinTSLocation }> = [];
       for (let locIdx = 0; locIdx < locations.length; locIdx++) {
         const loc = locations[locIdx];
         const tpl = loc.tpl?.trim();
         if (!tpl) continue;
-        if (loc.isPass === true) continue; // PP stops are handled separately by matching
         if (matches.has(locIdx)) continue;
-        // Must have planned times (passenger stop, not just operational)
-        if (loc.pta || loc.ptd || loc.wta || loc.wtd) {
-          unmatchedPassengerStops.push({ locIdx, loc });
+        // Must have any time data — planned or real-time.
+        // PP locations in TS messages often only have real-time estimates
+        // (eta/ata) without planned times (wtp), because the schedule message
+        // already provided the planned time.
+        if (loc.pta || loc.ptd || loc.wta || loc.wtd || loc.wtp ||
+            loc.eta || loc.etd || loc.ata || loc.atd || loc.weta || loc.wetd) {
+          unmatchedStops.push({ locIdx, loc });
         }
       }
 
-      if (unmatchedPassengerStops.length > 0) {
+      if (unmatchedStops.length > 0) {
         // Bulk-fetch CRS codes from location_ref for all unmatched TIPLOCs
-        const unmatchedTpls = [...new Set(unmatchedPassengerStops.map((u) => u.loc.tpl?.trim()).filter(Boolean) as string[])];
+        const unmatchedTpls = [...new Set(unmatchedStops.map((u) => u.loc.tpl?.trim()).filter(Boolean) as string[])];
         const crsLookup = new Map<string, { crs: string | null; name: string | null }>();
         if (unmatchedTpls.length > 0) {
           const crsRows = await tx`
@@ -522,8 +529,11 @@ export async function handleTrainStatus(
         }
 
         // Helper for sort_time computation
+        // Falls back to real-time estimates when no planned time is available
+        // (PP locations in TS messages often only have eta/ata, not wtp)
         const computeNewSortTime = (loc: DarwinTSLocation): string => {
-          const raw = loc.wtd || loc.ptd || loc.wtp || loc.wta || loc.pta;
+          const raw = loc.wtd || loc.ptd || loc.wtp || loc.wta || loc.pta
+            || loc.wetd || loc.weta || loc.etd || loc.eta || loc.atd || loc.ata;
           if (!raw) return "00:00";
           return raw.length > 5 ? raw.substring(0, 5) : raw;
         };
@@ -541,7 +551,7 @@ export async function handleTrainStatus(
           ? maxDayOffset // Start from the max existing day_offset
           : 0;
 
-        for (const { loc } of unmatchedPassengerStops) {
+        for (const { loc } of unmatchedStops) {
           const tpl = loc.tpl!.trim();
           const crsData = crsLookup.get(tpl);
           const crs = crsData?.crs || null;
@@ -553,7 +563,9 @@ export async function handleTrainStatus(
           const stopType = deriveStopType(loc, !isTimetableSourced);
 
           // Compute day_offset for this stop
-          const timeStr = loc.wtd || loc.ptd || loc.wtp || loc.wta || loc.pta;
+          // Falls back to real-time estimates when no planned time is available
+          const timeStr = loc.wtd || loc.ptd || loc.wtp || loc.wta || loc.pta
+            || loc.wetd || loc.weta || loc.etd || loc.eta || loc.atd || loc.ata;
           const currentMinutes = parseTimeToMinutes(timeStr);
           if (currentMinutes >= 0 && prevMinutes >= 0) {
             if (currentMinutes < prevMinutes && prevMinutes >= 1200) {
@@ -582,7 +594,7 @@ export async function handleTrainStatus(
             INSERT INTO calling_points (
               journey_rid, sort_time, ssd, stop_type, tpl, crs, name,
               day_offset,
-              pta_timetable, ptd_timetable, wta_timetable, wtd_timetable,
+              pta_timetable, ptd_timetable, wta_timetable, wtd_timetable, wtp_timetable,
               eta_pushport, etd_pushport, ata_pushport, atd_pushport,
               weta_pushport, wetd_pushport,
               plat_pushport,
@@ -593,7 +605,7 @@ export async function handleTrainStatus(
             ) VALUES (
               ${rid}, ${sortTime}, ${tsSsd}, ${stopType}, ${tpl}, ${crs}, ${name},
               ${dayOffset},
-              ${loc.pta || null}, ${loc.ptd || null}, ${loc.wta || null}, ${loc.wtd || null},
+              ${loc.pta || null}, ${loc.ptd || null}, ${loc.wta || null}, ${loc.wtd || null}, ${loc.wtp || null},
               ${etaPushport}, ${etdPushport}, ${ataPushport}, ${atdPushport},
               ${wetaPushport}, ${wetdPushport},
               ${platPushport},
@@ -627,7 +639,7 @@ export async function handleTrainStatus(
 
       // ── Track which unmatched stops were successfully inserted ────────────
       const insertedLocIdxs = new Set<number>();
-      for (const { locIdx } of unmatchedPassengerStops) {
+      for (const { locIdx } of unmatchedStops) {
         insertedLocIdxs.add(locIdx);
       }
 
