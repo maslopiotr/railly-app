@@ -35,3 +35,36 @@ export function getCurrentRailTime(): string {
   const minutes = now.getMinutes().toString().padStart(2, "0");
   return `${hours}${minutes}`;
 }
+
+/** Parse HH:MM to minutes since midnight */
+export function parseTimeToMinutes(time: string | null | undefined): number | null {
+  if (!time) return null;
+  const formatted = formatDisplayTime(time);
+  if (!formatted) return null;
+  const [h, m] = formatted.split(":").map(Number);
+  if (isNaN(h) || isNaN(m)) return null;
+  return h * 60 + m;
+}
+
+/**
+ * Compute delay in minutes between scheduled and estimated/actual time.
+ * Handles midnight crossings (if difference >12h, wraps around).
+ * Returns null if data is insufficient or the status is a non-numeric value.
+ */
+export function computeDelay(
+  scheduled: string | null | undefined,
+  estimated: string | null | undefined,
+  actual: string | null | undefined,
+): number | null {
+  const ref = actual || estimated;
+  if (!scheduled || !ref) return null;
+  if (ref === "On time") return 0;
+  if (ref === "Cancelled" || ref === "cancelled") return null;
+  const schedMins = parseTimeToMinutes(scheduled);
+  const refMins = parseTimeToMinutes(ref);
+  if (schedMins === null || refMins === null) return null;
+  let d = refMins - schedMins;
+  if (d < -720) d += 1440;
+  if (d > 720) d -= 1440;
+  return d;
+}

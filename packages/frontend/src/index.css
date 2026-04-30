@@ -1,6 +1,275 @@
 @import "tailwindcss";
 
-/* ─── View & micro-interaction animations ─────────────────────────────── */
+/* ─── Design tokens ─────────────────────────────────────────────────── */
+
+@theme {
+  /* Surfaces */
+  --color-surface-page: var(--surface-page);
+  --color-surface-card: var(--surface-card);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-overlay: var(--surface-overlay);
+
+  /* Text */
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-text-inverse: var(--text-inverse);
+
+  /* Borders */
+  --color-border-default: var(--border-default);
+  --color-border-emphasis: var(--border-emphasis);
+
+  /* Status — text */
+  --color-status-on-time: var(--status-on-time);
+  --color-status-delayed: var(--status-delayed);
+  --color-status-cancelled: var(--status-cancelled);
+  --color-status-arrived: var(--status-arrived);
+  --color-status-departed: var(--status-departed);
+  --color-status-at-platform: var(--status-at-platform);
+  --color-status-approaching: var(--status-approaching);
+  --color-status-scheduled: var(--status-scheduled);
+
+  /* Status — backgrounds (for badges/pills) */
+  --color-status-on-time-bg: var(--status-on-time-bg);
+  --color-status-delayed-bg: var(--status-delayed-bg);
+  --color-status-cancelled-bg: var(--status-cancelled-bg);
+  --color-status-arrived-bg: var(--status-arrived-bg);
+  --color-status-departed-bg: var(--status-departed-bg);
+  --color-status-at-platform-bg: var(--status-at-platform-bg);
+  --color-status-approaching-bg: var(--status-approaching-bg);
+  --color-status-scheduled-bg: var(--status-scheduled-bg);
+
+  /* Status — borders (for badges/pills) */
+  --color-status-on-time-border: var(--status-on-time-border);
+  --color-status-delayed-border: var(--status-delayed-border);
+  --color-status-cancelled-border: var(--status-cancelled-border);
+  --color-status-arrived-border: var(--status-arrived-border);
+  --color-status-departed-border: var(--status-departed-border);
+  --color-status-at-platform-border: var(--status-at-platform-border);
+  --color-status-approaching-border: var(--status-approaching-border);
+  --color-status-scheduled-border: var(--status-scheduled-border);
+
+  /* Platform badges */
+  --color-platform-confirmed-bg: var(--platform-confirmed-bg);
+  --color-platform-confirmed-text: var(--platform-confirmed-text);
+  --color-platform-altered-bg: var(--platform-altered-bg);
+  --color-platform-altered-text: var(--platform-altered-text);
+  --color-platform-expected-bg: var(--platform-expected-bg);
+  --color-platform-expected-text: var(--platform-expected-text);
+  --color-platform-expected-border: var(--platform-expected-border);
+  --color-platform-scheduled-bg: var(--platform-scheduled-bg);
+  --color-platform-scheduled-text: var(--platform-scheduled-text);
+  --color-platform-scheduled-border: var(--platform-scheduled-border);
+  --color-platform-suppressed-bg: var(--platform-suppressed-bg);
+  --color-platform-suppressed-text: var(--platform-suppressed-text);
+  --color-platform-suppressed-border: var(--platform-suppressed-border);
+
+  /* Calling points timeline */
+  --color-call-past-dot-bg: var(--call-past-dot-bg);
+  --color-call-past-dot-border: var(--call-past-dot-border);
+  --color-call-current-dot-bg: var(--call-current-dot-bg);
+  --color-call-current-dot-border: var(--call-current-dot-border);
+  --color-call-future-dot-bg: var(--call-future-dot-bg);
+  --color-call-future-dot-border: var(--call-future-dot-border);
+  --color-timeline-past: var(--timeline-past);
+  --color-timeline-future: var(--timeline-future);
+
+  /* Favourites */
+  --color-favourite: var(--favourite);
+  --color-favourite-muted: var(--favourite-muted);
+
+  /* Alert banners */
+  --color-alert-cancel-bg: var(--alert-cancel-bg);
+  --color-alert-cancel-text: var(--alert-cancel-text);
+  --color-alert-cancel-border: var(--alert-cancel-border);
+  --color-alert-delay-bg: var(--alert-delay-bg);
+  --color-alert-delay-text: var(--alert-delay-text);
+  --color-alert-delay-border: var(--alert-delay-border);
+  --color-alert-info-bg: var(--alert-info-bg);
+  --color-alert-info-text: var(--alert-info-text);
+  --color-alert-info-border: var(--alert-info-border);
+
+  /* Typography */
+  --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, "Cascadia Code", monospace;
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  /* Type scale (font sizes for specific contexts — use Tailwind aliases where possible) */
+  --text-time-lg: 1.25rem;     /* 20px — large time in service detail */
+  --text-time-base: 0.875rem;   /* 14px — board departure times */
+  --text-time-sm: 0.75rem;      /* 12px — estimated/actual sub-times */
+  --text-time-xs: 0.625rem;     /* 10px — delay badges, small labels */
+
+  /* Spacing (beyond Tailwind defaults — for component-level consistency) */
+  --spacing-row-y: 0.625rem;    /* 10px — vertical padding inside service rows */
+  --spacing-row-x: 0.75rem;     /* 12px — horizontal padding inside service rows */
+  --spacing-card: 0.75rem;      /* 12px — favourite/station cards */
+  --spacing-section: 1rem;       /* 16px — between board sections */
+
+  /* Border radius */
+  --radius-card: 0.5rem;        /* rounded-lg — cards and service rows */
+  --radius-button: 0.5rem;      /* rounded-lg — buttons */
+  --radius-badge: 0.25rem;      /* rounded — small badges */
+}
+
+/* ─── Light mode ──────────────────────────────────────────────────────── */
+
+:root {
+  --surface-page: #f8fafc;
+  --surface-card: #ffffff;
+  --surface-hover: #f1f5f9;
+  --surface-overlay: rgba(15, 23, 42, 0.5);
+
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+  --text-inverse: #ffffff;
+
+  --border-default: #e2e8f0;
+  --border-emphasis: #cbd5e1;
+
+  --status-on-time: #059669;
+  --status-on-time-bg: #ecfdf5;
+  --status-on-time-border: #a7f3d0;
+  --status-delayed: #d97706;
+  --status-delayed-bg: #fffbeb;
+  --status-delayed-border: #fde68a;
+  --status-cancelled: #dc2626;
+  --status-cancelled-bg: #fef2f2;
+  --status-cancelled-border: #fecaca;
+  --status-arrived: #059669;
+  --status-arrived-bg: #ecfdf5;
+  --status-arrived-border: #a7f3d0;
+  --status-departed: #475569;
+  --status-departed-bg: #f1f5f9;
+  --status-departed-border: #e2e8f0;
+  --status-at-platform: #059669;
+  --status-at-platform-bg: #ecfdf5;
+  --status-at-platform-border: #a7f3d0;
+  --status-approaching: #b45309;
+  --status-approaching-bg: #fffbeb;
+  --status-approaching-border: #fde68a;
+  --status-scheduled: #94a3b8;
+  --status-scheduled-bg: #f8fafc;
+  --status-scheduled-border: #e2e8f0;
+
+  --platform-confirmed-bg: #2563eb;
+  --platform-confirmed-text: #ffffff;
+  --platform-altered-bg: #d97706;
+  --platform-altered-text: #ffffff;
+  --platform-expected-bg: #f8fafc;
+  --platform-expected-text: #475569;
+  --platform-expected-border: #94a3b8;
+  --platform-scheduled-bg: #f8fafc;
+  --platform-scheduled-text: #64748b;
+  --platform-scheduled-border: #e2e8f0;
+  --platform-suppressed-bg: #f1f5f9;
+  --platform-suppressed-text: #475569;
+  --platform-suppressed-border: #d97706;
+
+  --call-past-dot-bg: #10b981;
+  --call-past-dot-border: #059669;
+  --call-current-dot-bg: #f59e0b;
+  --call-current-dot-border: #d97706;
+  --call-future-dot-bg: #f1f5f9;
+  --call-future-dot-border: #cbd5e1;
+  --timeline-past: #10b981;
+  --timeline-future: #e2e8f0;
+
+  --glow-live: 0 0 6px rgba(16, 185, 129, 0.6);
+  --favourite: #d97706;
+  --favourite-muted: #fbbf24;
+
+  --alert-cancel-bg: #fef2f2;
+  --alert-cancel-text: #991b1b;
+  --alert-cancel-border: #fecaca;
+  --alert-delay-bg: #fffbeb;
+  --alert-delay-text: #92400e;
+  --alert-delay-border: #fde68a;
+  --alert-info-bg: #eff6ff;
+  --alert-info-text: #1e40af;
+  --alert-info-border: #bfdbfe;
+}
+
+/* ─── Dark mode ───────────────────────────────────────────────────────── */
+
+.dark {
+  --surface-page: #0f172a;
+  --surface-card: #1e293b;
+  --surface-hover: #334155;
+  --surface-overlay: rgba(0, 0, 0, 0.6);
+
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --text-inverse: #0f172a;
+
+  --border-default: #334155;
+  --border-emphasis: #475569;
+
+  --status-on-time: #34d399;
+  --status-on-time-bg: rgba(16, 185, 129, 0.15);
+  --status-on-time-border: rgba(52, 211, 153, 0.3);
+  --status-delayed: #fbbf24;
+  --status-delayed-bg: rgba(245, 158, 11, 0.15);
+  --status-delayed-border: rgba(251, 191, 36, 0.3);
+  --status-cancelled: #fca5a5;
+  --status-cancelled-bg: rgba(239, 68, 68, 0.15);
+  --status-cancelled-border: rgba(252, 165, 165, 0.3);
+  --status-arrived: #34d399;
+  --status-arrived-bg: rgba(16, 185, 129, 0.15);
+  --status-arrived-border: rgba(52, 211, 153, 0.3);
+  --status-departed: #94a3b8;
+  --status-departed-bg: rgba(100, 116, 139, 0.15);
+  --status-departed-border: rgba(148, 163, 184, 0.3);
+  --status-at-platform: #6ee7b7;
+  --status-at-platform-bg: rgba(16, 185, 129, 0.15);
+  --status-at-platform-border: rgba(110, 231, 183, 0.3);
+  --status-approaching: #fbbf24;
+  --status-approaching-bg: rgba(245, 158, 11, 0.15);
+  --status-approaching-border: rgba(251, 191, 36, 0.3);
+  --status-scheduled: #64748b;
+  --status-scheduled-bg: rgba(100, 116, 139, 0.1);
+  --status-scheduled-border: rgba(100, 116, 139, 0.2);
+
+  --platform-confirmed-bg: #3b82f6;
+  --platform-confirmed-text: #ffffff;
+  --platform-altered-bg: #f59e0b;
+  --platform-altered-text: #ffffff;
+  --platform-expected-bg: #334155;
+  --platform-expected-text: #cbd5e1;
+  --platform-expected-border: #64748b;
+  --platform-scheduled-bg: #1e293b;
+  --platform-scheduled-text: #94a3b8;
+  --platform-scheduled-border: #475569;
+  --platform-suppressed-bg: #334155;
+  --platform-suppressed-text: #cbd5e1;
+  --platform-suppressed-border: rgba(251, 191, 36, 0.5);
+
+  --glow-live: 0 0 6px rgba(52, 211, 153, 0.4);
+  --favourite: #fbbf24;
+  --favourite-muted: #f59e0b;
+
+  --call-past-dot-bg: #22c55e;
+  --call-past-dot-border: #16a34a;
+  --call-current-dot-bg: #facc15;
+  --call-current-dot-border: #eab308;
+  --call-future-dot-bg: #1e293b;
+  --call-future-dot-border: #475569;
+  --timeline-past: #16a34a;
+  --timeline-future: #334155;
+
+  --alert-cancel-bg: rgba(239, 68, 68, 0.1);
+  --alert-cancel-text: #fca5a5;
+  --alert-cancel-border: rgba(252, 165, 165, 0.2);
+  --alert-delay-bg: rgba(245, 158, 11, 0.1);
+  --alert-delay-text: #fde68a;
+  --alert-delay-border: rgba(253, 224, 138, 0.2);
+  --alert-info-bg: rgba(59, 130, 246, 0.1);
+  --alert-info-text: #bfdbfe;
+  --alert-info-border: rgba(191, 219, 254, 0.2);
+}
+
+/* ─── Animations ──────────────────────────────────────────────────────── */
 
 @keyframes fadeIn {
   from { opacity: 0; }
@@ -22,6 +291,43 @@
   50% { opacity: 0.5; }
 }
 
+@keyframes livePulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes favouritePop {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+
+/* ─── Staggered animation (uses CSS custom properties, clean) ──────── */
+
+.animate-stagger > * {
+  animation: fadeSlideUp 200ms ease-out both;
+  animation-delay: calc(var(--stagger-index, 0) * 30ms);
+}
+
+.animate-stagger > :nth-child(1)  { --stagger-index: 0; }
+.animate-stagger > :nth-child(2)  { --stagger-index: 1; }
+.animate-stagger > :nth-child(3)  { --stagger-index: 2; }
+.animate-stagger > :nth-child(4)  { --stagger-index: 3; }
+.animate-stagger > :nth-child(5)  { --stagger-index: 4; }
+.animate-stagger > :nth-child(6)  { --stagger-index: 5; }
+.animate-stagger > :nth-child(7)  { --stagger-index: 6; }
+.animate-stagger > :nth-child(8)  { --stagger-index: 7; }
+.animate-stagger > :nth-child(9)  { --stagger-index: 8; }
+.animate-stagger > :nth-child(10) { --stagger-index: 9; }
+.animate-stagger > :nth-child(n+11) { --stagger-index: 10; }
+
+/* ─── Utility animation classes ─────────────────────────────────────── */
+
 .animate-fade-in {
   animation: fadeIn 200ms ease-out both;
 }
@@ -34,673 +340,16 @@
   animation: fadeSlideRight 200ms ease-out both;
 }
 
-/* Staggered service rows — uses CSS custom property for clean nth-child scaling */
-.animate-stagger > * {
-  animation: fadeSlideUp 200ms ease-out both;
-  animation-delay: calc(var(--stagger-index, 0) * 25ms);
-}
-/* Cap delay at 250ms (10 items) — use :nth-child for browsers without style queries */
-.animate-stagger > :nth-child(1) { --stagger-index: 0; }
-.animate-stagger > :nth-child(2) { --stagger-index: 1; }
-.animate-stagger > :nth-child(3) { --stagger-index: 2; }
-.animate-stagger > :nth-child(4) { --stagger-index: 3; }
-.animate-stagger > :nth-child(5) { --stagger-index: 4; }
-.animate-stagger > :nth-child(6) { --stagger-index: 5; }
-.animate-stagger > :nth-child(7) { --stagger-index: 6; }
-.animate-stagger > :nth-child(8) { --stagger-index: 7; }
-.animate-stagger > :nth-child(9) { --stagger-index: 8; }
-.animate-stagger > :nth-child(10) { --stagger-index: 9; }
-.animate-stagger > :nth-child(n+11) { --stagger-index: 10; }
-
 .animate-pulse-subtle {
   animation: pulseSubtle 1.5s ease-in-out infinite;
 }
 
-/* ─── Logo ───────────────────────────────────────────────────────────── */
-
-.logo-btn {
-  @apply text-lg sm:text-xl font-bold tracking-tight transition-opacity duration-150
-    text-gray-900 dark:text-white;
-}
-.logo-btn:hover { opacity: 0.8; }
-.logo-btn:active { opacity: 0.6; }
-
-/* ─── Press feedback ──────────────────────────────────────────────────── */
-
-.press-feedback {
-  @apply transition-transform duration-100;
-}
-.press-feedback:active {
-  transform: scale(0.97);
-}
-
-.chip-hover {
-  @apply transition-all duration-150;
-}
-.chip-hover:hover { transform: scale(1.03); }
-.chip-hover:active { transform: scale(0.97); }
-
-/* ─── Platform source indicators ────────────────────────────────────── */
-
-.platform {
-  @apply inline-flex items-center justify-center min-w-[2.5rem] px-2 py-0.5 rounded text-xs font-bold font-mono;
-}
-
-@media (max-width: 639px) {
-  .platform {
-    @apply min-w-[2.75rem] py-1 text-sm;
-  }
-}
-
-.platform-none {
-  @apply bg-gray-100 text-gray-400 dark:bg-slate-800 dark:text-slate-500;
-}
-
-.platform-confirmed {
-  @apply bg-blue-600 text-white dark:bg-blue-500 dark:text-white;
-}
-
-.platform-altered {
-  @apply bg-amber-600 text-white gap-0.5 dark:bg-amber-500;
-}
-
-.platform-booked {
-  @apply line-through opacity-60;
-}
-
-.platform-arrow {
-  @apply text-[10px] opacity-80;
-}
-
-.platform-live {
-  @apply font-bold;
-}
-
-.platform-expected {
-  @apply bg-gray-100 text-gray-600 border border-dashed border-gray-400
-    dark:bg-slate-700 dark:text-slate-300 dark:border-slate-500;
-}
-
-.platform-scheduled {
-  @apply bg-gray-100 text-gray-500 border border-gray-300
-    dark:bg-slate-800 dark:text-slate-400 dark:border-slate-600;
-}
-
-.platform-suppressed {
-  @apply bg-gray-100 text-gray-600 border border-dashed border-amber-400 relative
-    dark:bg-slate-700 dark:text-slate-300 dark:border-amber-500/60;
-}
-
-.suppressed-indicator {
-  @apply absolute -top-1.5 -right-1.5 text-[8px] text-amber-600 bg-amber-100 rounded-full w-3 h-3 flex items-center justify-center
-    dark:text-amber-300 dark:bg-amber-900/80;
-}
-
-/* ─── Service row ──────────────────────────────────────────────────────── */
-
-.service-row {
-  @apply border rounded-lg mb-2 transition-colors
-    border-gray-200 bg-white hover:bg-gray-50
-    dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700/80;
-}
-
-.service-row.cancelled {
-  @apply opacity-60;
-}
-
-.service-main {
-  @apply gap-3 px-3 py-2 cursor-pointer select-none
-    hover:bg-gray-50 dark:hover:bg-slate-800/50;
-}
-
-@media (min-width: 1024px) {
-  .service-main {
-    @apply gap-4;
-  }
-}
-
-@media (max-width: 639px) {
-  .service-main {
-    @apply min-h-[48px] py-2.5 px-2;
-  }
-}
-
-.service-time {
-  @apply flex flex-col items-start justify-center;
-}
-
-.time-scheduled {
-  @apply text-sm font-mono text-gray-900 dark:text-slate-200;
-}
-
-.time-estimated {
-  @apply text-sm font-mono text-amber-600 dark:text-amber-300;
-}
-
-.time-on-time {
-  @apply text-xs text-emerald-600 font-medium dark:text-emerald-300;
-}
-
-.time-cancelled {
-  @apply text-xs text-red-600 font-bold dark:text-red-300;
-}
-
-.service-info {
-  @apply flex-1 min-w-0;
-}
-
-.service-origin {
-  @apply text-xs text-gray-400 truncate dark:text-slate-500;
-}
-
-.service-calling {
-  @apply hidden lg:block w-64 shrink-0;
-}
-
-.calling-preview {
-  @apply text-xs text-gray-500 truncate dark:text-slate-400;
-}
-
-.calling-stop {
-  @apply inline-flex items-center gap-1 mr-3;
-}
-
-.calling-stop-time {
-  @apply font-mono text-gray-800 dark:text-slate-300;
-}
-
-.calling-stop-time.arrived {
-  @apply text-emerald-600 dark:text-emerald-300;
-}
-
-.calling-stop-time.late {
-  @apply text-red-600 dark:text-red-300;
-}
-
-.calling-stop-time.on-time {
-  @apply text-emerald-600 dark:text-emerald-300;
-}
-
-.calling-stop-name {
-  @apply text-gray-500 dark:text-slate-400;
-}
-
-.calling-stop-arrow {
-  @apply text-gray-300 mx-1 dark:text-slate-600;
-}
-
-.delay-badge {
-  @apply text-[10px] text-red-600 font-mono dark:text-red-300;
-}
-
-.service-destination {
-  @apply text-sm font-medium text-gray-900 truncate dark:text-slate-100;
-}
-
-.service-operator {
-  @apply text-xs text-gray-500 flex items-center gap-2 dark:text-slate-400;
-}
-
-@media (min-width: 1024px) {
-  .service-operator {
-    @apply w-40 shrink-0 flex-wrap;
-  }
-}
-
-.service-id {
-  @apply text-[11px] font-mono bg-gray-100 px-1 rounded text-gray-500
-    dark:bg-slate-700 dark:text-slate-400;
-}
-
-.service-length {
-  @apply text-xs text-gray-400 dark:text-slate-500;
-}
-
-.service-status {
-  @apply flex items-center gap-1;
-}
-
-.realtime-badge {
-  @apply text-emerald-600 text-xs dark:text-emerald-300;
-}
-
-.scheduled-badge {
-  @apply text-gray-400 text-xs dark:text-slate-500;
-}
-
-.service-chevron {
-  @apply text-gray-300 text-lg dark:text-slate-400;
-}
-
-/* ─── Alerts ──────────────────────────────────────────────────────────── */
-
-.alert {
-  @apply text-xs px-2 py-1 rounded mb-1;
-}
-
-.alert-cancel {
-  @apply bg-red-50 text-red-700 dark:bg-red-900/50 dark:text-red-300;
-}
-
-.alert-delay {
-  @apply bg-amber-50 text-amber-700 dark:bg-yellow-900/50 dark:text-yellow-300;
-}
-
-.alert-adhoc {
-  @apply bg-blue-50 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300;
-}
-
-.alert-platform {
-  @apply bg-amber-50 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300;
-}
-
-/* ─── Board ────────────────────────────────────────────────────────────── */
-
-.departure-board {
-  @apply max-w-6xl mx-auto w-full;
-}
-
-@media (min-width: 1024px) {
-  .departure-board {
-    @apply px-4;
-  }
-}
-
-.board-header {
-  @apply flex items-center justify-between px-3 sm:px-4 py-3;
-}
-
-@media (max-width: 639px) {
-  .board-header {
-    @apply flex-col items-start gap-1;
-  }
-
-  .board-header-left {
-    @apply flex items-center gap-2 w-full;
-  }
-
-  .board-header-right {
-    @apply flex items-center justify-between w-full;
-  }
-}
-
-.board-header h2 {
-  @apply text-lg font-bold flex items-center gap-2
-    text-gray-900 dark:text-white;
-}
-
-.crs-badge {
-  @apply text-xs font-mono px-1.5 py-0.5 rounded
-    bg-gray-100 text-gray-600
-    dark:bg-slate-700 dark:text-slate-300;
-}
-
-.board-controls {
-  @apply flex items-center justify-between px-3 sm:px-4 py-1
-    border-b border-gray-200 dark:border-slate-700;
-}
-
-.board-controls-right {
-  @apply flex items-center gap-2;
-}
-
-.board-tabs {
-  @apply flex gap-1;
-}
-
-.tab {
-  @apply px-4 py-2.5 text-sm rounded-t-lg transition-colors select-none
-    text-gray-500 hover:text-gray-700
-    dark:text-slate-400 dark:hover:text-slate-200;
-}
-
-.tab.active {
-  @apply bg-gray-100 text-gray-900 font-medium
-    dark:bg-slate-700 dark:text-white;
-}
-
-@media (max-width: 639px) {
-  .board-controls {
-    @apply flex-col items-stretch gap-2 py-2;
-  }
-
-  .board-controls-right {
-    @apply w-full justify-between;
-  }
-
-  .tab {
-    @apply px-3 py-2.5 text-sm;
-  }
-}
-
-.board-services {
-  @apply px-2 sm:px-3 max-h-[70vh] overflow-y-auto;
-}
-
-.board-table-header {
-  @apply lg:flex items-center gap-3 px-3 py-2 text-xs font-medium uppercase tracking-wider
-    border-b mb-2 sticky top-0 z-10
-    text-gray-500 bg-gray-50 border-gray-200
-    dark:text-slate-400 dark:bg-slate-800 dark:border-slate-700;
-}
-
-.col-time { @apply w-20 shrink-0 text-right; }
-.col-platform { @apply w-16 shrink-0 text-center; }
-.col-destination { @apply flex-1 min-w-0; }
-.col-calling { @apply w-64 shrink-0; }
-.col-operator { @apply w-36 shrink-0; }
-.col-status { @apply w-auto shrink-0 text-center; }
-
-.board-legend {
-  @apply flex flex-wrap gap-3 sm:gap-4 justify-center text-[10px] py-1.5
-    text-gray-500 dark:text-slate-400;
-}
-
-.legend-item {
-  @apply flex items-center gap-1;
-}
-
-.nrcc-messages {
-  @apply px-3 sm:px-4 mb-2;
-}
-
-.nrcc-message {
-  @apply text-xs px-2 py-1 rounded mb-1
-    bg-amber-50 text-amber-700 border border-amber-200
-    dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-500/20;
-}
-
-/* ─── Live indicator & refresh status ────────────────────────────────── */
-
-.refresh-status {
-  @apply flex items-center gap-1.5 text-xs select-none
-    text-gray-500 dark:text-slate-400;
-}
-
-.live-dot {
-  @apply w-2 h-2 rounded-full shrink-0;
-}
-
-.live-dot.live {
-  @apply bg-emerald-500;
-  box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
-  animation: livePulse 2s ease-in-out infinite;
-}
-
-.dark .live-dot.live {
-  @apply bg-emerald-400;
-  box-shadow: 0 0 6px rgba(52, 211, 153, 0.6);
-}
-
-.live-dot.paused {
-  @apply bg-gray-400 dark:bg-slate-500;
-}
-
-.refresh-status-text {
-  @apply font-mono tabular-nums;
-}
-
-@keyframes livePulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-
-.selected-time-badge {
-  @apply text-xs font-mono font-medium px-2 py-0.5 rounded
-    bg-amber-50 text-amber-700 border border-amber-200
-    dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/20;
-}
-
-.btn-back {
-  @apply text-sm mr-2 select-none
-    text-gray-500 hover:text-gray-900
-    dark:text-slate-400 dark:hover:text-white;
-}
-
-@media (max-width: 639px) {
-  .btn-back {
-    @apply py-1 px-2 min-h-[44px] flex items-center;
-  }
-}
-
-.btn-refresh {
-  @apply text-lg px-2 select-none transition-transform duration-300
-    text-gray-400 hover:text-gray-900
-    dark:text-slate-400 dark:hover:text-white;
-}
-
-.btn-refresh.spinning {
-  animation: spin 0.6s ease-in-out;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-@media (max-width: 639px) {
-  .btn-refresh {
-    @apply py-1 px-2 min-h-[44px] flex items-center;
-  }
-}
-
-/* ─── Theme toggle ─────────────────────────────────────────────────────── */
-
-.theme-toggle {
-  @apply w-8 h-8 flex items-center justify-center rounded-lg
-    text-gray-400 hover:text-gray-600 hover:bg-gray-100
-    dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-700
-    transition-colors cursor-pointer select-none
-    focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1;
-}
-
-.loading {
-  @apply text-center py-8 text-gray-400 dark:text-slate-500;
-}
-
-.no-services {
-  @apply text-center py-8 text-gray-400 dark:text-slate-500;
-}
-
-.error-message {
-  @apply text-center py-4 text-red-600 dark:text-red-400;
-}
-
-/* ─── Service Detail ───────────────────────────────────────────────────── */
-
-.service-detail {
-  @apply rounded-xl border overflow-hidden
-    bg-white border-gray-200
-    dark:bg-slate-800 dark:border-slate-700;
-}
-
-/* ─── Favourite Stations ────────────────────────────────────────────────── */
-
-.favourite-card {
-  @apply relative flex flex-col items-start gap-0.5 p-3 rounded-lg border transition-all duration-150 cursor-pointer text-left
-    bg-white border-gray-200 hover:bg-gray-50 hover:border-gray-300
-    dark:bg-slate-800/80 dark:border-slate-700 dark:hover:bg-slate-700/80 dark:hover:border-amber-600/50;
-}
-
-.favourite-card:active {
-  transform: scale(0.97);
-}
-
-.favourite-card-name {
-  @apply text-sm font-medium truncate w-full
-    text-gray-900 dark:text-slate-100;
-}
-
-.favourite-card-crs {
-  @apply text-xs font-mono text-gray-500 dark:text-slate-400;
-}
-
-.favourite-card-remove {
-  @apply absolute top-1.5 right-1.5 w-5 h-5 flex items-center justify-center
-    text-xs rounded-full transition-all duration-150
-    text-gray-400 hover:text-red-500 hover:bg-gray-100
-    dark:text-slate-500 dark:hover:text-red-400 dark:hover:bg-slate-600;
-}
-
-.favourite-card-remove:active {
-  @apply scale-90;
-}
-
-/* ─── Favourite Toggle (Board Header Star) ──────────────────────────────── */
-
-.btn-favourite {
-  @apply inline-flex items-center justify-center w-7 h-7 rounded-full
-    text-lg leading-none transition-all duration-200 cursor-pointer select-none
-    hover:bg-gray-100 active:scale-90
-    dark:hover:bg-slate-700;
-}
-
-.btn-favourite:not(.is-favourite) {
-  @apply text-gray-400 hover:text-amber-500
-    dark:text-slate-500 dark:hover:text-amber-400;
-}
-
-.btn-favourite.is-favourite {
-  @apply text-amber-500 dark:text-amber-400;
-}
-
-@keyframes favouritePop {
-  0% { transform: scale(1); }
-  50% { transform: scale(1.3); }
-  100% { transform: scale(1); }
-}
-
-.btn-favourite.is-favourite {
-  animation: favouritePop 300ms ease-out;
-}
-
-/* ─── Time Picker ──────────────────────────────────────────────────────── */
-
-/* The inline bar: ◀ now ▶ */
-.time-bar-arrow {
-  @apply w-8 h-8 flex items-center justify-center border transition-all duration-150 cursor-pointer select-none
-    bg-gray-100 border-gray-200 text-gray-500
-    hover:bg-gray-200 hover:text-gray-900 hover:border-gray-300
-    active:scale-90
-    dark:bg-slate-800 dark:border-slate-700 dark:text-slate-400
-    dark:hover:bg-slate-700 dark:hover:text-white dark:hover:border-slate-600;
-}
-
-.time-bar-arrow:first-child {
-  @apply rounded-l-lg;
-}
-
-.time-bar-arrow.compact {
-  @apply w-7 h-7;
-}
-
-/* Reset button — always visible, rightmost element */
-.time-bar-reset {
-  @apply px-2.5 h-8 flex items-center justify-center border transition-all duration-150 cursor-pointer select-none rounded-r-lg text-xs font-medium
-    bg-gray-100 border-gray-200 text-gray-500
-    hover:bg-gray-200 hover:text-gray-900 hover:border-gray-300
-    active:scale-95
-    dark:bg-slate-800 dark:border-slate-700 dark:text-slate-400
-    dark:hover:bg-slate-700 dark:hover:text-white dark:hover:border-slate-600;
-}
-
-.time-bar-reset.dimmed {
-  @apply opacity-40 cursor-default;
-}
-
-.time-bar-reset.compact {
-  @apply h-7 px-1.5 text-[10px];
-}
-
-/* Centre label — "now" or "17:00" */
-.time-bar-label {
-  @apply px-3 py-1.5 text-sm font-medium border-x transition-all duration-150 cursor-pointer select-none
-    bg-gray-50 text-gray-700 border-gray-200
-    hover:bg-gray-100 hover:text-gray-900
-    dark:bg-slate-800/60 dark:text-slate-300 dark:border-slate-700
-    dark:hover:bg-slate-700 dark:hover:text-white;
-}
-
-.time-bar-label.active {
-  @apply bg-gray-100 text-gray-900
-    dark:bg-slate-700 dark:text-white;
-}
-
-.time-bar-label.compact {
-  @apply px-2 py-1 text-xs;
-}
-
-/* Popover for precise time selection (opens below centre label) */
-.time-bar-popover {
-  @apply absolute top-full mt-1 p-3 rounded-lg border shadow-lg z-50
-    bg-white border-gray-200
-    dark:bg-slate-800 dark:border-slate-700;
-  /* Centre the popover under the bar */
-  left: 50%;
-  transform: translateX(-50%);
-}
-
-.time-input {
-  @apply appearance-none rounded-lg px-3 py-2 pr-8 text-sm font-mono cursor-pointer border transition-colors
-    bg-gray-100 border-gray-200 text-gray-900
-    hover:bg-gray-200 hover:border-gray-300
-    focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500
-    dark:bg-slate-800 dark:border-slate-700 dark:text-white
-    dark:hover:bg-slate-700 dark:hover:border-slate-600;
-}
-
-.time-input::-webkit-calendar-picker-indicator {
-  opacity: 0;
-  cursor: pointer;
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-}
-
-/* ─── Station Search ──────────────────────────────────────────────────── */
-
-.station-search-input {
-  @apply w-full px-4 py-3 rounded-xl border text-base transition-colors
-    bg-white border-gray-300 text-gray-900 placeholder-gray-400
-    focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500
-    dark:bg-slate-800 dark:border-slate-600 dark:text-white dark:placeholder-slate-400
-    dark:focus:ring-blue-400/50 dark:focus:border-blue-400;
-}
-
-.station-search-input.large {
-  @apply px-5 py-4 text-lg;
-}
-
-.station-search-dropdown {
-  @apply absolute z-50 w-full mt-1 rounded-xl border shadow-lg overflow-hidden
-    bg-white border-gray-200
-    dark:bg-slate-800 dark:border-slate-700;
-}
-
-.station-search-item {
-  @apply px-4 py-3 cursor-pointer transition-colors text-sm
-    hover:bg-gray-100 text-gray-900
-    dark:hover:bg-slate-700 dark:text-slate-100;
-}
-
-.station-search-item.active {
-  @apply bg-blue-50 text-blue-900
-    dark:bg-blue-900/30 dark:text-blue-300;
-}
-
-/* ─── Pull-to-refresh ──────────────────────────────────────────────────── */
-
-.pull-to-refresh-indicator {
-  @apply text-center overflow-hidden select-none;
-  touch-action: pan-y;
-}
-
-/* ─── Safe area support for notched devices ─────────────────────────────── */
-
-@supports (padding: env(safe-area-inset-top)) {
-  body {
-    padding-top: env(safe-area-inset-top);
-    padding-bottom: env(safe-area-inset-bottom);
+/* ─── prefers-reduced-motion ────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

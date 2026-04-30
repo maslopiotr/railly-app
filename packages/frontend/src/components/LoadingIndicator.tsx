@@ -3,6 +3,8 @@
  *
  * Displays a visual indicator of how busy a train service is,
  * using the LDBWS FormationData loading categories.
+ * Uses semantic design tokens for text and background; bar colours
+ * remain semantic (green/yellow/orange/red) as they are data-driven indicators.
  */
 
 import type { FormationData } from "@railly-app/shared";
@@ -14,10 +16,10 @@ interface LoadingIndicatorProps {
 
 /** Map loading category codes to display info */
 const LOADING_DISPLAY: Record<string, { label: string; emoji: string; className: string }> = {
-  "1": { label: "Quiet", emoji: "🟢", className: "text-green-400" },
-  "2": { label: "Moderate", emoji: "🟡", className: "text-yellow-400" },
-  "3": { label: "Busy", emoji: "🟠", className: "text-orange-400" },
-  "4": { label: "Very Busy", emoji: "🔴", className: "text-red-400" },
+  "1": { label: "Quiet", emoji: "🟢", className: "text-status-on-time" },
+  "2": { label: "Moderate", emoji: "🟡", className: "text-status-approaching" },
+  "3": { label: "Busy", emoji: "🟠", className: "text-status-delayed" },
+  "4": { label: "Very Busy", emoji: "🔴", className: "text-status-cancelled" },
 };
 
 function getLoadingInfo(code?: string) {
@@ -26,7 +28,9 @@ function getLoadingInfo(code?: string) {
 }
 
 /** Find the least busy coach from formation data */
-function getQuietestCoach(formation: FormationData): { number: string; loading: number } | null {
+function getQuietestCoach(
+  formation: FormationData,
+): { number: string; loading: number } | null {
   if (!formation.coaches || formation.coaches.length === 0) return null;
 
   let quietest: { number: string; loading: number } | null = null;
@@ -48,7 +52,6 @@ export function LoadingIndicator({ formation, compact = false }: LoadingIndicato
   const quietestCoach = getQuietestCoach(formation);
 
   if (compact) {
-    // Compact mode: just show the emoji + label
     if (!loadingInfo) return null;
     return (
       <span className={`inline-flex items-center gap-1 text-xs ${loadingInfo.className}`}>
@@ -60,7 +63,6 @@ export function LoadingIndicator({ formation, compact = false }: LoadingIndicato
 
   return (
     <div className="space-y-1.5">
-      {/* Overall loading category */}
       {loadingInfo && (
         <div className={`flex items-center gap-1.5 text-sm font-medium ${loadingInfo.className}`}>
           <span className="text-base">{loadingInfo.emoji}</span>
@@ -68,23 +70,24 @@ export function LoadingIndicator({ formation, compact = false }: LoadingIndicato
         </div>
       )}
 
-      {/* Quietest coach suggestion */}
       {quietestCoach && (
-        <div className="text-xs text-slate-400">
+        <div className="text-xs text-text-secondary">
           🪑 Coach {quietestCoach.number} is quietest ({quietestCoach.loading}% full)
         </div>
       )}
 
-      {/* Coach loading bars */}
       {formation.coaches && formation.coaches.length > 0 && (
         <div className="flex gap-0.5 mt-1 overflow-x-auto pb-1">
           {formation.coaches.map((coach) => {
             const loading = coach.loading ?? 0;
             const barColor =
-              loading < 40 ? "bg-green-500" :
-              loading < 70 ? "bg-yellow-500" :
-              loading < 90 ? "bg-orange-500" :
-              "bg-red-500";
+              loading < 40
+                ? "bg-status-on-time"
+                : loading < 70
+                  ? "bg-status-approaching"
+                  : loading < 90
+                    ? "bg-status-delayed"
+                    : "bg-status-cancelled";
 
             return (
               <div
@@ -92,13 +95,18 @@ export function LoadingIndicator({ formation, compact = false }: LoadingIndicato
                 className="flex flex-col items-center shrink-0"
                 title={`Coach ${coach.number}: ${loading}% full${coach.coachClass === "First" ? " (First Class)" : ""}${coach.toilet?.status === "InService" ? " — 🚻 Toilet available" : ""}`}
               >
-                <div className="w-6 sm:w-6 bg-slate-700 rounded-t overflow-hidden" style={{ height: "24px" }}>
+                <div
+                  className="w-6 sm:w-6 h-6 bg-surface-hover rounded-t overflow-hidden"
+                >
                   <div
                     className={`${barColor} rounded-t w-full transition-all`}
-                    style={{ height: `${Math.max(loading, 5)}%`, marginTop: `${100 - Math.max(loading, 5)}%` }}
+                    style={{
+                      height: `${Math.max(loading, 5)}%`,
+                      marginTop: `${100 - Math.max(loading, 5)}%`,
+                    }}
                   />
                 </div>
-                <span className="text-[10px] text-slate-500 mt-0.5">
+                <span className="text-[10px] text-text-muted mt-0.5">
                   {coach.coachClass === "First" ? "★" : coach.number}
                 </span>
               </div>

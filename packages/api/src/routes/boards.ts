@@ -657,10 +657,14 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       // This is safe: if a later stop has atd/ata, the train must have left
       // this station. If the train is still at platform, no subsequent stop
       // will have actual times, so this won't fire.
+      // BUG-025: For circular trains (same TPL visited twice), match by tpl + sortTime
+      // to find the correct occurrence. Using tpl alone always matches the first visit.
       let inferredDeparted = false;
       if (trainStatus !== "departed" && entry.atdPushport == null) {
         const fullPattern = callingPatternMap.get(rid) || [];
-        const boardIndex = fullPattern.findIndex(cp => cp.tpl === entry.tpl);
+        const boardIndex = fullPattern.findIndex(cp =>
+          cp.tpl === entry.tpl && cp.sortTime === entry.sortTime
+        );
         if (boardIndex >= 0) {
           for (let i = boardIndex + 1; i < fullPattern.length; i++) {
             if (fullPattern[i].atdPushport || fullPattern[i].ataPushport) {
@@ -692,8 +696,9 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       // BUG-017: Also patch the calling point in cpList so the frontend's
       // CallingPoints.tsx (which checks atdPushport for "Departed" status)
       // works without any changes.
+      // BUG-025: Match by tpl + sortTime for circular trains.
       if (inferredDeparted && !entry.atdPushport && entry.etdPushport) {
-        const boardCp = cpList.find(cp => cp.tpl === entry.tpl);
+        const boardCp = cpList.find(cp => cp.tpl === entry.tpl && cp.sortTime === (entry.sortTime ?? "00:00"));
         if (boardCp && !boardCp.atdPushport) {
           boardCp.atdPushport = entry.etdPushport;
         }

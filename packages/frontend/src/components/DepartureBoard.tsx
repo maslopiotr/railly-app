@@ -4,7 +4,7 @@
  * Shows all services for a station within a time window (past 10min + next 2hr).
  * Splits into Departures and Arrivals tabs, now server-filtered.
  * Auto-polls every 60 seconds when visible; manual refresh also available.
- * Supports both light and dark mode.
+ * Uses semantic design tokens only — no raw Tailwind colour classes, no custom CSS.
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -29,7 +29,17 @@ interface DepartureBoardProps {
   onTimeChange?: (time: string | null) => void;
 }
 
-export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack, onSelectService, activeTab, onTabChange, selectedTime, onTimeChange }: DepartureBoardProps) {
+export function DepartureBoard({
+  station,
+  isFavourite,
+  onToggleFavourite,
+  onBack,
+  onSelectService,
+  activeTab,
+  onTabChange,
+  selectedTime,
+  onTimeChange,
+}: DepartureBoardProps) {
   const [board, setBoard] = useState<HybridBoardResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -66,43 +76,46 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
     return () => clearInterval(id);
   }, [lastRefreshed]);
 
-  const loadBoard = useCallback(async (silent = false) => {
-    // Abort any in-flight request
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
+  const loadBoard = useCallback(
+    async (silent = false) => {
+      // Abort any in-flight request
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
 
-    try {
-      // Only show loading skeleton on initial load, not on auto-poll refreshes
-      if (!silent) {
-        setBoard(null);
-        setIsLoading(true);
+      try {
+        // Only show loading skeleton on initial load, not on auto-poll refreshes
+        if (!silent) {
+          setBoard(null);
+          setIsLoading(true);
+        }
+        const data = await fetchBoard(station.crsCode, {
+          timeWindow: 120,
+          pastWindow: 10,
+          type: activeTab,
+          time: selectedTime || undefined,
+          signal: controller.signal,
+        });
+        // Only update if this request wasn't aborted
+        if (!controller.signal.aborted) {
+          setBoard(data);
+          setError(null);
+          setLastRefreshed(new Date());
+        }
+      } catch (err) {
+        // Ignore aborted requests
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        if (controller.signal.aborted) return;
+        setError(err instanceof Error ? err.message : "Failed to load board");
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsLoading(false);
+          setIsRefreshing(false);
+        }
       }
-      const data = await fetchBoard(station.crsCode, {
-        timeWindow: 120,
-        pastWindow: 10,
-        type: activeTab,
-        time: selectedTime || undefined,
-        signal: controller.signal,
-      });
-      // Only update if this request wasn't aborted
-      if (!controller.signal.aborted) {
-        setBoard(data);
-        setError(null);
-        setLastRefreshed(new Date());
-      }
-    } catch (err) {
-      // Ignore aborted requests
-      if (err instanceof DOMException && err.name === "AbortError") return;
-      if (controller.signal.aborted) return;
-      setError(err instanceof Error ? err.message : "Failed to load board");
-    } finally {
-      if (!controller.signal.aborted) {
-        setIsLoading(false);
-        setIsRefreshing(false);
-      }
-    }
-  }, [station.crsCode, activeTab, selectedTime]);
+    },
+    [station.crsCode, activeTab, selectedTime],
+  );
 
   // Load on mount and when tab/time changes; abort on cleanup
   useEffect(() => {
@@ -114,7 +127,6 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
 
   // Auto-poll every 60 seconds when tab is visible
   // Stops polling when tab is hidden to save resources (Visibility API)
-  // ~1 request/min per user, each ~6ms DB time — negligible server load
   useEffect(() => {
     const POLL_INTERVAL = 60_000;
     let intervalId: ReturnType<typeof setInterval> | null = null;
@@ -173,14 +185,17 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
     }
   }, []);
 
-  const handleTouchMove = useCallback((e: React.TouchEvent) => {
-    if (touchStartY.current === 0 || isRefreshing) return;
-    const diff = e.touches[0].clientY - touchStartY.current;
-    if (diff > 0) {
-      // Pulling down
-      setPullDistance(Math.min(diff, PULL_THRESHOLD * 1.5));
-    }
-  }, [isRefreshing]);
+  const handleTouchMove = useCallback(
+    (e: React.TouchEvent) => {
+      if (touchStartY.current === 0 || isRefreshing) return;
+      const diff = e.touches[0].clientY - touchStartY.current;
+      if (diff > 0) {
+        // Pulling down
+        setPullDistance(Math.min(diff, PULL_THRESHOLD * 1.5));
+      }
+    },
+    [isRefreshing],
+  );
 
   const handleTouchEnd = useCallback(() => {
     if (pullDistance >= PULL_THRESHOLD && !isRefreshing) {
@@ -195,155 +210,197 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
   const displayServices = board?.services || [];
   const serviceCount = displayServices.length;
 
-  // Compute pull indicator opacity as a Tailwind-compatible class
+  // Compute pull indicator opacity
   const pullOpacity = Math.min(pullDistance / PULL_THRESHOLD, 1);
 
   return (
-    <div className="departure-board w-full max-w-6xl mx-auto animate-fade-slide-up">
-      {/* Station header row */}
-      <div className="board-header">
-        <div className="board-header-left">
+    <div className="w-full max-w-6xl mx-auto animate-fade-slide-up">
+      {/* ─── Station header row ─── */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between px-3 sm:px-4 py-3 gap-1">
+        <div className="flex items-center gap-2">
           {onBack && (
-            <button className="btn-back focus-visible:ring-2 focus-visible:ring-blue-500 rounded" onClick={onBack} aria-label="Go back">
-              ← Back
+            <button
+              className="text-sm mr-2 select-none text-text-secondary hover:text-text-primary py-1 px-2 min-h-[44px] flex items-center focus-visible:ring-2 focus-visible:ring-blue-500 rounded gap-1"
+              onClick={onBack}
+              aria-label="Go back to home"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+              Back
             </button>
           )}
-          <h2>
+          <h2 className="text-lg font-bold flex items-center gap-2 text-text-primary">
             {normaliseStationName(board?.stationName || station.name)}
-            <span className="crs-badge">{station.crsCode}</span>
+            <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-surface-hover text-text-secondary">
+              {station.crsCode}
+            </span>
             {onToggleFavourite && (
               <button
-                className={`btn-favourite focus-visible:ring-2 focus-visible:ring-blue-500 rounded-full ${isFavourite ? "is-favourite" : ""}`}
+                className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-lg leading-none transition-all duration-200 cursor-pointer select-none hover:bg-surface-hover active:scale-90 focus-visible:ring-2 focus-visible:ring-blue-500 ${isFavourite ? "text-favourite" : "text-text-muted hover:text-favourite"}`}
                 onClick={onToggleFavourite}
                 aria-label={isFavourite ? "Remove from favourites" : "Add to favourites"}
                 title={isFavourite ? "Remove from favourites" : "Add to favourites"}
+                style={isFavourite ? { animation: "favouritePop 300ms ease-out" } : undefined}
               >
                 {isFavourite ? "★" : "☆"}
               </button>
             )}
           </h2>
         </div>
-        <div className="board-header-right">
+        <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto">
           {lastRefreshed && (
-            <span className="refresh-status">
-              <span className={`live-dot ${isLive ? "live" : "paused"}`} />
-              <span className="refresh-status-text">{relativeTime}</span>
+            <span className="flex items-center gap-1.5 text-xs select-none text-text-secondary">
+              <span
+                className={`w-2 h-2 rounded-full shrink-0 ${isLive ? "bg-status-on-time animate-pulse-subtle" : "bg-text-muted"}`}
+                style={
+                  isLive
+                    ? { boxShadow: "var(--glow-live)" }
+                    : undefined
+                }
+              />
+              <span className="font-mono tabular-nums">{relativeTime}</span>
             </span>
           )}
         </div>
       </div>
 
-      {/* Controls row: tabs + time picker + refresh */}
-      <div className="board-controls">
-        <div className="board-tabs">
+      {/* ─── Controls row: tabs + time picker + refresh ─── */}
+      <div className="flex flex-row flex-wrap items-center justify-between px-3 sm:px-4 py-1 sm:py-2 gap-2 border-b border-border-default">
+        <div className="flex gap-1 shrink-0">
           <button
-            className={`tab focus-visible:ring-2 focus-visible:ring-blue-500 rounded-t-lg ${activeTab === "departures" ? "active" : ""}`}
+            className={`px-4 py-2.5 text-sm rounded-t-lg transition-colors select-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-inset ${activeTab === "departures" ? "bg-surface-hover text-text-primary font-medium" : "text-text-secondary hover:text-text-primary"}`}
             onClick={() => onTabChange("departures")}
           >
-            Departures {activeTab === "departures" ? serviceCount : ""}
+            Departures {activeTab === "departures" && serviceCount > 0 ? serviceCount : ""}
           </button>
           <button
-            className={`tab focus-visible:ring-2 focus-visible:ring-blue-500 rounded-t-lg ${activeTab === "arrivals" ? "active" : ""}`}
+            className={`px-4 py-2.5 text-sm rounded-t-lg transition-colors select-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-inset ${activeTab === "arrivals" ? "bg-surface-hover text-text-primary font-medium" : "text-text-secondary hover:text-text-primary"}`}
             onClick={() => onTabChange("arrivals")}
           >
-            Arrivals {activeTab === "arrivals" ? serviceCount : ""}
+            Arrivals {activeTab === "arrivals" && serviceCount > 0 ? serviceCount : ""}
           </button>
         </div>
-        <div className="board-controls-right">
+        <div className="flex items-center gap-2 shrink-0">
           {onTimeChange ? (
-            <TimePicker
-              value={selectedTime || null}
-              onChange={onTimeChange}
-              compact
-            />
+            <TimePicker value={selectedTime || null} onChange={onTimeChange} compact />
           ) : selectedTime ? (
-            <span className="selected-time-badge">{selectedTime}</span>
+            <span className="text-xs font-mono font-medium px-2 py-0.5 rounded bg-alert-delay-bg text-alert-delay-text border border-alert-delay-border">
+              {selectedTime}
+            </span>
           ) : null}
-          <button className={`btn-refresh focus-visible:ring-2 focus-visible:ring-blue-500 rounded ${isLoading ? "spinning" : ""}`} onClick={() => loadBoard()} disabled={isLoading} aria-label="Refresh board" title="Refresh">
+          <button
+            className={`text-lg px-2 select-none transition-transform duration-300 text-text-muted hover:text-text-primary py-1 min-h-[44px] flex items-center focus-visible:ring-2 focus-visible:ring-blue-500 rounded ${isLoading ? "animate-spin" : ""}`}
+            onClick={() => loadBoard()}
+            disabled={isLoading}
+            aria-label="Refresh board"
+            title="Refresh"
+          >
             ↻
           </button>
         </div>
       </div>
 
-      {/* NRCC Messages */}
+      {/* ─── NRCC Messages ─── */}
       {board?.nrccMessages && board.nrccMessages.length > 0 && (
-        <div className="nrcc-messages">
+        <div className="px-3 sm:px-4 mb-2">
           {board.nrccMessages.map((msg, i) => (
-            <div key={i} className="nrcc-message">{msg.Value}</div>
+            <div
+              key={i}
+              className="text-xs px-2 py-1 rounded mb-1 bg-alert-delay-bg text-alert-delay-text border border-alert-delay-border"
+            >
+              {msg.Value}
+            </div>
           ))}
         </div>
       )}
 
-      {/* Platform legend (desktop only) */}
-      <div className="board-legend">
-        <span className="legend-item">
-          <span className="w-2 h-2 rounded-full bg-blue-600 dark:bg-blue-400 inline-block" /> Confirmed
+      {/* ─── Platform legend (all screens) ─── */}
+      <div className="flex flex-wrap gap-2 sm:gap-4 justify-center text-[10px] py-1.5 text-text-secondary">
+        <span className="flex items-center gap-1">
+          <span className="w-2 h-2 rounded-full bg-platform-confirmed-bg inline-block" /> Confirmed
         </span>
-        <span className="legend-item">
-          <span className="w-2 h-2 rounded-full bg-amber-600 dark:bg-amber-400 inline-block" /> Altered
+        <span className="flex items-center gap-1">
+          <span className="w-2 h-2 rounded-full bg-platform-altered-bg inline-block" /> Altered
         </span>
-        <span className="legend-item">
-          <span className="w-2 h-2 rounded-full border border-dashed border-gray-400 dark:border-slate-500 inline-block" /> Expected
+        <span className="flex items-center gap-1">
+          <span className="w-2 h-2 rounded-full border border-dashed border-border-emphasis inline-block" /> Expected
         </span>
-        <span className="legend-item">
-          <span className="w-2 h-2 rounded-full border border-gray-300 dark:border-slate-600 inline-block" /> Scheduled
+        <span className="flex items-center gap-1">
+          <span className="w-2 h-2 rounded-full border border-border-default inline-block" /> Scheduled
         </span>
       </div>
 
-      {/* Table header (desktop only) — matches ServiceRow column widths */}
-      <div className="board-table-header flex">
-        <div className="w-16 shrink-0 text-right pr-1">Time</div>
-        <div className="w-14 shrink-0 text-center">Plat</div>
-        <div className="flex-1 min-w-0">Destination</div>
-        <div className="w-48 shrink-0 hidden xl:block">Calling at</div>
-        <div className="w-20 shrink-0 text-right">Status</div>
-        <div className="w-4 shrink-0" />
-      </div>
-
-      {/* Pull-to-refresh indicator */}
+      {/* ─── Table header (desktop only) — matches ServiceRow grid columns ─── */}
       <div
-        className="pull-to-refresh-indicator overflow-hidden select-none text-center"
-        style={{
-          height: `${pullDistance}px`,
-          opacity: pullOpacity,
-        }}
+        className="
+          hidden sm:grid items-center px-3 py-2 text-xs font-medium uppercase tracking-wider
+          border-b mb-2 sticky top-0 z-10
+          text-text-secondary bg-surface-page border-border-default
+          sm:grid-cols-[4rem_4rem_auto_1fr_1rem]
+          xl:grid-cols-[4rem_4rem_auto_1fr_16rem_1rem]
+        "
+      >
+        <div className="text-right pr-1">Time</div>
+        <div className="text-center">Plat</div>
+        <div className="min-w-0">Status</div>
+        <div className="min-w-0">Destination</div>
+        <div className="hidden xl:block">Calling at</div>
+        <div />
+      </div>
+
+      {/* ─── Pull-to-refresh indicator ─── */}
+      <div
+        className="text-center overflow-hidden select-none transition-all duration-200 h-[var(--pull-distance)] opacity-[var(--pull-opacity)]"
+        style={
+          {
+            "--pull-distance": `${pullDistance}px`,
+            "--pull-opacity": pullOpacity,
+          } as React.CSSProperties
+        }
+        aria-live="polite"
       >
         {isRefreshing ? (
-          <div className="flex items-center justify-center py-2 text-sm text-gray-400 dark:text-slate-400">
-            <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mr-2" />
+          <div className="flex items-center justify-center py-2 text-sm text-text-muted">
+            <div className="w-4 h-4 border-2 border-border-emphasis border-t-transparent rounded-full animate-spin mr-2" />
             Refreshing…
           </div>
         ) : (
-          <div className="flex items-center justify-center py-2 text-sm text-gray-400 dark:text-slate-400">
+          <div className="flex items-center justify-center py-2 text-sm text-text-muted">
             {pullDistance >= PULL_THRESHOLD ? "Release to refresh" : "Pull to refresh"}
           </div>
         )}
       </div>
 
-      {/* Service list */}
+      {/* ─── Service list ─── */}
       <div
-        className="board-services"
+        className="px-2 sm:px-3 max-h-[70vh] overflow-y-auto"
         ref={listRef}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
         {isLoading && !board && (
-          <div className="loading animate-pulse-subtle">
+          <div className="text-center py-8 text-text-muted animate-pulse-subtle">
             <div className="flex flex-col gap-3 px-2">
               {[1, 2, 3, 4, 5].map((i) => (
-                <div key={i} className="h-14 bg-gray-200 dark:bg-slate-700/40 rounded-lg" />
+                <div key={i} className="h-14 bg-surface-hover rounded-lg" />
               ))}
             </div>
           </div>
         )}
-        {error && (
-          <div className="error-message">{error}</div>
-        )}
+        {error && <div className="text-center py-4 text-status-cancelled">{error}</div>}
         {!isLoading && !error && displayServices.length === 0 && (
-          <div className="no-services">No services found in this time window</div>
+          <div className="text-center py-8 px-4">
+            <p className="font-medium text-text-secondary">
+              No {activeTab === "departures" ? "departures" : "arrivals"} found
+            </p>
+            <p className="text-sm text-text-muted mt-1">
+              Try selecting a different time or check the other tab
+            </p>
+          </div>
         )}
-        <div className="animate-stagger">
+        <div className="animate-stagger flex flex-col gap-2">
           {displayServices.map((service) => (
             <ServiceRow
               key={service.rid}

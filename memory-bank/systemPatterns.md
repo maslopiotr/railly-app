@@ -75,12 +75,20 @@ if (delay > 720) delay -= 1440;
 - **State**: React hooks + context (no Redux)
 - **Routing**: History API (pushState/popstate), NOT React Router
 - **Board**: manual refresh (pull-to-refresh mobile, button desktop)
-- **Light/Dark mode**: Paired Tailwind utilities — never dark-mode-only colours
-- **Shared components**: `PlatformBadge`, `formatDisplayTime` from shared utils
 - **Accessibility**: focus-visible rings, aria-labels, keyboard navigation
-- **CallingPoints dots**: green=arrived, yellow=next/current, grey=future, red=cancelled
 - **Stagger animation**: CSS `--stagger-index` custom property
 - **Tailwind v4 trap**: Never put `display` in `@apply` — specificity equals utility classes
+
+### Design Token System
+- **Architecture**: `:root`/`.dark` CSS custom properties → `@theme` block → Tailwind utility classes
+- **Token categories**: surfaces, text, borders, status (text/bg/border), platform badges, calling points timeline, alert banners
+- **Theme flash prevention**: `<html>` defaults to dark background, inline script swaps to light before first paint
+- **Rule**: No raw Tailwind colour classes in components — always semantic tokens (`bg-surface-card`, `text-status-on-time`, etc.)
+- **Exception**: `dark:` prefix only for mixed-colour elements that can't be tokenised (e.g. amber favourites)
+- **`--glow-live`**: Theme-aware box-shadow for live indicator dot (light: emerald, dark: softer emerald)
+- **Shared components**: `PlatformBadge` (standard + compact), `DelayBadge`, `formatDisplayTime`/`computeDelay` from shared utils
+- **CallingPoints dots**: green=arrived, yellow=next/current, grey=future, red=cancelled (all via `--call-*` tokens)
+- **ServiceRow**: Single CSS Grid layout — no `sm:hidden`/`hidden sm:flex` dual DOM trees
 
 ## Key Decisions
 
@@ -92,7 +100,6 @@ if (delay > 720) delay -= 1440;
 | Routing | History API | No React Router dependency |
 | Master timetable | PP Timetable → PostgreSQL | Complete daily schedule |
 | Real-time overlay | PostgreSQL (was Redis) | Single source of truth, JOINs for free |
-| LDBWS | Removed | Subscription ended |
 | Storage | PostgreSQL only | Simpler ops, ACID, no cache invalidation |
 | Dedup | `generated_at`/`ts_generated_at` + `FOR UPDATE` | Prevents race conditions |
 | Source separation | `_timetable`/`_pushport` column suffixes | Seed and consumer write to different cols |

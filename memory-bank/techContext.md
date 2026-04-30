@@ -4,6 +4,7 @@
 - **Runtime**: Node.js 24.x, TypeScript 5.8+/6.x, ESM modules
 - **Backend**: Express 4.21, Helmet, CORS, Drizzle ORM, postgres.js, tsx (dev)
 - **Frontend**: Vite 8.x, React 19.x, Tailwind CSS 4.x (`@tailwindcss/vite`), History API routing
+- **Frontend CSS**: Semantic design token system — `:root`/`.dark` CSS custom properties → `@theme` block → Tailwind utility classes. No raw colour classes in components.
 - **Infrastructure**: Docker Compose (PostgreSQL 17, Kafka, Zookeeper, API, Consumer, nginx+frontend)
 - **Shared**: Pure TypeScript types + utilities, no runtime deps
 

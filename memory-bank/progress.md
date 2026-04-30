@@ -1,5 +1,34 @@
 # Progress
 
+## Completed (2026-04-30) — Session 6
+
+### UI Design System Overhaul ✅
+- ✅ Replaced 706 lines of custom CSS with semantic design token system (344 lines)
+- ✅ Tailwind v4 `@theme` block maps CSS custom properties to utility classes
+- ✅ `:root` (light) + `.dark` (dark) define all colour tokens
+- ✅ 12 component files migrated to semantic tokens (no raw colour classes)
+- ✅ Shared `computeDelay()` + `parseTimeToMinutes()` utilities
+- ✅ Single CSS Grid layout in ServiceRow (no dual DOM trees)
+- ✅ `DelayBadge` per calling point stop (green/amber/red severity)
+- ✅ `PlatformBadge` compact variant for calling points
+
+### Bug Fixes ✅
+- ✅ White flash on load: `visibility: hidden` → `background-color: #0f172a` dark default
+- ✅ Dark mode live dot box-shadow: hardcoded → `var(--glow-live)` CSS custom property
+- ✅ Double URL encoding: removed redundant `encodeURIComponent()` in `buildUrl()`
+- ✅ 12 additional UI fixes from UI-fix-prompt.md (time padding, column widths, mobile layout, etc.)
+
+### Audit & Data Verification Fixes ✅
+- ✅ CSS custom properties `--platform-expected-border`/`--platform-suppressed-border` had `dashed` keyword in colour values — removed (invalid CSS)
+- ✅ LoadingIndicator `style={{ height: "24px" }}` → Tailwind `h-6`
+- ✅ ServiceDetail currentLocation `"arrived"` status fell through to "Departed" — fixed
+- ✅ CallingPoints platSource fallback now passes through all 5 valid values (`"expected"`, `"scheduled"`)
+- ✅ Pull-to-refresh `style={{ height, opacity }}` → CSS custom properties `--pull-distance`/`--pull-opacity`
+- ✅ Spinner `border-blue-500` → `border-border-emphasis`
+- ✅ Favourite card `dark:hover:border-amber-600/50` → `hover:border-favourite`
+- ✅ PlatformBadge suppressed indicator → semantic tokens
+- ✅ Data pipeline verified: PostgreSQL → API → Frontend all fields correct for EUS departures
+
 ## Completed (2026-04-30) — Session 5
 
 ### BUG-017b: Origin stops not showing "departed" — FIXED ✅

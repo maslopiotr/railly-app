@@ -3,9 +3,7 @@
  *
  * Displays a user-friendly error message with a retry button.
  * Wraps the entire app at the root level in App.tsx.
- *
- * BUG-017: Any unhandled render error previously crashed the entire SPA.
- * This boundary ensures the user sees a recovery UI instead of a blank screen.
+ * Uses semantic design tokens only.
  */
 
 import { Component } from "react";
@@ -33,7 +31,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    // Log to console for debugging — could be extended to send to error tracking service
     console.error("[ErrorBoundary] Unhandled render error:", error, errorInfo);
   }
 
@@ -53,21 +50,32 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
       return (
         <div className="flex flex-col items-center justify-center min-h-[50vh] px-6 text-center">
-          <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-500/20 flex items-center justify-center mb-4">
-            <svg className="w-6 h-6 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+          <div className="w-12 h-12 rounded-full bg-status-cancelled-bg flex items-center justify-center mb-4">
+            <svg
+              className="w-6 h-6 text-status-cancelled"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"
+              />
             </svg>
           </div>
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+          <h2 className="text-lg font-semibold text-text-primary mb-2">
             Something went wrong
           </h2>
-          <p className="text-sm text-gray-500 dark:text-slate-400 mb-4 max-w-md">
-            An unexpected error occurred while rendering this page. Your data is safe — try retrying or reloading the page.
+          <p className="text-sm text-text-secondary mb-4 max-w-md">
+            An unexpected error occurred while rendering this page. Your data is safe — try
+            retrying or reloading the page.
           </p>
           <div className="flex items-center gap-3">
             <button
               onClick={this.handleRetry}
-              className="px-4 py-2 text-sm font-medium rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors focus-visible:ring-2 focus-visible:ring-blue-500"
+              className="px-4 py-2 text-sm font-medium rounded-lg border border-border-default bg-surface-card text-text-secondary hover:bg-surface-hover transition-colors focus-visible:ring-2 focus-visible:ring-blue-500"
             >
               Try again
             </button>
@@ -80,10 +88,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
           </div>
           {this.state.error && (
             <details className="mt-4 text-left max-w-md">
-              <summary className="text-xs text-gray-400 dark:text-slate-500 cursor-pointer">
+              <summary className="text-xs text-text-muted cursor-pointer">
                 Error details
               </summary>
-              <pre className="mt-2 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 p-3 rounded-lg overflow-x-auto whitespace-pre-wrap">
+              <pre className="mt-2 text-xs text-status-cancelled bg-status-cancelled-bg p-3 rounded-lg overflow-x-auto whitespace-pre-wrap">
                 {this.state.error.message}
                 {"\n"}
                 {this.state.error.stack}

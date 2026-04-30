@@ -3,12 +3,11 @@
  *
  * Shows calling pattern with time-based dots, alerts, formation, and service IDs.
  * Navigated to from ServiceRow click — no inline expansion.
- * Supports in-place refresh via onRefresh callback.
- * Supports both light and dark mode.
+ * Uses semantic design tokens only — no raw Tailwind colour classes.
  */
 
 import type { HybridBoardService } from "@railly-app/shared";
-import { normaliseStationName, formatDisplayTime } from "@railly-app/shared";
+import { normaliseStationName, formatDisplayTime, computeDelay } from "@railly-app/shared";
 import { CallingPoints } from "./CallingPoints";
 import { LoadingIndicator } from "./LoadingIndicator";
 import { PlatformBadge } from "./PlatformBadge";
@@ -27,49 +26,34 @@ function displayTime(time: string | null | undefined): string {
   return formatDisplayTime(time) ?? "--:--";
 }
 
-/** Parse HH:MM to minutes since midnight for delay calc */
-function parseTimeToMinutes(time: string | null | undefined): number | null {
-  if (!time) return null;
-  const t = formatDisplayTime(time);
-  if (!t) return null;
-  const [h, m] = t.split(":").map(Number);
-  if (isNaN(h) || isNaN(m)) return null;
-  return h * 60 + m;
-}
-
-/** Compute delay in minutes between scheduled and estimated/actual */
-function computeDelay(scheduled: string | null, estimated: string | null, actual: string | null): number | null {
-  const ref = actual || estimated;
-  if (!scheduled || !ref) return null;
-  if (ref === "Cancelled") return null;
-  if (ref === "On time") return 0;
-  const s = parseTimeToMinutes(scheduled);
-  const e = parseTimeToMinutes(ref);
-  if (s === null || e === null) return null;
-  let d = e - s;
-  if (d < -720) d += 1440;
-  return d;
-}
-
-export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefresh, isRefreshing }: ServiceDetailProps) {
+export function ServiceDetail({
+  service,
+  isArrival,
+  stationCrs,
+  onBack,
+  onRefresh,
+  isRefreshing,
+}: ServiceDetailProps) {
   const scheduledTime = isArrival ? service.sta : service.std;
   const estimatedTime = isArrival ? service.eta : service.etd;
   const actualTime = isArrival ? service.actualArrival : service.actualDeparture;
-  const destination = isArrival ? service.origin : service.destination;
-  const origin = isArrival ? service.destination : service.origin;
+  const displayStation = isArrival ? service.origin : service.destination;
 
-  const cancelled = service.isCancelled || estimatedTime === "Cancelled" || estimatedTime === "cancelled";
+  const cancelled =
+    service.isCancelled ||
+    estimatedTime === "Cancelled" ||
+    estimatedTime === "cancelled";
   const onTime = !cancelled && estimatedTime === "On time";
   const delay = computeDelay(scheduledTime, estimatedTime, actualTime);
   const isDelayed = !cancelled && delay !== null && delay > 1;
 
   return (
-    <div className="service-detail flex flex-col h-full">
-      {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-200 dark:border-slate-700">
+    <div className="rounded-xl border overflow-hidden bg-surface-card border-border-default">
+      {/* ─── Header ─── */}
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-border-default">
         <button
           onClick={onBack}
-          className="text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors p-1 -ml-1 focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
+          className="text-text-muted hover:text-text-primary transition-colors p-1 -ml-1 focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
           aria-label="Back to board"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -79,38 +63,37 @@ export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefres
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-xl font-mono font-bold text-gray-900 dark:text-white">
+            <span className="text-xl font-mono font-bold text-text-primary">
               {displayTime(scheduledTime)}
             </span>
             {actualTime && (
-              <span className="text-xl font-mono font-bold text-emerald-600 dark:text-emerald-400">
+              <span className="text-xl font-mono font-bold text-status-arrived">
                 {displayTime(actualTime)}
               </span>
             )}
             {!actualTime && estimatedTime && !onTime && !cancelled && (
-              <span className="text-xl font-mono font-bold text-amber-600 dark:text-amber-400">
+              <span className="text-xl font-mono font-bold text-status-delayed">
                 {displayTime(estimatedTime)}
               </span>
             )}
             {onTime && (
-              <span className="text-sm font-medium text-emerald-600 dark:text-emerald-400">On time</span>
+              <span className="text-sm font-medium text-status-on-time">On time</span>
             )}
             {cancelled && (
-              <span className="text-sm font-medium text-red-600 dark:text-red-400">Cancelled</span>
+              <span className="text-sm font-medium text-status-cancelled">Cancelled</span>
             )}
           </div>
-          <div className="text-sm text-gray-500 dark:text-slate-400 truncate">
-            {normaliseStationName(destination?.name) || destination?.crs || "Unknown"}
+          <div className="text-sm text-text-secondary truncate">
+            {normaliseStationName(displayStation?.name) || displayStation?.crs || "Unknown"}
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Refresh button */}
           {onRefresh && (
             <button
               onClick={onRefresh}
               disabled={isRefreshing}
-              className="refresh-press text-gray-400 hover:text-gray-900 dark:hover:text-white p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-blue-500"
+              className="text-text-muted hover:text-text-primary p-1.5 rounded-lg hover:bg-surface-hover disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-blue-500 transition-transform duration-100 active:scale-[0.97]"
               aria-label="Refresh service"
             >
               <svg
@@ -119,12 +102,16 @@ export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefres
                 stroke="currentColor"
                 viewBox="0 0 24 24"
               >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
               </svg>
             </button>
           )}
 
-          {/* Platform badge */}
           <div className="shrink-0">
             <PlatformBadge
               platformTimetable={service.platformTimetable}
@@ -136,78 +123,117 @@ export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefres
         </div>
       </div>
 
-      {/* Alerts */}
+      {/* ─── Alerts ─── */}
       {cancelled && service.cancelReason && (
-        <div className="mx-4 mt-3 p-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 rounded-lg text-red-700 dark:text-red-300 text-sm">
+        <div className="mx-4 mt-3 p-3 bg-alert-cancel-bg border border-alert-cancel-border rounded-lg text-alert-cancel-text text-sm">
           <strong>Cancelled:</strong> {service.cancelReason}
         </div>
       )}
       {isDelayed && service.delayReason && (
-        <div className="mx-4 mt-3 p-3 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 rounded-lg text-amber-700 dark:text-amber-300 text-sm">
+        <div className="mx-4 mt-3 p-3 bg-alert-delay-bg border border-alert-delay-border rounded-lg text-alert-delay-text text-sm">
           <strong>Delayed {delay} min:</strong> {service.delayReason}
         </div>
       )}
-      {service.platformSource === "altered" && service.platformLive && service.platformTimetable !== service.platformLive && (
-        <div className="mx-4 mt-3 p-3 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 rounded-lg text-amber-700 dark:text-amber-300 text-sm">
-          Platform altered from {service.platformTimetable} to {service.platformLive}
-        </div>
-      )}
+      {service.platformSource === "altered" &&
+        service.platformLive &&
+        service.platformTimetable !== service.platformLive && (
+          <div className="mx-4 mt-3 p-3 bg-alert-delay-bg border border-alert-delay-border rounded-lg text-alert-delay-text text-sm">
+            Platform altered from {service.platformTimetable} to {service.platformLive}
+          </div>
+        )}
       {service.adhocAlerts?.map((alert, i) => (
-        <div key={i} className="mx-4 mt-3 p-3 bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/30 rounded-lg text-blue-700 dark:text-blue-300 text-sm">
+        <div
+          key={i}
+          className="mx-4 mt-3 p-3 bg-alert-info-bg border border-alert-info-border rounded-lg text-alert-info-text text-sm"
+        >
           {alert}
         </div>
       ))}
 
-      {/* Current location indicator */}
+      {/* ─── Current location indicator ─── */}
       {service.currentLocation && (
-        <div className="mx-4 mt-3 p-3 bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/30 rounded-lg text-blue-700 dark:text-blue-300 text-sm flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${
-            service.currentLocation.status === "at_platform" ? "bg-emerald-500 dark:bg-emerald-400" :
-            service.currentLocation.status === "approaching" ? "bg-amber-500 dark:bg-amber-400" :
-            "bg-gray-400 dark:bg-slate-400"
-          }`} />
+        <div className="mx-4 mt-3 p-3 bg-alert-info-bg border border-alert-info-border rounded-lg text-alert-info-text text-sm flex items-center gap-2">
+          <span
+            className={`w-2 h-2 rounded-full ${
+              service.currentLocation.status === "at_platform"
+                ? "bg-status-at-platform"
+                : service.currentLocation.status === "approaching"
+                  ? "bg-status-approaching"
+                  : service.currentLocation.status === "arrived"
+                    ? "bg-status-arrived"
+                    : "bg-text-muted"
+            }`}
+          />
           <span>
-            {service.currentLocation.status === "at_platform" ? "At platform" :
-             service.currentLocation.status === "approaching" ? "Approaching" :
-             "Departed"} {normaliseStationName(service.currentLocation.name) || service.currentLocation.crs || service.currentLocation.tpl}
+            {service.currentLocation.status === "at_platform"
+              ? "At platform"
+              : service.currentLocation.status === "approaching"
+                ? "Approaching"
+                : service.currentLocation.status === "arrived"
+                  ? "Arrived"
+                  : "Departed"}{" "}
+            {normaliseStationName(service.currentLocation.name) ||
+              service.currentLocation.crs ||
+              service.currentLocation.tpl}
           </span>
         </div>
       )}
 
-      {/* Time comparison table */}
+      {/* ─── Time comparison table ─── */}
       <div className="mx-4 mt-4">
-        <table className="w-full text-sm border-collapse">
+        <table
+          className="w-full text-sm border-collapse"
+          aria-label="Scheduled vs real-time times for this service"
+        >
           <thead>
-            <tr className="text-left text-xs text-gray-500 dark:text-slate-500 border-b border-gray-200 dark:border-slate-700">
+            <tr className="text-left text-xs text-text-muted border-b border-border-default">
               <th className="py-1 font-medium">Event</th>
               <th className="py-1 font-medium">Scheduled</th>
               <th className="py-1 font-medium">Real-time</th>
               <th className="py-1 font-medium">Delay</th>
             </tr>
           </thead>
-          <tbody className="text-gray-700 dark:text-slate-300">
+          <tbody className="text-text-secondary">
             {service.sta && (
-              <tr className="border-b border-gray-100 dark:border-slate-700/50">
+              <tr className="border-b border-border-default/50">
                 <td className="py-1.5">Arrival</td>
                 <td className="py-1.5 font-mono">{displayTime(service.sta)}</td>
                 <td className="py-1.5 font-mono">
                   {service.actualArrival ? (
-                    <span className="text-emerald-600 dark:text-emerald-400">{displayTime(service.actualArrival)}</span>
+                    <span className="text-status-arrived">
+                      {displayTime(service.actualArrival)}
+                    </span>
                   ) : service.eta ? (
-                    <span className={service.eta === "On time" ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>
+                    <span
+                      className={
+                        service.eta === "On time"
+                          ? "text-status-on-time"
+                          : "text-status-delayed"
+                      }
+                    >
                       {displayTime(service.eta)}
                     </span>
                   ) : (
-                    <span className="text-gray-400 dark:text-slate-500">--:--</span>
+                    <span className="text-text-muted">--:--</span>
                   )}
                 </td>
                 <td className="py-1.5">
                   {(() => {
-                    const delay = computeDelay(service.sta, service.eta, service.actualArrival);
-                    if (delay === null) return <span className="text-gray-400 dark:text-slate-500">--</span>;
+                    const arrDelay = computeDelay(
+                      service.sta,
+                      service.eta,
+                      service.actualArrival,
+                    );
+                    if (arrDelay === null)
+                      return <span className="text-text-muted">--</span>;
                     return (
-                      <span className={delay > 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}>
-                        {delay > 0 ? "+" : ""}{delay} min
+                      <span
+                        className={
+                          arrDelay > 0 ? "text-status-cancelled" : "text-status-on-time"
+                        }
+                      >
+                        {arrDelay > 0 ? "+" : ""}
+                        {arrDelay} min
                       </span>
                     );
                   })()}
@@ -220,22 +246,40 @@ export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefres
                 <td className="py-1.5 font-mono">{displayTime(service.std)}</td>
                 <td className="py-1.5 font-mono">
                   {service.actualDeparture ? (
-                    <span className="text-emerald-600 dark:text-emerald-400">{displayTime(service.actualDeparture)}</span>
+                    <span className="text-status-arrived">
+                      {displayTime(service.actualDeparture)}
+                    </span>
                   ) : service.etd ? (
-                    <span className={service.etd === "On time" ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>
+                    <span
+                      className={
+                        service.etd === "On time"
+                          ? "text-status-on-time"
+                          : "text-status-delayed"
+                      }
+                    >
                       {displayTime(service.etd)}
                     </span>
                   ) : (
-                    <span className="text-gray-400 dark:text-slate-500">--:--</span>
+                    <span className="text-text-muted">--:--</span>
                   )}
                 </td>
                 <td className="py-1.5">
                   {(() => {
-                    const delay = computeDelay(service.std, service.etd, service.actualDeparture);
-                    if (delay === null) return <span className="text-gray-400 dark:text-slate-500">--</span>;
+                    const depDelay = computeDelay(
+                      service.std,
+                      service.etd,
+                      service.actualDeparture,
+                    );
+                    if (depDelay === null)
+                      return <span className="text-text-muted">--</span>;
                     return (
-                      <span className={delay > 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}>
-                        {delay > 0 ? "+" : ""}{delay} min
+                      <span
+                        className={
+                          depDelay > 0 ? "text-status-cancelled" : "text-status-on-time"
+                        }
+                      >
+                        {depDelay > 0 ? "+" : ""}
+                        {depDelay} min
                       </span>
                     );
                   })()}
@@ -246,50 +290,55 @@ export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefres
         </table>
       </div>
 
-      {/* Route info */}
-      <div className="mx-4 mt-4 flex items-center gap-2 text-xs text-gray-500 dark:text-slate-400">
-        <span>{normaliseStationName(origin?.name) || origin?.crs || "Unknown"}</span>
-        <span className="text-gray-300 dark:text-slate-600">→</span>
-        <span>{normaliseStationName(destination?.name) || destination?.crs || "Unknown"}</span>
+      {/* ─── Route info ─── */}
+      <div className="mx-4 mt-4 flex items-center gap-2 text-xs text-text-secondary">
+        <span>
+          {normaliseStationName(service.origin?.name) || service.origin?.crs || "Unknown"}
+        </span>
+        <span className="text-text-muted">→</span>
+        <span>
+          {normaliseStationName(service.destination?.name) ||
+            service.destination?.crs ||
+            "Unknown"}
+        </span>
         {service.tocName && (
           <>
-            <span className="text-gray-300 dark:text-slate-600">·</span>
+            <span className="text-text-muted">·</span>
             <span>{service.tocName}</span>
           </>
         )}
         {service.trainId && (
           <>
-            <span className="text-gray-300 dark:text-slate-600">·</span>
-            <span className="font-mono text-gray-400 dark:text-slate-500">{service.trainId}</span>
+            <span className="text-text-muted">·</span>
+            <span className="font-mono text-text-muted">{service.trainId}</span>
           </>
         )}
       </div>
 
-      {/* Formation */}
+      {/* ─── Formation ─── */}
       {service.formation && service.formation.coaches && (
         <div className="mx-4 mt-3">
-          <h4 className="text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Formation</h4>
+          <h4 className="text-xs font-medium text-text-secondary mb-1">Formation</h4>
           <LoadingIndicator formation={service.formation} />
         </div>
       )}
 
-      {/* Calling points */}
-      <div className="mx-4 mt-4 flex-1 overflow-y-auto pb-4">
+      {/* ─── Calling points ─── */}
+      <div className="mx-4 mt-4 pb-4">
         {service.callingPoints && service.callingPoints.length > 0 ? (
           <>
-            <h4 className="text-xs font-medium text-gray-500 dark:text-slate-400 mb-2">Calling points</h4>
-            <CallingPoints
-              points={service.callingPoints}
-              currentCrs={stationCrs}
-            />
+            <h4 className="text-xs font-medium text-text-secondary mb-2">
+              Calling points
+            </h4>
+            <CallingPoints points={service.callingPoints} currentCrs={stationCrs} />
           </>
         ) : (
-          <p className="text-gray-400 dark:text-slate-500 text-sm">No calling point data available</p>
+          <p className="text-text-muted text-sm">No calling point data available</p>
         )}
       </div>
 
-      {/* Service IDs (subtle footer) */}
-      <div className="px-4 py-3 border-t border-gray-200 dark:border-slate-700 text-[10px] text-gray-400 dark:text-slate-600 font-mono flex gap-4">
+      {/* ─── Service IDs (subtle footer) ─── */}
+      <div className="px-4 py-3 border-t border-border-default text-[10px] text-text-muted font-mono flex gap-4">
         <span>RID: {service.rid}</span>
         {service.uid && <span>UID: {service.uid}</span>}
         {service.serviceId && <span>LDBWS: {service.serviceId}</span>}

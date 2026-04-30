@@ -70,10 +70,7 @@ export function StationSearch({
   // Close dropdown on outside click/touch
   useEffect(() => {
     function handleClickOutside(event: MouseEvent | TouchEvent) {
-      if (
-        containerRef.current &&
-        !containerRef.current.contains(event.target as Node)
-      ) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
         setIsDropdownOpen(false);
       }
     }
@@ -104,9 +101,7 @@ export function StationSearch({
 
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setSelectedIndex((prev) =>
-        prev < results.length - 1 ? prev + 1 : prev,
-      );
+      setSelectedIndex((prev) => (prev < results.length - 1 ? prev + 1 : prev));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev));
@@ -131,6 +126,14 @@ export function StationSearch({
 
   const isLarge = size === "large";
 
+  // Input classes using semantic tokens
+  const inputClasses = isLarge
+    ? "px-5 py-4 pl-12 text-lg rounded-xl"
+    : "px-4 py-3 pl-10";
+
+  const searchIconPosition = isLarge ? "pl-4" : "pl-3";
+  const searchIconSize = isLarge ? "w-5 h-5" : "w-4 h-4";
+
   return (
     <div ref={containerRef} className="relative w-full max-w-md">
       <div className="relative">
@@ -138,31 +141,30 @@ export function StationSearch({
           ref={inputRef}
           type="text"
           value={query}
-          onChange={(e) => { setQuery(e.target.value); setErrorMessage(null); }}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setErrorMessage(null);
+          }}
           onKeyDown={handleKeyDown}
           onFocus={() => {
             if (results.length > 0) setIsDropdownOpen(true);
           }}
           placeholder={placeholder}
-          className={`w-full bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-            isLarge
-              ? "px-5 py-4 pl-12 text-lg rounded-xl"
-              : "px-4 py-3 pl-10"
-          }`}
+          className={`${inputClasses} w-full bg-surface-card border border-border-emphasis rounded-lg text-text-primary placeholder:text-text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:border-blue-500`}
           aria-label="Search for a station"
           aria-expanded={isDropdownOpen}
           aria-autocomplete="list"
           role="combobox"
           inputMode="search"
         />
-        <div className={`absolute inset-y-0 left-0 flex items-center pointer-events-none ${
-          isLarge ? "pl-4" : "pl-3"
-        }`}>
+        <div
+          className={`absolute inset-y-0 left-0 flex items-center pointer-events-none ${searchIconPosition}`}
+        >
           {isLoading ? (
-            <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+            <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
           ) : (
             <svg
-              className={`text-slate-400 ${isLarge ? "w-5 h-5" : "w-4 h-4"}`}
+              className={`${searchIconSize} text-text-muted`}
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -180,9 +182,7 @@ export function StationSearch({
           <button
             type="button"
             onClick={handleClear}
-            className={`absolute inset-y-0 right-0 flex items-center text-slate-400 hover:text-white transition-colors ${
-              isLarge ? "pr-4" : "pr-3"
-            }`}
+            className={`absolute inset-y-0 right-0 flex items-center px-3 text-text-muted hover:text-text-primary transition-colors focus-visible:ring-2 focus-visible:ring-blue-500 rounded`}
             aria-label="Clear search"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -194,7 +194,7 @@ export function StationSearch({
 
       {isDropdownOpen && results.length > 0 && (
         <ul
-          className="absolute z-10 w-full mt-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg overflow-hidden"
+          className="absolute z-10 w-full mt-1 bg-surface-card border border-border-default rounded-lg shadow-lg overflow-hidden"
           role="listbox"
         >
           {results.map((station, index) => (
@@ -204,13 +204,19 @@ export function StationSearch({
               className={`px-4 py-3 cursor-pointer flex items-center justify-between select-none ${
                 index === selectedIndex
                   ? "bg-blue-600 text-white"
-                  : "text-slate-200 hover:bg-slate-700"
+                  : "text-text-primary hover:bg-surface-hover"
               }`}
               role="option"
               aria-selected={index === selectedIndex}
             >
               <span className="font-medium">{station.name}</span>
-              <span className="text-xs font-mono bg-slate-700 px-2 py-0.5 rounded ml-2">
+              <span
+                className={`text-xs font-mono px-2 py-0.5 rounded ml-2 ${
+                  index === selectedIndex
+                    ? "bg-white/20 text-white"
+                    : "bg-surface-hover text-text-secondary"
+                }`}
+              >
                 {station.crsCode}
               </span>
             </li>
@@ -219,13 +225,13 @@ export function StationSearch({
       )}
 
       {errorMessage && (
-        <div className="absolute z-10 w-full mt-1 bg-red-900/50 border border-red-700 rounded-lg shadow-lg px-4 py-3 text-red-300 text-sm">
+        <div className="absolute z-10 w-full mt-1 bg-alert-cancel-bg border border-alert-cancel-border rounded-lg shadow-lg px-4 py-3 text-alert-cancel-text text-sm">
           {errorMessage}
         </div>
       )}
 
       {!errorMessage && isDropdownOpen && query.length > 0 && results.length === 0 && !isLoading && (
-        <div className="absolute z-10 w-full mt-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg px-4 py-3 text-slate-400 text-sm">
+        <div className="absolute z-10 w-full mt-1 bg-surface-card border border-border-default rounded-lg shadow-lg px-4 py-3 text-text-secondary text-sm">
           No stations found
         </div>
       )}

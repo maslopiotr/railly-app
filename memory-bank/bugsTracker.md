@@ -10,7 +10,16 @@
 - **Status:** Wontfix (no user impact)
 - **Context:** PP stops filtered from display. 583 duplicate groups — low priority.
 
-### BUG-025: CP-level dedup leaves stale timestamps on unchanged CPs
+### BUG-025: Circular trains show wrong departure status
+- **Severity:** High
+- **Type:** Bug
+- **Status:** Fixed (2026-04-30)
+- **Context:** Train 202604307187689 (circular route) visits Manor Road twice (14:50 and 16:50). Board showed 16:50 departure as "departed" because BUG-017 inference code used `findIndex(cp => cp.tpl === entry.tpl)` which always matched the first visit. Same bug in `cpList.find(cp => cp.tpl === entry.tpl)` for patching atd.
+- **Fix:** Match by `tpl + sortTime` instead of just `tpl` in both places. This ensures the correct occurrence is found for circular routes.
+- **Files changed:** `packages/api/src/routes/boards.ts`
+- **Note:** Also exists as stale-timestamp issue (Wontfix) — that's a separate concern.
+
+### BUG-025b: CP-level dedup leaves stale timestamps on unchanged CPs
 - **Severity:** Low
 - **Type:** Bug
 - **Status:** Wontfix (expected behaviour)
@@ -48,6 +57,9 @@
 
 ### BUG-018
 Journeys are showing as Approaching too soon - review the logic so its closer to actual arrival time at the station - even if delayed. Second thing - On time and At platform are in the same color on the board, which is confusing.
+
+### BUG-019
+Journey viewed at 17:00 202604306714507 when departure is set to 17:00 and already has some delay data from real time darwin as 17:04 not showing as delayed. Is this because of the 5 minutes rule? its confusing, I think it should show as delayed faster, as soon as we know how much its delayed, even if 1 or 2 minutes, it should show +1 min etc.
 
 ---
 
@@ -124,6 +136,7 @@ Journeys are showing as Approaching too soon - review the logic so its closer to
 | BUG-029 | Multiple 23505 root causes fixed | 2026-04-27 |
 | BUG-034 | Seed re-processing: hash-based dedup via `seed_log` | 2026-04-30 |
 | BUG-036 | 23505 violation: natural key matching + stop_type derivation | 2026-04-29 |
+| BUG-025 | Circular trains: match by tpl+sortTime instead of tpl only | 2026-04-30 |
 | BUG-037 | Phantom IP rows: TS handler uses `pass` sub-object for PP detection (+ 37K additional cleanup 2026-04-30) | 2026-04-30 |
 
 ---

@@ -19,4 +19,3 @@ UK rail commuters lack a free, commuter-focused tool combining live tracking, di
 - **Clear, not cluttered** — RTT's data depth with Trainline's visual clarity
 - **Mobile-first** — commuters check on the go
 - **Offline graceful degradation** — cached data if connectivity drops
-
