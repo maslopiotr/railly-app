@@ -96,4 +96,18 @@
 
 **Files changed**: `schema.ts`, `seed-timetable.ts`, `seed-entrypoint.sh`
 
+## Previous: Docker RAM Investigation & PostgreSQL Tuning (2026-04-30)
+
+**Problem**: Docker containers running higher on RAM than usual. PostgreSQL using 562 MB.
+
+**Root cause**: `darwin_events` table was 3.2 GB (3.9M rows, each storing full JSON in `raw_json`). Retention cleanup only ran every 1 hour, and autovacuum thresholds were too conservative (20% default) for a high-churn table receiving ~90K inserts/hr.
+
+**Fixes applied**:
+1. **Retention cleanup interval**: 1 hour → 15 minutes (`CLEANUP_INTERVAL_MS` default `"900000"`)
+2. **Autovacuum tuning**: `darwin_events` and `calling_points` set to `autovacuum_vacuum_scale_factor=0.05` and `autovacuum_analyze_scale_factor=0.02` (defaults were 0.20/0.10)
+3. **One-time VACUUM**: Cleaned up 379K dead tuples on `darwin_events`, 107K on `calling_points`
+4. **Retention remains 2 days** — will reduce to 0 for production
+
+**Current state**: PostgreSQL ~558 MB (stable), Consumer ~32 MB (fresh restart). `darwin_events` still 3.2 GB on disk (VACUUM doesn't shrink files, only marks space reusable). New inserts will reuse reclaimed space. Run `VACUUM FULL darwin_events` during quiet hours to actually shrink the file.
+
 ## Previous: PostgreSQL Performance Optimisation — Complete ✅

@@ -142,7 +142,7 @@ function startMetricsLogging(): ReturnType<typeof setInterval> {
 // darwin_events with processed_at IS NULL (unprocessed) are also kept.
 
 const RETENTION_DAYS = parseInt(process.env.RETENTION_DAYS || "2", 10);
-const CLEANUP_INTERVAL_MS = parseInt(process.env.CLEANUP_INTERVAL_MS || "3600000", 10); // Default: 1 hour
+const CLEANUP_INTERVAL_MS = parseInt(process.env.CLEANUP_INTERVAL_MS || "900000", 10); // Default: 15 minutes
 
 async function runRetentionCleanup(): Promise<number> {
   const cutoff = `NOW() - INTERVAL '${RETENTION_DAYS} days'`;

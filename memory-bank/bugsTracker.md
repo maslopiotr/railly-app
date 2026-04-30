@@ -41,6 +41,10 @@
 ### BUG-016: No tests anywhere in the codebase
 - **Context:** Zero test scripts or test files.
 
+### BUG-017: 202604308706803 should show as departed for Euston - why is it not showing as departed?
+London Euston plat 11 EUS 13:39
+
+
 ---
 
 ## User-Reported Bugs (A-series)

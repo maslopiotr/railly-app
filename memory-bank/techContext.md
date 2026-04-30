@@ -80,6 +80,13 @@ METRICS_INTERVAL_MS=30000
 - **Grafana**: Dashboard for Kafka lag, PostgreSQL health, consumer health
 - **Health checks**: Consumer exposes `/health` (Kafka connected, PostgreSQL connected)
 
+## PostgreSQL Performance Tuning
+- **Autovacuum**: `darwin_events` and `calling_points` have `autovacuum_vacuum_scale_factor=0.05` and `autovacuum_analyze_scale_factor=0.02` (defaults are 0.20/0.10). These tables are high-churn; lower thresholds trigger autovacuum sooner, preventing dead tuple accumulation.
+- **Retention cleanup**: Runs every 15 minutes (was 1 hour). Deletes `darwin_events` older than 2 days (configurable via `RETENTION_DAYS`). Also deletes `skipped_locations` older than 7 days.
+- **`darwin_events` table**: Largest table (~3.2 GB, ~90K inserts/hr). Full JSON stored in `raw_json` column. Retention cleanup + autovacuum keeps dead tuples manageable. For disk space reclamation, run `VACUUM FULL darwin_events` during quiet hours (locks table).
+- **`calling_points` table**: Second largest (~2 GB, 4M+ rows, 1.2 GB indexes). Natural key index is largest at 427 MB.
+- **Docker resource usage (typical)**: PostgreSQL ~560 MB RAM, Consumer ~120 MB, API ~42 MB, Frontend ~4 MB, Seed ~0.5 MB.
+
 ## Debugging
 Always verify with SQL queries first when the issue may involve data — avoid assumptions based on hallucination. Inspect raw `darwin_events` before debugging handler logic.
 
