@@ -218,6 +218,11 @@ if (delay > 720) delay -= 1440;   // Scheduled is next day
 - Midnight handling: `normalizeCallingPointTimes()` for services spanning two days
 - Time-based calling point dots: green=arrived, yellow=next, grey=future, red=cancelled
 - UK timezone: `Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London" })` everywhere
+- **Error Boundary**: `ErrorBoundary` component wraps main content — catches unhandled render errors (BUG-017)
+- **Light/Dark mode**: All components use paired Tailwind utilities (e.g., `text-gray-900 dark:text-white`). Never use dark-mode-only colours without light counterparts.
+- **Shared components**: `PlatformBadge` (used by ServiceRow + ServiceDetail), `formatDisplayTime` from `@railly-app/shared`
+- **Accessibility**: `focus-visible:ring-2 focus-visible:ring-blue-500` on all interactive elements. `aria-label` on icon-only buttons. `role="button"` + `tabIndex` + `onKeyDown` on clickable rows.
+- **Stagger animation**: CSS custom property `--stagger-index` with `calc(var(--stagger-index) * 25ms)` delay
 
 ### ⚠️ Tailwind v4 CSS Specificity Trap
 In Tailwind v4, `@apply` generates CSS rules with the **same specificity as utility classes**. If a custom CSS class (e.g., `.service-main { @apply flex items-center }`) appears **later** in the CSS output than a utility class (e.g., `hidden` which is `display: none`), the custom class **wins** — overriding `display: none` with `display: flex`.

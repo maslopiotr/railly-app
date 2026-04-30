@@ -1,91 +1,78 @@
 # Active Context
 
-## Current Focus: PostgreSQL Performance Optimisation — Complete ✅
+## Current Focus: Frontend UI/UX Fixes — Complete ✅
 
 ### Completed This Session (2026-04-29)
 
-**3. PostgreSQL Performance Optimisation**:
-- **Autovacuum tuning**: Set `autovacuum_vacuum_scale_factor=0.05` and `autovacuum_analyze_scale_factor=0.05` on `calling_points` and `service_rt` — vacuum at 5% row changes instead of default 20%
-- **Batched darwin_events inserts**: Replaced per-message INSERT with in-memory buffer (batch size 2500). Flush on: buffer full, 30-second timer, or graceful shutdown. Reduces transaction overhead ~25x
-- **shared_buffers increased**: 128MB → 512MB in docker-compose.yml. PostgreSQL restarted
-- **VACUUM FULL darwin_events**: Reclaimed disk from 6033MB → 2928MB
-- **Retention cleanup**: Deleted 4M+ old darwin_events (>2 days), RETENTION_DAYS reduced to 2
+**Frontend UI/UX overhaul** — All 11 known issues from UI-fix-prompt.md addressed:
 
-**Current PostgreSQL state**:
-- DB size: 4.1 GB (down from 7.2 GB before cleanup)
-- shared_buffers: 512MB (was 128MB)
-- Cache hit ratio: ~81% (cumulative stat — includes pre-optimisation reads; will improve over time)
-- Consumer memory: ~115 MB (stable)
-- Event buffer: 2500 batch size, 30s flush interval, 0 failures
+1. **CallingPoints light mode** — All dark-mode-only colours replaced with paired light/dark Tailwind utilities (e.g., `text-gray-900 dark:text-slate-200`). Timeline dots, connector lines, text, badges all visible in light mode now.
 
-**Key files changed**:
-- `packages/consumer/src/handlers/index.ts` — Event buffer (logDarwinEvent → buffered, flushEventBuffer, startEventBufferTimer)
-- `packages/consumer/src/index.ts` — Wired up buffer lifecycle (start/stop/flush on shutdown, metrics logging)
-- `docker-compose.yml` — Added `-c shared_buffers=512MB`
+2. **ServiceRow mobile layout light mode** — Replaced `text-white` / `text-slate-400` with `text-gray-900 dark:text-white` / `text-gray-400 dark:text-slate-400`. Status labels use emerald/amber/red with dark variants.
 
-## Previous: PostgreSQL 23505 Fix — Complete ✅
+3. **PlatformBadge dedup** — Extracted `PlatformBadge` component to `components/PlatformBadge.tsx`. Supports `size` prop ("default" | "large"). Used by both `ServiceRow` and `ServiceDetail`.
 
-### Earlier This Session (2026-04-29)
+4. **formatDisplayTime dedup** — Added `formatDisplayTime()` to `@railly-app/shared/utils/time.ts`. Handles HHmm → HH:MM, already-formatted HH:MM, "Half" prefix stripping. Replaces local `formatTime()` in ServiceRow, ServiceDetail, CallingPoints.
 
-**1. PostgreSQL 23505 unique constraint violation fix** — Critical:
-- **Root cause**: Schedule handler matched CPs by TIPLOC only, then UPDATED `sort_time`/`stop_type`/`day_offset` on matched rows. When two CPs shared a TIPLOC (e.g., PP+IP at same junction, or origin+dest at same station), changing one CP's natural key could collide with the other → 23505 error.
-- **Fix in `schedule.ts`**: Changed matching from TIPLOC-only to natural key `(tpl, sort_time, stop_type)`. Removed natural key columns from UPDATE SET (they already match → no collision possible). Applied to both VSTP and timetable paths.
-- **Fix in `trainStatus.ts`**: Added `deriveStopType()` helper using Darwin's own `isOrigin`/`isDestination`/`isPass` flags. VSTP stubs use `OP*` conventions (OPOR/OPDT/OPIP), timetable services use public conventions (OR/DT/IP). Replaced hardcoded `'IP'` in `createDarwinStub` and old `OR`/`DT`/`IP` derivation in unmatched stops.
-- **Result**: Zero 23505 errors after fix. All messages processing cleanly.
+5. **Board table header / ServiceRow width coupling** — Column widths already aligned (w-16, w-14, flex-1, w-48 xl:block, w-20). Verified no drift.
 
-**2. Skipped locations analysis (29 April)**:
-- `passing_point_no_match`: 2.6M (expected — PPs not in timetable)
-- `passenger_stop_no_match`: 208K (historical, 0 new since restart)
-- `origin_no_match`: 0 (no data loss)
-- `destination_no_match`: 0 (no data loss)
+6. **Board legend shown** — Removed `hidden` from `.board-legend` CSS. Now visible on desktop with platform source indicators (Confirmed/Altered/Expected/Scheduled).
 
-### Key Design Decisions (This Session)
-- **Natural key matching**: Schedule handler matches by `(tpl, sort_time, stop_type)` not just TIPLOC
-- **Never UPDATE natural key columns**: When a match is found by natural key, `sort_time`/`stop_type`/`day_offset` are NOT updated (they already match). Updating them risks collision.
-- **VSTP = operational**: VSTP services use `OP*` stop types (OPOR/OPIP/OPDT) because they don't appear in the public timetable
-- **Darwin flags = stop type data**: `isOrigin`/`isDestination`/`isPass` are Darwin-provided data equivalent to schedule's XML element names (OR/OPOR/IP/OPIP/PP/DT/OPDT)
+7. **Pull-to-refresh** — Moved `overflow-hidden` and `select-none` from inline styles to Tailwind classes. `height` and `opacity` remain inline (dynamic values).
 
-## Previous: Data Preservation & Audit Improvements — Complete ✅
+8. **Focus-visible accessibility** — Added `focus-visible:ring-2 focus-visible:ring-blue-500` to all interactive elements: ServiceRow, DepartureBoard tabs/buttons, ServiceDetail back/refresh, App logo, theme toggle, favourite buttons.
 
-### Completed (2026-04-28)
+9. **React Error Boundary** — Created `components/ErrorBoundary.tsx` (class component). Shows recovery UI with "Try again" and "Reload page" buttons plus collapsible error details. Wrapped around main content in App.tsx. Addresses BUG-017.
 
-**1. Parser Bug: OR/DT/OPOR/OPDT not handled as arrays** — Fixed:
-- Parser now uses `Array.isArray()` check for ALL location types
-- Verified: RID 202604287111933 now has 21 calling points (was completely skipped)
+10. **Mobile ServiceRow overflow** — Mobile metadata line now uses `flex-wrap` so operator, train ID, and coach count wrap gracefully instead of truncating.
 
-**2. Darwin Audit Table: `darwin_errors` → `darwin_audit`**:
-- Added `severity` column (`error`, `skip`, `warning`) — defaults to `error`
-- `logDarwinAudit()` + `logDarwinError()` + `logDarwinSkip()` convenience wrappers
-- Added `message_type` column to `skipped_locations` table
-- Schedule/TS handlers log skips to both `darwin_audit` and `skipped_locations`
+11. **Staggered animation** — Replaced explicit `animation-delay` per nth-child with CSS custom property `--stagger-index`. Cleaner, easier to maintain.
 
-**3. VSTP Schedule Handler: DELETE → UPSERT** — Critical fix:
-- Replaced `DELETE FROM calling_points WHERE journey_rid = ${rid}` with TIPLOC matching + UPSERT
-- VSTP path now: match by TIPLOC, update timetable columns, **preserve pushport columns**
-- 18,465 VSTP services / 108K CPs no longer lose real-time data on re-schedule
-- 773 services that had TS-before-schedule ordering — pushport data now preserved
+### Key Files Changed
+- `packages/shared/src/utils/time.ts` — Added `formatDisplayTime()`
+- `packages/shared/src/index.ts` — Exported `formatDisplayTime`
+- `packages/frontend/src/components/PlatformBadge.tsx` — New shared component
+- `packages/frontend/src/components/ErrorBoundary.tsx` — New component (BUG-017)
+- `packages/frontend/src/components/CallingPoints.tsx` — Full light mode support, uses shared utils
+- `packages/frontend/src/components/ServiceRow.tsx` — Light mode, shared PlatformBadge, flex-wrap fix
+- `packages/frontend/src/components/ServiceDetail.tsx` — Shared PlatformBadge, formatDisplayTime, light mode
+- `packages/frontend/src/components/DepartureBoard.tsx` — Legend visible, focus-visible, cleaned pull-to-refresh
+- `packages/frontend/src/App.tsx` — ErrorBoundary wrapper, focus-visible on logo
+- `packages/frontend/src/index.css` — Staggered animation CSS custom props, theme toggle focus-visible, board-legend visible
 
-**4. Seed Phase 4: Preserve Timetable Data**:
-- Phase 4 only marks `source_timetable=false` on stale CPs — timetable columns PRESERVED
-- Removed orphan CP deletion and Phase 5 duplicate merge/delete
-- "Never delete calling points" is now the consistent principle across all handlers
+### Build Status
+- ✅ `packages/shared` builds cleanly
+- ✅ `packages/frontend` builds cleanly (244.46 kB JS, 76.25 kB CSS)
 
-**5. Removed `source_darwin=false` marking**:
-- Unmatched CPs in both schedule paths are left as-is
-- If Darwin created a CP, it stays Darwin-sourced regardless of later schedule changes
+### Consumer Logging Improvements (this session)
 
-### Key Design Decisions (This Session)
-- **No DELETE on calling points**: All data preserved for historical analysis. Darwin announces cancellations.
-- **Column ownership**: `_timetable` = planned times (seed or schedule), `_pushport` = real-time (TS handler)
-- **VSTP schedule IS the timetable**: Schedule writes `_timetable` columns for VSTP, TS writes `_pushport`
-- **Audit trail**: `darwin_audit` (severity-aware) + `skipped_locations` (with message_type) for investigation
+**Improved diagnostic context in all consumer error/warning logs** — every error message now includes enough context to diagnose without re-running:
 
-### Natural Key Design (from previous session)
-- **journey_rid** — which service
-- **tpl** — which location (TIPLOC)
-- **day_offset** — overnight/next-day stops (0=same day, 1=next day)
-- **sort_time** — timetable-derived time (HH:MM), stable across seed/consumer updates
-- **stop_type** — handles PP+IP at same TIPLOC/time
+- **Parser** (`parser.ts`):
+  - JSON parse failure → logs raw message preview (300 chars)
+  - Missing `bytes` field → logs envelope keys present
+  - Invalid Darwin payload → logs payload type and value preview
+  - Missing `uR`/`sR` → logs payload top-level keys, which blocks exist, and their types
+  - No recognised data types → logs data block keys, message type, and timestamp
 
-### Next Steps (Priority Order)
-3. **BUG-021: Mobile UI Fix**
+- **Schedule handler** (`schedule.ts`):
+  - Upsert failure → logs RID, UID, SSD, locations count, generatedAt, and first 3 stack frames
+
+- **TS handler** (`trainStatus.ts`):
+  - Update failure → logs RID, UID, SSD, locations count, skipped count, generatedAt, and first 3 stack frames
+
+- **Handler router** (`handlers/index.ts`):
+  - Outer error → logs all data type flags present (schedule, TS, deactivated, OW, etc.)
+
+- **Consumer main** (`index.ts`):
+  - Retry messages → include error message inline
+  - "Giving up" → logs parsed data types and message timestamp
+
+### Key Files Changed
+- `packages/consumer/src/parser.ts` — 5 error messages enriched with context
+- `packages/consumer/src/handlers/schedule.ts` — Error logging with stack trace
+- `packages/consumer/src/handlers/trainStatus.ts` — Error logging with stack trace
+- `packages/consumer/src/handlers/index.ts` — Error log includes data type list
+- `packages/consumer/src/index.ts` — Retry and "giving up" messages enriched
+
+## Previous: PostgreSQL Performance Optimisation — Complete ✅

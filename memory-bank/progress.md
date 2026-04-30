@@ -1,6 +1,27 @@
 # Progress
 
-## Completed (2026-04-29)
+## Completed (2026-04-29) — Session 2
+
+### Frontend UI/UX Overhaul ✅
+All 11 known issues from UI-fix-prompt.md addressed:
+- ✅ Fix 1: CallingPoints light mode — all dark-mode-only colours replaced with paired light/dark Tailwind utilities
+- ✅ Fix 2: ServiceRow mobile light mode — `text-white` → `text-gray-900 dark:text-white` pattern
+- ✅ Fix 3: PlatformBadge dedup — shared `PlatformBadge.tsx` component (ServiceRow + ServiceDetail)
+- ✅ Fix 4: formatDisplayTime dedup — shared utility in `@railly-app/shared/utils/time.ts`
+- ✅ Fix 5: Board table header / ServiceRow widths — verified aligned (w-16, w-14, flex-1, w-48, w-20)
+- ✅ Fix 6: Board legend visible — removed `hidden` from `.board-legend`
+- ✅ Fix 7: Pull-to-refresh — `overflow-hidden` + `select-none` moved to Tailwind classes
+- ✅ Fix 8: Focus-visible accessibility — `focus-visible:ring-2 focus-visible:ring-blue-500` on all interactive elements
+- ✅ Fix 9: React Error Boundary — `ErrorBoundary.tsx` wraps main content (BUG-017)
+- ✅ Fix 10: Mobile ServiceRow overflow — `flex-wrap` on metadata line
+- ✅ Fix 11: Staggered animation — CSS custom property `--stagger-index` replaces explicit per-child delays
+
+### Key New Files
+- `packages/frontend/src/components/PlatformBadge.tsx` — Shared platform badge
+- `packages/frontend/src/components/ErrorBoundary.tsx` — React error boundary
+- `packages/shared/src/utils/time.ts` — Added `formatDisplayTime()`
+
+## Completed (2026-04-29) — Session 1
 
 ### PostgreSQL Performance Optimisation ✅
 - ✅ Autovacuum tuning: `autovacuum_vacuum_scale_factor=0.05` on `calling_points` and `service_rt`
