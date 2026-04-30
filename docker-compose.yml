@@ -60,6 +60,7 @@ services:
     build:
       context: .
       dockerfile: packages/consumer/Dockerfile
+    stop_grace_period: 30s
     networks:
       - backend
     environment:

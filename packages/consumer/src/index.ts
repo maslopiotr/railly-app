@@ -62,6 +62,17 @@ const consumer = kafka.consumer({
 });
 
 // ── Graceful Shutdown ────────────────────────────────────────────────────────
+//
+// Shutdown sequence:
+//   1. Set isShuttingDown flag — stops eachBatch from processing new messages
+//   2. Disconnect Kafka — no new messages can arrive, leaves consumer group cleanly
+//   3. Flush event buffer — definitive flush, nothing can add to buffer after Kafka disconnect
+//   4. Close DB — clean PostgreSQL disconnect
+//
+// This ensures:
+//   - No Darwin messages are lost (in-flight batch is skipped, Kafka re-delivers on restart)
+//   - No audit data is lost (buffer is flushed after Kafka is disconnected)
+//   - Operational data is never at risk (written per-message before offset commit)
 
 let isShuttingDown = false;
 let metricsInterval: ReturnType<typeof setInterval> | null = null;
@@ -73,25 +84,18 @@ async function shutdown(signal: string): Promise<void> {
 
   console.log(`\n   🛑 Received ${signal}, shutting down gracefully...`);
 
+  // Clear timers immediately to prevent new timer-triggered flushes
   if (metricsInterval) {
     clearInterval(metricsInterval);
     metricsInterval = null;
   }
-
   if (cleanupInterval) {
     clearInterval(cleanupInterval);
     cleanupInterval = null;
   }
-
-  // Flush remaining event buffer before disconnecting
   stopEventBufferTimer();
-  try {
-    await flushEventBuffer();
-    console.log("   ✅ Event buffer flushed");
-  } catch (err) {
-    console.error("   ❌ Error flushing event buffer:", err);
-  }
 
+  // 1. Disconnect Kafka FIRST — no new messages can arrive after this
   try {
     await consumer.disconnect();
     console.log("   ✅ Kafka consumer disconnected");
@@ -99,6 +103,15 @@ async function shutdown(signal: string): Promise<void> {
     console.error("   ❌ Error disconnecting Kafka consumer:", err);
   }
 
+  // 2. Flush event buffer — definitive, nothing can add to it now
+  try {
+    await flushEventBuffer();
+    console.log("   ✅ Event buffer flushed");
+  } catch (err) {
+    console.error("   ❌ Error flushing event buffer:", err);
+  }
+
+  // 3. Close DB connection
   try {
     await closeDb();
     console.log("   ✅ PostgreSQL connection closed");
@@ -286,6 +299,8 @@ async function main(): Promise<void> {
       };
 
       const processMessage = async (msg: typeof batch.messages[0]): Promise<void> => {
+        // During graceful shutdown, skip remaining messages — Kafka will re-deliver on restart
+        if (isShuttingDown) return;
         if (!isRunning() || isStale()) return;
 
         const offsetNum = Number(msg.offset);

@@ -13,6 +13,7 @@ import { normaliseStationName } from "@railly-app/shared";
 import { fetchBoard } from "../api/boards";
 import { ServiceRow } from "./ServiceRow";
 import { TimePicker } from "./TimePicker";
+import { BOARD_GRID_COLS, BOARD_GRID_GAP, BOARD_GRID_PAD } from "./boardGrid";
 
 interface DepartureBoardProps {
   station: StationSearchResult;
@@ -208,7 +209,6 @@ export function DepartureBoard({
   }, [pullDistance, isRefreshing, loadBoard]);
 
   const displayServices = board?.services || [];
-  const serviceCount = displayServices.length;
 
   // Compute pull indicator opacity
   const pullOpacity = Math.min(pullDistance / PULL_THRESHOLD, 1);
@@ -216,11 +216,11 @@ export function DepartureBoard({
   return (
     <div className="w-full max-w-6xl mx-auto animate-fade-slide-up">
       {/* ─── Station header row ─── */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between px-3 sm:px-4 py-3 gap-1">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between px-3 sm:px-4 py-3 gap-2">
+        <div className="flex items-center gap-2 min-w-0">
           {onBack && (
             <button
-              className="text-sm mr-2 select-none text-text-secondary hover:text-text-primary py-1 px-2 min-h-[44px] flex items-center focus-visible:ring-2 focus-visible:ring-blue-500 rounded gap-1"
+              className="text-sm mr-1 select-none text-text-secondary hover:text-text-primary py-1 px-2 min-h-11 flex items-center focus-visible:ring-2 focus-visible:ring-blue-500 rounded gap-1"
               onClick={onBack}
               aria-label="Go back to home"
             >
@@ -230,7 +230,7 @@ export function DepartureBoard({
               Back
             </button>
           )}
-          <h2 className="text-lg font-bold flex items-center gap-2 text-text-primary">
+          <h2 className="text-lg font-bold flex items-center gap-2 text-text-primary truncate">
             {normaliseStationName(board?.stationName || station.name)}
             <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-surface-hover text-text-secondary">
               {station.crsCode}
@@ -248,7 +248,7 @@ export function DepartureBoard({
             )}
           </h2>
         </div>
-        <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto">
+        <div className="flex items-center gap-2 shrink-0">
           {lastRefreshed && (
             <span className="flex items-center gap-1.5 text-xs select-none text-text-secondary">
               <span
@@ -262,23 +262,32 @@ export function DepartureBoard({
               <span className="font-mono tabular-nums">{relativeTime}</span>
             </span>
           )}
+          <button
+            className={`text-base px-1.5 select-none transition-transform duration-300 text-text-muted hover:text-text-primary py-1 min-h-9 flex items-center focus-visible:ring-2 focus-visible:ring-blue-500 rounded ${isLoading ? "animate-spin" : ""}`}
+            onClick={() => loadBoard()}
+            disabled={isLoading}
+            aria-label="Refresh board"
+            title="Refresh"
+          >
+            ↻
+          </button>
         </div>
       </div>
 
-      {/* ─── Controls row: tabs + time picker + refresh ─── */}
-      <div className="flex flex-row flex-wrap items-center justify-between px-3 sm:px-4 py-1 sm:py-2 gap-2 border-b border-border-default">
-        <div className="flex gap-1 shrink-0">
+      {/* ─── Controls row: tabs + time picker ─── */}
+      <div className="flex items-center justify-between px-3 sm:px-4 py-1.5 sm:py-2 gap-2 border-b border-border-default">
+        <div className="flex gap-0.5 shrink-0">
           <button
-            className={`px-4 py-2.5 text-sm rounded-t-lg transition-colors select-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-inset ${activeTab === "departures" ? "bg-surface-hover text-text-primary font-medium" : "text-text-secondary hover:text-text-primary"}`}
+            className={`px-3 py-2 text-xs sm:text-sm rounded-t-lg transition-colors select-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-inset ${activeTab === "departures" ? "bg-surface-hover text-text-primary font-medium" : "text-text-secondary hover:text-text-primary"}`}
             onClick={() => onTabChange("departures")}
           >
-            Departures {activeTab === "departures" && serviceCount > 0 ? serviceCount : ""}
+            Departures
           </button>
           <button
-            className={`px-4 py-2.5 text-sm rounded-t-lg transition-colors select-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-inset ${activeTab === "arrivals" ? "bg-surface-hover text-text-primary font-medium" : "text-text-secondary hover:text-text-primary"}`}
+            className={`px-3 py-2 text-xs sm:text-sm rounded-t-lg transition-colors select-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-inset ${activeTab === "arrivals" ? "bg-surface-hover text-text-primary font-medium" : "text-text-secondary hover:text-text-primary"}`}
             onClick={() => onTabChange("arrivals")}
           >
-            Arrivals {activeTab === "arrivals" && serviceCount > 0 ? serviceCount : ""}
+            Arrivals
           </button>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -289,15 +298,6 @@ export function DepartureBoard({
               {selectedTime}
             </span>
           ) : null}
-          <button
-            className={`text-lg px-2 select-none transition-transform duration-300 text-text-muted hover:text-text-primary py-1 min-h-[44px] flex items-center focus-visible:ring-2 focus-visible:ring-blue-500 rounded ${isLoading ? "animate-spin" : ""}`}
-            onClick={() => loadBoard()}
-            disabled={isLoading}
-            aria-label="Refresh board"
-            title="Refresh"
-          >
-            ↻
-          </button>
         </div>
       </div>
 
@@ -316,7 +316,7 @@ export function DepartureBoard({
       )}
 
       {/* ─── Platform legend (all screens) ─── */}
-      <div className="flex flex-wrap gap-2 sm:gap-4 justify-center text-[10px] py-1.5 text-text-secondary">
+      <div className="flex flex-wrap gap-2 sm:gap-4 justify-center text-xs py-1.5 text-text-secondary">
         <span className="flex items-center gap-1">
           <span className="w-2 h-2 rounded-full bg-platform-confirmed-bg inline-block" /> Confirmed
         </span>
@@ -331,17 +331,17 @@ export function DepartureBoard({
         </span>
       </div>
 
-      {/* ─── Table header (desktop only) — matches ServiceRow grid columns ─── */}
+      {/* ─── Table header — uses shared grid config to match ServiceRow ─── */}
       <div
-        className="
-          hidden sm:grid items-center px-3 py-2 text-xs font-medium uppercase tracking-wider
+        className={`
+          hidden sm:grid items-center ${BOARD_GRID_GAP} ${BOARD_GRID_PAD}
+          text-xs font-medium uppercase tracking-wider
           border-b mb-2 sticky top-0 z-10
           text-text-secondary bg-surface-page border-border-default
-          sm:grid-cols-[4rem_4rem_auto_1fr_1rem]
-          xl:grid-cols-[4rem_4rem_auto_1fr_16rem_1rem]
-        "
+          ${BOARD_GRID_COLS}
+        `}
       >
-        <div className="text-right pr-1">Time</div>
+        <div className="text-right">Time</div>
         <div className="text-center">Plat</div>
         <div className="min-w-0">Status</div>
         <div className="min-w-0">Destination</div>
@@ -351,7 +351,7 @@ export function DepartureBoard({
 
       {/* ─── Pull-to-refresh indicator ─── */}
       <div
-        className="text-center overflow-hidden select-none transition-all duration-200 h-[var(--pull-distance)] opacity-[var(--pull-opacity)]"
+        className="text-center overflow-hidden select-none transition-all duration-200 h-(--pull-distance) opacity-(--pull-opacity)"
         style={
           {
             "--pull-distance": `${pullDistance}px`,

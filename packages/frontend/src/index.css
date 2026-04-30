@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* ─── Root background — matches surface-page in both modes ────────── */
+html {
+  background-color: var(--surface-page);
+}
+
 /* ─── Design tokens ─────────────────────────────────────────────────── */
 
 @theme {
@@ -114,6 +119,7 @@
 /* ─── Light mode ──────────────────────────────────────────────────────── */
 
 :root {
+  color-scheme: light;
   --surface-page: #f8fafc;
   --surface-card: #ffffff;
   --surface-hover: #f1f5f9;
@@ -193,6 +199,7 @@
 /* ─── Dark mode ───────────────────────────────────────────────────────── */
 
 .dark {
+  color-scheme: dark;
   --surface-page: #0f172a;
   --surface-card: #1e293b;
   --surface-hover: #334155;

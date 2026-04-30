@@ -72,10 +72,35 @@ SELECT severity, message_type, error_code, count(*) FROM darwin_audit GROUP BY s
 - **`act` field**: "TB" = Train Begins (origin), "TF" = Train Finishes (destination), "T" = Time (intermediate)
 - **`pass` sub-object**: Present for passing points (PP); used to distinguish PPs from intermediate passenger stops
 
-## Key Commands
+## Consumer Graceful Shutdown
+The consumer handles SIGTERM with a specific sequence to prevent data loss:
+1. `isShuttingDown = true` — `processMessage()` returns immediately for remaining messages
+2. `consumer.disconnect()` — leaves Kafka group, offsets committed, no new messages arrive
+3. `flushEventBuffer()` — writes any buffered `darwin_events` rows (even 1 row)
+4. `closeDb()` — clean PostgreSQL disconnect
+
+**Data safety guarantees:**
+- Operational data (journeys, calling_points, service_rt) — written per-message, zero loss risk
+- Audit data (darwin_events buffer) — flushed after Kafka disconnect, zero loss risk
+- Unprocessed Kafka messages — re-delivered on restart (within 5-min retention)
+- `stop_grace_period: 30s` in docker-compose.yml ensures Docker waits for graceful shutdown
+
+**⚠️ NEVER use `docker compose down -v`** — the `-v` flag deletes all volumes including `postgres_data`.
+
+## Rebuild Procedures
 ```bash
-npm run docker:rebuild          # full rebuild
-npm run docker:rebuild:api      # API only
-npm run docker:rebuild:frontend  # frontend only
-npm run docker:rebuild:consumer  # consumer only
-npm run docker:down / docker:logs
+# Safe rebuild (stops consumer first, preserves all data)
+./scripts/safe-rebuild.sh            # full --no-cache rebuild
+./scripts/safe-rebuild.sh --fast     # use Docker cache
+
+# Manual rebuild (if consumer not running)
+docker compose build --no-cache && docker compose up -d
+
+# Rebuild individual services
+npm run docker:rebuild:api
+npm run docker:rebuild:frontend
+npm run docker:rebuild:consumer
+
+# ⚠️ Dangerous — never use -v unless you want to destroy all data
+docker compose down -v  # DESTROYS ALL DATA
+```

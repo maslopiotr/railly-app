@@ -1,5 +1,15 @@
 # Progress
 
+## Completed (2026-04-30) — Session 7
+
+### Bug Fixes (6 items) ✅
+- ✅ Bug 1: Light mode dark background — was caused by Brave browser's `enable-force-dark` flag forcing dark mode on all pages (not a CSS bug). Removed inline `style.colorScheme` from `useTheme.ts` and `index.html` since CSS cascade handles theme correctly. Both `color-scheme: light` on `:root` and `color-scheme: dark` in `.dark` are kept — they ensure native controls (scrollbars, form inputs) match the active theme.
+- ✅ Bug 2: Delayed threshold — changed from `> 5` to `>= 2` in `boards.ts` so trains delayed by 2+ minutes show as "delayed"
+- ✅ Bug 3: ServiceRow columns too crammed — redesigned responsive grid: mobile `3.5rem auto 1fr 1rem`, desktop `4.5rem 4rem auto 1fr 1rem`, XL adds `16rem` calling-at column; status badge on separate desktop column; mobile gets full-width status+metadata row below grid
+- ✅ Bug 4: Mobile controls — removed service count from tabs, smaller font on mobile (`text-xs sm:text-sm`), moved refresh button from controls row to station header
+- ✅ Bug 5: Calling points delay colours — updated `DelayBadge` thresholds: on-time ≤1 min (green), 2–14 min delay (amber), ≥15 min (red); station name now delay-aware: delayed past stops show amber/red instead of green
+- ✅ Bug 6: Train length — added `lengthPushport` to calling points query; service `length` field now populated from origin CP's `lengthPushport` (parsed to integer)
+
 ## Completed (2026-04-30) — Session 6
 
 ### UI Design System Overhaul ✅

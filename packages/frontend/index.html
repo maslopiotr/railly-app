@@ -9,10 +9,7 @@
     <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Railly — Rail Buddy</title>
-    <!-- Prevent flash of wrong theme — dark background default, swap before first paint -->
-    <style>
-      html { background-color: #0f172a; }
-    </style>
+    <!-- Prevent flash of wrong theme — set dark class so CSS custom properties resolve correctly before React hydrates -->
     <script>
       (function() {
         var stored = localStorage.getItem('railly-theme');
@@ -24,11 +21,7 @@
         }
         if (theme === 'dark') {
           document.documentElement.classList.add('dark');
-        } else {
-          // Light mode: set background before first paint to avoid dark flash
-          document.documentElement.style.backgroundColor = '#f8fafc';
         }
-        document.documentElement.style.colorScheme = theme;
       })();
     </script>
   </head>

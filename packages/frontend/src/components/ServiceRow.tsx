@@ -6,11 +6,13 @@
  * Status logic uses service.trainStatus from the backend as single source of truth.
  *
  * Grid order: Time | Platform | Status | Destination | [Calling at] | Chevron
+ * Grid config is shared with DepartureBoard header via boardGrid.ts.
  */
 
 import type { HybridBoardService, HybridCallingPoint } from "@railly-app/shared";
 import { normaliseStationName, formatDisplayTime } from "@railly-app/shared";
 import { PlatformBadge } from "./PlatformBadge";
+import { BOARD_GRID_COLS, BOARD_GRID_GAP, BOARD_GRID_PAD } from "./boardGrid";
 
 interface ServiceRowProps {
   service: HybridBoardService;
@@ -44,6 +46,7 @@ function getNextCallingPoints(
 /** Status badge using semantic tokens, driven by service.trainStatus */
 function StatusBadge({ service }: { service: HybridBoardService }) {
   const ts = service.trainStatus;
+  const delayMins = service.delayMinutes;
 
   switch (ts) {
     case "cancelled":
@@ -77,7 +80,7 @@ function StatusBadge({ service }: { service: HybridBoardService }) {
         </span>
       );
     case "delayed": {
-      const mins = service.delayMinutes;
+      const mins = delayMins;
       return (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-status-delayed-bg text-status-delayed border border-status-delayed-border">
           +{mins ?? 0} min
@@ -100,6 +103,20 @@ function StatusBadge({ service }: { service: HybridBoardService }) {
   }
 }
 
+/** Small delay pill shown next to departed/arrived status when delay ≥ 2 min */
+function DelayPill({ minutes }: { minutes: number }) {
+  const severity =
+    minutes >= 15
+      ? "bg-status-cancelled-bg text-status-cancelled border-status-cancelled-border"
+      : "bg-status-delayed-bg text-status-delayed border-status-delayed-border";
+
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0 rounded text-[10px] font-mono font-medium border ${severity}`}>
+      +{minutes} min
+    </span>
+  );
+}
+
 export function ServiceRow({ service, isArrival, stationCrs, onSelect }: ServiceRowProps) {
   const scheduledTime = isArrival ? service.sta : service.std;
   const estimatedTime = isArrival ? service.eta : service.etd;
@@ -113,6 +130,9 @@ export function ServiceRow({ service, isArrival, stationCrs, onSelect }: Service
   const isDeparted = ts === "departed";
   const isArrived = ts === "arrived";
   const isAtPlatform = ts === "at_platform";
+
+  // Show delay pill for departed/arrived services that were delayed
+  const showDelayPill = (isDeparted || isArrived) && service.delayMinutes !== null && service.delayMinutes >= 2;
 
   const nextStops = getNextCallingPoints(service.callingPoints || [], stationCrs || null, 4);
   const operatorText = service.tocName || service.toc || "";
@@ -139,34 +159,31 @@ export function ServiceRow({ service, isArrival, stationCrs, onSelect }: Service
       {/* Single grid: responsive column definitions change at breakpoints.
           Order: Time | Plat | Status | Destination | [Calling at] | Chevron */}
       <div
-        className="
-          grid items-center gap-x-3 gap-y-1
-          px-[--spacing-row-x] py-[--spacing-row-y]
-          grid-cols-[3.25rem_2.75rem_1fr_1rem]
-          sm:grid-cols-[4rem_4rem_auto_1fr_1rem]
-          xl:grid-cols-[4rem_4rem_auto_1fr_16rem_1rem]
+        className={`
+          grid items-center ${BOARD_GRID_GAP} ${BOARD_GRID_PAD}
+          ${BOARD_GRID_COLS}
           min-h-[44px]
           border rounded-[--radius-card]
           bg-surface-card border-border-default hover:bg-surface-hover
-        "
+        `}
       >
         {/* Column 1: Time */}
-        <div className="flex flex-col items-start justify-center pl-1">
-          <span className={`text-sm font-mono font-semibold ${timeClass}`}>
+        <div className="flex flex-col items-start justify-center">
+          <span className={`text-sm font-mono font-semibold leading-tight ${timeClass}`}>
             {displayTime(scheduledTime)}
           </span>
           {(isArrived || isDeparted) && actualTime ? (
-            <span className="text-xs font-mono text-status-arrived">
+            <span className="text-[11px] font-mono text-status-arrived leading-tight">
               {displayTime(actualTime)}
             </span>
           ) : isDelayed && estimatedTime ? (
-            <span className="text-xs font-mono text-status-delayed">
+            <span className="text-[11px] font-mono text-status-delayed leading-tight">
               Exp {displayTime(estimatedTime)}
             </span>
           ) : isOnTime ? (
-            <span className="text-[10px] text-status-on-time">On time</span>
+            <span className="text-[10px] text-status-on-time leading-tight">On time</span>
           ) : cancelled ? (
-            <span className="text-[10px] text-status-cancelled">Cancelled</span>
+            <span className="text-[10px] text-status-cancelled leading-tight">Cancelled</span>
           ) : null}
         </div>
 
@@ -180,8 +197,9 @@ export function ServiceRow({ service, isArrival, stationCrs, onSelect }: Service
         </div>
 
         {/* Column 3: Status badge (desktop) — between platform and destination */}
-        <div className="hidden sm:flex shrink-0">
+        <div className="hidden sm:flex items-center shrink-0 gap-1">
           <StatusBadge service={service} />
+          {showDelayPill && <DelayPill minutes={service.delayMinutes!} />}
         </div>
 
         {/* Column 4: Destination + metadata */}
@@ -210,17 +228,20 @@ export function ServiceRow({ service, isArrival, stationCrs, onSelect }: Service
         )}
 
         {/* Column 6: Chevron */}
-        <span className="text-text-muted text-lg text-right pr-1">›</span>
+        <span className="text-text-muted text-lg text-right">›</span>
 
         {/* Mobile-only: status + metadata row — col-span-full below the grid.
             Does NOT duplicate time — time is in column 1 above. */}
-        <div className="sm:hidden col-span-full flex items-center gap-1.5 flex-wrap pl-[3.25rem] border-t border-border-default pt-1 mt-0.5">
+        <div className="sm:hidden col-span-full flex items-center gap-1.5 flex-wrap pl-[1rem] border-t border-border-default pt-1 mt-0.5">
           {cancelled ? (
             <span className="text-xs font-medium text-status-cancelled">Cancelled</span>
           ) : isArrived || isDeparted ? (
-            <span className="text-xs font-medium text-status-arrived">
-              {isArrived ? "Arrived" : "Departed"}
-            </span>
+            <>
+              <span className="text-xs font-medium text-status-arrived">
+                {isArrived ? "Arrived" : "Departed"}
+              </span>
+              {showDelayPill && <DelayPill minutes={service.delayMinutes!} />}
+            </>
           ) : isAtPlatform ? (
             <span className="text-xs font-medium text-status-at-platform">At platform</span>
           ) : isOnTime ? (

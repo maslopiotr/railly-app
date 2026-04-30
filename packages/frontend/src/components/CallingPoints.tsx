@@ -105,7 +105,7 @@ function determineStopState(
 
 /**
  * Delay badge showing delay per calling point.
- * Coloured pill: green for on-time/≤1 min, amber for 1–5 min, red for >5 min.
+ * Coloured pill: green for on-time (≤1 min), amber for 2–14 min delay, red for ≥15 min.
  */
 function DelayBadge({ delay }: { delay: number | null }) {
   if (delay === null) return null;
@@ -113,27 +113,20 @@ function DelayBadge({ delay }: { delay: number | null }) {
   const absDelay = Math.abs(delay);
   const isLate = delay > 0;
 
-  if (!isLate && absDelay <= 1) {
+  if (!isLate || absDelay <= 1) {
+    // On time or early — green
     return (
       <span className="text-[10px] font-mono font-medium bg-status-on-time-bg text-status-on-time border border-status-on-time-border px-1.5 py-0 rounded">
-        On time
+        {absDelay <= 1 ? "On time" : `${delay} min`}
       </span>
     );
   }
 
-  if (!isLate && absDelay > 1) {
-    return (
-      <span className="text-[10px] font-mono font-medium bg-status-on-time-bg text-status-on-time border border-status-on-time-border px-1.5 py-0 rounded">
-        {delay} min
-      </span>
-    );
-  }
-
-  // Delayed — severity-based colour
+  // Delayed — severity-based colour: amber 2–14 min, red ≥15 min
   const severityClass =
-    absDelay <= 5
-      ? "bg-status-delayed-bg text-status-delayed border-status-delayed-border"
-      : "bg-status-cancelled-bg text-status-cancelled border-status-cancelled-border";
+    absDelay >= 15
+      ? "bg-status-cancelled-bg text-status-cancelled border-status-cancelled-border"
+      : "bg-status-delayed-bg text-status-delayed border-status-delayed-border";
 
   return (
     <span
@@ -223,15 +216,25 @@ function CallingPointRow({
   // Connector line styling
   const lineClass = isPast ? "bg-timeline-past" : "bg-timeline-future";
 
-  // Station name styling
+  // Station name styling — delay-aware colours for past/current stops
+  const absDelay = delay !== null ? Math.abs(delay) : 0;
+  const isLateByDelay = delay !== null && delay >= 2;
   const nameClass = isCancelled
     ? "line-through text-status-cancelled"
     : isCurrent
-      ? "text-status-approaching"
+      ? isLateByDelay
+        ? absDelay >= 15
+          ? "text-status-cancelled"
+          : "text-status-delayed"
+        : "text-status-approaching"
       : isPast
-        ? visited
-          ? "text-status-arrived"
-          : "text-text-secondary"
+        ? visited && isLateByDelay
+          ? absDelay >= 15
+            ? "text-status-cancelled"
+            : "text-status-delayed"
+          : visited
+            ? "text-status-arrived"
+            : "text-text-secondary"
         : "text-text-primary";
 
   return (

@@ -17,15 +17,6 @@ const STORAGE_KEY = "railly-theme";
 function applyTheme(theme: Theme) {
   const isDark = theme === "dark";
   document.documentElement.classList.toggle("dark", isDark);
-  document.documentElement.style.colorScheme = isDark ? "dark" : "light";
-  // Keep html background in sync with theme to prevent flash at edges.
-  // Dark: remove inline style, let CSS `html { background-color: #0f172a }` apply.
-  // Light: set inline style to override the dark CSS default.
-  if (isDark) {
-    document.documentElement.style.removeProperty("background-color");
-  } else {
-    document.documentElement.style.backgroundColor = "#f8fafc";
-  }
 }
 
 /**

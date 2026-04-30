@@ -130,7 +130,7 @@ function determineTrainStatus(
   if (!estimatedTime) return "scheduled";
 
   const delay = computeDelayMinutes(std, estimatedTime, null);
-  if (delay !== null && delay > 5) return "delayed";
+  if (delay !== null && delay >= 2) return "delayed";
 
   return "on_time";
 }
@@ -474,6 +474,7 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         delayReason: callingPoints.delayReason,
         cancelReason: callingPoints.cancelReason,
         platIsSuppressed: callingPoints.platIsSuppressed,
+        lengthPushport: callingPoints.lengthPushport,
       })
       .from(callingPoints)
       .leftJoin(locationRef, eq(callingPoints.tpl, locationRef.tpl))
@@ -742,7 +743,16 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         formation: null,
         adhocAlerts: [],
         serviceId: null,
-        length: null,
+        length: (() => {
+          // Find train length from origin calling point's lengthPushport field
+          const origin = callingPattern.find(cp =>
+            cp.stopType === "OR" || cp.stopType === "OPOR"
+          );
+          const lengthStr = origin?.lengthPushport;
+          if (!lengthStr) return null;
+          const parsed = parseInt(lengthStr, 10);
+          return isNaN(parsed) ? null : parsed;
+        })(),
         delayMinutes,
         trainStatus,
         currentLocation,
