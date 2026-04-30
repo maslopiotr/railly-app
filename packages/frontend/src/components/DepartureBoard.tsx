@@ -3,7 +3,8 @@
  *
  * Shows all services for a station within a time window (past 10min + next 2hr).
  * Splits into Departures and Arrivals tabs, now server-filtered.
- * Auto-polls every 30 seconds when visible; manual refresh also available.
+ * Auto-polls every 60 seconds when visible; manual refresh also available.
+ * Supports both light and dark mode.
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -111,11 +112,11 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
     };
   }, [loadBoard]);
 
-  // Auto-poll every 30 seconds when tab is visible
+  // Auto-poll every 60 seconds when tab is visible
   // Stops polling when tab is hidden to save resources (Visibility API)
-  // ~2 requests/min per user, each ~6ms DB time — negligible server load
+  // ~1 request/min per user, each ~6ms DB time — negligible server load
   useEffect(() => {
-    const POLL_INTERVAL = 60_000; // 60 seconds
+    const POLL_INTERVAL = 60_000;
     let intervalId: ReturnType<typeof setInterval> | null = null;
 
     const startPolling = () => {
@@ -194,13 +195,16 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
   const displayServices = board?.services || [];
   const serviceCount = displayServices.length;
 
+  // Compute pull indicator opacity as a Tailwind-compatible class
+  const pullOpacity = Math.min(pullDistance / PULL_THRESHOLD, 1);
+
   return (
     <div className="departure-board w-full max-w-6xl mx-auto animate-fade-slide-up">
       {/* Station header row */}
       <div className="board-header">
         <div className="board-header-left">
           {onBack && (
-            <button className="btn-back" onClick={onBack} aria-label="Go back">
+            <button className="btn-back focus-visible:ring-2 focus-visible:ring-blue-500 rounded" onClick={onBack} aria-label="Go back">
               ← Back
             </button>
           )}
@@ -209,7 +213,7 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
             <span className="crs-badge">{station.crsCode}</span>
             {onToggleFavourite && (
               <button
-                className={`btn-favourite ${isFavourite ? "is-favourite" : ""}`}
+                className={`btn-favourite focus-visible:ring-2 focus-visible:ring-blue-500 rounded-full ${isFavourite ? "is-favourite" : ""}`}
                 onClick={onToggleFavourite}
                 aria-label={isFavourite ? "Remove from favourites" : "Add to favourites"}
                 title={isFavourite ? "Remove from favourites" : "Add to favourites"}
@@ -233,13 +237,13 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
       <div className="board-controls">
         <div className="board-tabs">
           <button
-            className={`tab ${activeTab === "departures" ? "active" : ""}`}
+            className={`tab focus-visible:ring-2 focus-visible:ring-blue-500 rounded-t-lg ${activeTab === "departures" ? "active" : ""}`}
             onClick={() => onTabChange("departures")}
           >
             Departures {activeTab === "departures" ? serviceCount : ""}
           </button>
           <button
-            className={`tab ${activeTab === "arrivals" ? "active" : ""}`}
+            className={`tab focus-visible:ring-2 focus-visible:ring-blue-500 rounded-t-lg ${activeTab === "arrivals" ? "active" : ""}`}
             onClick={() => onTabChange("arrivals")}
           >
             Arrivals {activeTab === "arrivals" ? serviceCount : ""}
@@ -255,7 +259,7 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
           ) : selectedTime ? (
             <span className="selected-time-badge">{selectedTime}</span>
           ) : null}
-          <button className={`btn-refresh ${isLoading ? "spinning" : ""}`} onClick={() => loadBoard()} disabled={isLoading} aria-label="Refresh board" title="Refresh">
+          <button className={`btn-refresh focus-visible:ring-2 focus-visible:ring-blue-500 rounded ${isLoading ? "spinning" : ""}`} onClick={() => loadBoard()} disabled={isLoading} aria-label="Refresh board" title="Refresh">
             ↻
           </button>
         </div>
@@ -271,7 +275,7 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
       )}
 
       {/* Platform legend (desktop only) */}
-      <div className="board-legend hidden">
+      <div className="board-legend">
         <span className="legend-item">
           <span className="w-2 h-2 rounded-full bg-blue-600 dark:bg-blue-400 inline-block" /> Confirmed
         </span>
@@ -298,11 +302,10 @@ export function DepartureBoard({ station, isFavourite, onToggleFavourite, onBack
 
       {/* Pull-to-refresh indicator */}
       <div
-        className="pull-to-refresh-indicator"
+        className="pull-to-refresh-indicator overflow-hidden select-none text-center"
         style={{
           height: `${pullDistance}px`,
-          opacity: pullDistance / PULL_THRESHOLD,
-          overflow: "hidden",
+          opacity: pullOpacity,
         }}
       >
         {isRefreshing ? (

@@ -8,27 +8,19 @@
  * - Delay per calling point shown as a badge
  * - Prominent current train position indicator
  *
- * Midnight crossover: Times are normalized to be monotonically increasing
+ * Midnight crossover: Times are normalised to be monotonically increasing
  * based on the calling point sort_time.
+ *
+ * Supports both light and dark mode via Tailwind utility classes.
  */
 
 import type { HybridCallingPoint } from "@railly-app/shared";
-import { normaliseStationName } from "@railly-app/shared";
+import { normaliseStationName, formatDisplayTime } from "@railly-app/shared";
 
 interface CallingPointsProps {
   points: HybridCallingPoint[];
   /** CRS of the current station (highlighted in the list) */
   currentCrs?: string | null;
-}
-
-/** Format a rail time string (HH:MM or HHmm) to HH:MM */
-function formatTime(time: string | null | undefined): string | null {
-  if (!time) return null;
-  const cleaned = time.replace("Half", "").trim();
-  if (cleaned.length === 4 && !cleaned.includes(":")) {
-    return `${cleaned.slice(0, 2)}:${cleaned.slice(2)}`;
-  }
-  return cleaned;
 }
 
 /** Get current UK-local time as minutes since midnight */
@@ -47,18 +39,18 @@ function getUkNowMinutes(): number {
 /** Parse time string to raw minutes since midnight (no midnight adjustment) */
 function timeToMinutes(time: string | null | undefined): number | null {
   if (!time) return null;
-  const formatted = formatTime(time);
+  const formatted = formatDisplayTime(time);
   if (!formatted) return null;
   const [h, m] = formatted.split(":").map(Number);
   return h * 60 + m;
 }
 
 /**
- * Normalize calling point times to be monotonically increasing.
+ * Normalise calling point times to be monotonically increasing.
  * If a stop's raw time ≤ previous stop's raw time, add 1440 (next day).
  */
-function normalizeCallingPointTimes(points: HybridCallingPoint[]): number[] {
-  const normalized: number[] = [];
+function normaliseCallingPointTimes(points: HybridCallingPoint[]): number[] {
+  const normalised: number[] = [];
   let prevMinutes = -1;
 
   for (const cp of points) {
@@ -66,23 +58,23 @@ function normalizeCallingPointTimes(points: HybridCallingPoint[]): number[] {
     const raw = timeToMinutes(effectiveTime);
 
     if (raw === null) {
-      normalized.push(prevMinutes + 1);
+      normalised.push(prevMinutes + 1);
       prevMinutes = prevMinutes + 1;
     } else if (raw <= prevMinutes) {
-      normalized.push(raw + 1440);
+      normalised.push(raw + 1440);
       prevMinutes = raw + 1440;
     } else {
-      normalized.push(raw);
+      normalised.push(raw);
       prevMinutes = raw;
     }
   }
 
-  return normalized;
+  return normalised;
 }
 
-/** Normalize nowMinutes for services crossing midnight */
-function normalizeNowMinutes(nowMinutes: number, firstNormalizedTime: number): number {
-  if (nowMinutes < firstNormalizedTime && firstNormalizedTime > 1200) {
+/** Normalise nowMinutes for services crossing midnight */
+function normaliseNowMinutes(nowMinutes: number, firstNormalisedTime: number): number {
+  if (nowMinutes < firstNormalisedTime && firstNormalisedTime > 1200) {
     return nowMinutes + 1440;
   }
   return nowMinutes;
@@ -107,18 +99,18 @@ type StopState = "past" | "current" | "future";
 function determineStopState(
   ataPushport: string | null,
   atdPushport: string | null,
-  normalizedTime: number,
+  normalisedTime: number,
   isFirstUpcoming: boolean,
   nowMinutes: number
 ): StopState {
   if (ataPushport || atdPushport) return "past";
-  if (normalizedTime <= nowMinutes) return "past";
+  if (normalisedTime <= nowMinutes) return "past";
   if (isFirstUpcoming) return "current";
   return "future";
 }
 
 /** Platform badge component for a calling point */
-function PlatformBadge({
+function CpPlatformBadge({
   platTimetable,
   platPushport,
   isPast,
@@ -137,11 +129,19 @@ function PlatformBadge({
   if (livePlat && bookedPlat && livePlat !== bookedPlat) {
     return (
       <span className="inline-flex items-center gap-0.5 text-[11px] font-mono">
-        <span className={`px-1 rounded line-through opacity-60 ${isPast ? "bg-slate-700 text-slate-500" : "bg-slate-700 text-slate-400"}`}>
+        <span className={`px-1 rounded line-through opacity-60 ${
+          isPast
+            ? "bg-gray-200 text-gray-400 dark:bg-slate-700 dark:text-slate-500"
+            : "bg-gray-200 text-gray-400 dark:bg-slate-700 dark:text-slate-400"
+        }`}>
           {bookedPlat}
         </span>
-        <span className="text-slate-500">→</span>
-        <span className={`px-1 rounded ${isPast ? "bg-green-900 text-green-300" : "bg-blue-900 text-blue-300"}`}>
+        <span className="text-gray-400 dark:text-slate-500">→</span>
+        <span className={`px-1 rounded ${
+          isPast
+            ? "bg-emerald-100 text-emerald-700 dark:bg-green-900 dark:text-green-300"
+            : "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300"
+        }`}>
           {livePlat}
         </span>
       </span>
@@ -153,11 +153,11 @@ function PlatformBadge({
     <span className={`text-[11px] font-mono px-1 rounded ${
       livePlat
         ? isPast
-          ? "bg-green-900 text-green-300"
-          : "bg-blue-900 text-blue-300"
+          ? "bg-emerald-100 text-emerald-700 dark:bg-green-900 dark:text-green-300"
+          : "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300"
         : isPast
-          ? "bg-slate-700 text-slate-500"
-          : "bg-slate-700 text-slate-400"
+          ? "bg-gray-200 text-gray-400 dark:bg-slate-700 dark:text-slate-500"
+          : "bg-gray-200 text-gray-500 dark:bg-slate-700 dark:text-slate-400"
     }`}>
       {displayPlat}
     </span>
@@ -170,7 +170,7 @@ function DelayBadge({ delay }: { delay: number | null }) {
   const isLate = delay > 0;
   return (
     <span className={`text-[10px] font-mono font-medium ${
-      isLate ? "text-red-400" : "text-green-400"
+      isLate ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-green-400"
     }`}>
       {isLate ? `+${delay}` : delay} min
     </span>
@@ -180,7 +180,7 @@ function DelayBadge({ delay }: { delay: number | null }) {
 /** Checkmark icon for visited stops */
 function CheckIcon() {
   return (
-    <svg className="w-3 h-3 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <svg className="w-3 h-3 text-emerald-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
     </svg>
   );
@@ -224,12 +224,12 @@ function CallingPointRow({
   const isCurrent = stopState === "current";
   const isPast = stopState === "past";
   const visited = !!ataPushport || !!atdPushport;
-  
+
   // Determine which times to show: prefer departure times, fall back to arrival
   const hasDeparture = ptdTimetable !== null || etdPushport !== null || atdPushport !== null;
-  const scheduled = formatTime(hasDeparture ? ptdTimetable : ptaTimetable);
-  const estimated = formatTime(hasDeparture ? etdPushport : etaPushport);
-  const actual = formatTime(hasDeparture ? atdPushport : ataPushport);
+  const scheduled = formatDisplayTime(hasDeparture ? ptdTimetable : ptaTimetable);
+  const estimated = formatDisplayTime(hasDeparture ? etdPushport : etaPushport);
+  const actual = formatDisplayTime(hasDeparture ? atdPushport : ataPushport);
 
   // Delay: use actual vs scheduled, or estimated vs scheduled
   const delay = calculateDelay(hasDeparture ? ptdTimetable : ptaTimetable, estimated, actual);
@@ -244,12 +244,12 @@ function CallingPointRow({
             isCancelled
               ? "border-red-500 bg-red-500"
               : visited
-                ? "border-green-500 bg-green-500"
+                ? "border-emerald-500 bg-emerald-500 dark:border-green-500 dark:bg-green-500"
                 : isPast
-                  ? "border-green-500/60 bg-green-500/20"
+                  ? "border-emerald-500/60 bg-emerald-500/20 dark:border-green-500/60 dark:bg-green-500/20"
                     : isCurrent
-                    ? "border-yellow-400 bg-yellow-400"
-                    : "border-slate-600 bg-slate-800"
+                    ? "border-amber-500 bg-amber-500 dark:border-yellow-400 dark:bg-yellow-400"
+                    : "border-gray-300 bg-gray-100 dark:border-slate-600 dark:bg-slate-800"
           }`}
         >
           {visited && <CheckIcon />}
@@ -257,7 +257,9 @@ function CallingPointRow({
         {/* Connector line */}
         {!isLast && (
           <div className={`w-0.5 flex-1 min-h-[1.5rem] ${
-            isPast ? "bg-green-600" : "bg-slate-700"
+            isPast
+              ? "bg-emerald-500 dark:bg-green-600"
+              : "bg-gray-200 dark:bg-slate-700"
           }`} />
         )}
       </div>
@@ -268,25 +270,25 @@ function CallingPointRow({
         <div className="flex items-center justify-between gap-2">
           <span className={`text-sm font-medium truncate ${
             isCancelled
-              ? "line-through text-red-400"
+              ? "line-through text-red-600 dark:text-red-400"
               : isCurrent
-                ? "text-yellow-300"
+                ? "text-amber-700 dark:text-yellow-300"
                 : isPast
                   ? visited
-                    ? "text-green-300"
-                    : "text-slate-300"
-                  : "text-slate-200"
+                    ? "text-emerald-700 dark:text-green-300"
+                    : "text-gray-500 dark:text-slate-300"
+                  : "text-gray-900 dark:text-slate-200"
           }`}>
             {displayName}
             {isCurrent && (
-              <span className="ml-2 text-[10px] font-medium text-yellow-400 uppercase tracking-wider">
+              <span className="ml-2 text-[10px] font-medium text-amber-600 dark:text-yellow-400 uppercase tracking-wider">
                 Next
               </span>
             )}
           </span>
           <div className="flex items-center gap-2 shrink-0">
-            <PlatformBadge platTimetable={platTimetable} platPushport={platPushport} isPast={isPast} />
-            <span className="text-[11px] font-mono text-slate-600">{displayCrs}</span>
+            <CpPlatformBadge platTimetable={platTimetable} platPushport={platPushport} isPast={isPast} />
+            <span className="text-[11px] font-mono text-gray-400 dark:text-slate-600">{displayCrs}</span>
           </div>
         </div>
 
@@ -294,7 +296,7 @@ function CallingPointRow({
         <div className="flex items-center gap-2 mt-0.5">
           {/* Cancelled */}
           {isCancelled && (
-            <span className="text-xs text-red-400 font-medium">
+            <span className="text-xs text-red-600 dark:text-red-400 font-medium">
               Cancelled{cancelReason ? `: ${cancelReason}` : ""}
             </span>
           )}
@@ -304,7 +306,7 @@ function CallingPointRow({
             <>
               {/* Actual time (visited) */}
               {actual && (
-                <span className="text-xs font-mono font-medium text-green-400">
+                <span className="text-xs font-mono font-medium text-emerald-600 dark:text-green-400">
                   {actual}
                 </span>
               )}
@@ -313,10 +315,10 @@ function CallingPointRow({
               {scheduled && (
                 <span className={`text-xs font-mono ${
                   actual
-                    ? "text-slate-500 line-through"
+                    ? "text-gray-400 line-through dark:text-slate-500"
                     : (estimated && estimated !== "On time" && scheduled !== estimated)
-                      ? "text-slate-500 line-through"
-                      : "text-slate-400"
+                      ? "text-gray-400 line-through dark:text-slate-500"
+                      : "text-gray-500 dark:text-slate-400"
                 }`}>
                   {scheduled}
                 </span>
@@ -325,15 +327,15 @@ function CallingPointRow({
               {/* Estimated time (if not visited) */}
               {estimated && !actual && (
                 estimated === "On time" ? (
-                  <span className="text-xs font-mono text-green-400">
+                  <span className="text-xs font-mono text-emerald-600 dark:text-green-400">
                     On time
                   </span>
                 ) : scheduled && estimated !== scheduled ? (
-                  <span className="text-xs font-mono font-semibold text-amber-400">
+                  <span className="text-xs font-mono font-semibold text-amber-600 dark:text-amber-400">
                     Exp {estimated}
                   </span>
                 ) : (
-                  <span className="text-xs font-mono text-amber-400">
+                  <span className="text-xs font-mono text-amber-600 dark:text-amber-400">
                     {estimated}
                   </span>
                 )
@@ -344,7 +346,7 @@ function CallingPointRow({
 
               {/* Visited status text */}
               {actual && (
-                <span className="text-[10px] text-green-400/80">
+                <span className="text-[10px] text-emerald-600/80 dark:text-green-400/80">
                   {atdPushport ? "Departed" : "Arrived"}
                 </span>
               )}
@@ -363,16 +365,16 @@ export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
 
   if (displayPoints.length === 0) {
     return (
-      <div className="text-xs text-slate-500 italic py-2">
+      <div className="text-xs text-gray-400 dark:text-slate-500 italic py-2">
         No calling point data available
       </div>
     );
   }
 
-  const normalizedTimes = normalizeCallingPointTimes(displayPoints);
+  const normalisedTimes = normaliseCallingPointTimes(displayPoints);
 
   const rawNowMinutes = getUkNowMinutes();
-  const nowMinutes = normalizeNowMinutes(rawNowMinutes, normalizedTimes[0]);
+  const nowMinutes = normaliseNowMinutes(rawNowMinutes, normalisedTimes[0]);
 
   // Find first upcoming stop (for yellow dot)
   let firstUpcomingIndex = -1;
@@ -380,7 +382,7 @@ export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
     const cp = displayPoints[i];
     if (cp.stopType === "PP") continue;
     if (cp.ataPushport || cp.atdPushport) continue;
-    if (normalizedTimes[i] > nowMinutes) {
+    if (normalisedTimes[i] > nowMinutes) {
       firstUpcomingIndex = i;
       break;
     }
@@ -392,7 +394,7 @@ export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
 
   return (
     <div className="py-2 px-1">
-      <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2 font-semibold">
+      <div className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-slate-500 mb-2 font-semibold">
         Calling Points
       </div>
       {displayPoints.map((cp, i) => {
@@ -401,7 +403,7 @@ export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
         const stopState = determineStopState(
           cp.ataPushport,
           cp.atdPushport,
-          normalizedTimes[i],
+          normalisedTimes[i],
           isFirstUpcoming,
           nowMinutes
         );

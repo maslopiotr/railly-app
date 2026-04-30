@@ -867,7 +867,12 @@ export async function handleTrainStatus(
     const extraInfo = insertedNewStops > 0 ? `, ${insertedNewStops} new stops inserted` : "";
     console.log(`   ✅ TS updated: ${rid} (${locations.length} locations, ${skippedInMessage} skipped${extraInfo})`);
   } catch (err) {
-    console.error(`   ❌ TS update failed for ${rid}:`, (err as Error).message);
+    const error = err instanceof Error ? err : new Error(String(err));
+    console.error(`   ❌ TS update failed for ${rid}:`, error.message);
+    console.error(`      RID: ${rid}, UID: ${tsUid}, SSD: ${tsSsd}, Locations: ${locations.length}, Skipped: ${skippedInMessage}, GeneratedAt: ${generatedAt}`);
+    if (error.stack) {
+      console.error(`      Stack: ${error.stack.split("\n").slice(0, 3).join(" | ")}`);
+    }
     throw err;
   }
 }

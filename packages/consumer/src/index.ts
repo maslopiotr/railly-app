@@ -8,7 +8,7 @@
 import "./env.js";
 import { Kafka, logLevel } from "kafkajs";
 import { sql, closeDb } from "./db.js";
-import { handleDarwinMessage, metrics, startEventBufferTimer, stopEventBufferTimer, flushEventBuffer, getEventBufferStats } from "./handlers/index.js";
+import { handleDarwinMessage, metrics, startEventBufferTimer, stopEventBufferTimer, flushEventBuffer, getEventBufferStats, logDarwinAudit } from "./handlers/index.js";
 import { skippedLocationsTotal } from "./handlers/trainStatus.js";
 import { parseDarwinMessage } from "./parser.js";
 
@@ -291,12 +291,25 @@ async function main(): Promise<void> {
         const offsetNum = Number(msg.offset);
 
         // Parse the message
-        const parsed = parseDarwinMessage(msg.value);
-        if (!parsed) {
-          // Silently skipped control messages — still mark as processed
+        const result = parseDarwinMessage(msg.value);
+
+        if (result.kind === "skip") {
+          // Expected skip (control message, metadata-only, empty input) — mark as processed
           processedOffsets.set(offsetNum, true);
           return;
         }
+
+        if (result.kind === "error") {
+          // Parse error — persist to darwin_audit for investigation
+          try {
+            await logDarwinAudit("parse", "error", null, result.code, result.message, result.rawPreview);
+          } catch { /* Don't let audit logging block processing */ }
+          processedOffsets.set(offsetNum, true);
+          return;
+        }
+
+        // result.kind === "success"
+        const parsed = result.message;
 
         // Process the message with retry for transient DB errors
         let attempts = 0;
@@ -313,7 +326,7 @@ async function main(): Promise<void> {
             attempts++;
             if (attempts < maxAttempts) {
               const backoff = Math.min(100 * Math.pow(2, attempts), 2000);
-              console.warn(`   ⏳ Retry ${attempts}/${maxAttempts} for offset ${msg.offset} in ${backoff}ms:`, lastError.message);
+              console.warn(`   ⏳ Retry ${attempts}/${maxAttempts} for offset ${msg.offset} in ${backoff}ms: ${lastError.message}`);
               await new Promise(r => setTimeout(r, backoff));
             }
           }
@@ -321,7 +334,13 @@ async function main(): Promise<void> {
 
         // All retries failed — mark as processed so we don't get stuck
         // The handler's inner try/catch should have logged details
-        console.error(`   ❌ Giving up on offset ${msg.offset} after ${maxAttempts} attempts:`, lastError?.message);
+        const parsedTypes = [
+          parsed.schedule && "schedule",
+          parsed.TS && "TS",
+          parsed.deactivated && "deactivated",
+          parsed.OW && "OW",
+        ].filter(Boolean).join(", ");
+        console.error(`   ❌ Giving up on offset ${msg.offset} after ${maxAttempts} attempts (types: [${parsedTypes || "none"}], ts: ${parsed.ts || "none"}): ${lastError?.message}`);
         processedOffsets.set(offsetNum, true); // Commit to move past it
       };
 

@@ -46,33 +46,34 @@
 
 ### Consumer Logging Improvements (this session)
 
-**Improved diagnostic context in all consumer error/warning logs** — every error message now includes enough context to diagnose without re-running:
+**Parser now returns `ParseResult` discriminated union** — distinguishes success/skip/error so parse errors can be persisted to `darwin_audit`:
 
-- **Parser** (`parser.ts`):
-  - JSON parse failure → logs raw message preview (300 chars)
-  - Missing `bytes` field → logs envelope keys present
-  - Invalid Darwin payload → logs payload type and value preview
-  - Missing `uR`/`sR` → logs payload top-level keys, which blocks exist, and their types
-  - No recognised data types → logs data block keys, message type, and timestamp
+- `{ kind: "success", message }` — valid DarwinMessage
+- `{ kind: "skip", reason }` — expected skip (control message, metadata-only, empty)
+- `{ kind: "error", code, message, rawPreview }` — genuine failure, persisted to `darwin_audit`
 
-- **Schedule handler** (`schedule.ts`):
-  - Upsert failure → logs RID, UID, SSD, locations count, generatedAt, and first 3 stack frames
+**Parse errors are now persisted** — previously only console.log'd (lost when buffer rolls). Now written to `darwin_audit` table with severity "error", error codes like `MISSING_DATA_BLOCK`, `ENVELOPE_PARSE_ERROR`, `PAYLOAD_PARSE_ERROR`, `NO_DATA_TYPES`, etc.
 
-- **TS handler** (`trainStatus.ts`):
-  - Update failure → logs RID, UID, SSD, locations count, skipped count, generatedAt, and first 3 stack frames
-
-- **Handler router** (`handlers/index.ts`):
-  - Outer error → logs all data type flags present (schedule, TS, deactivated, OW, etc.)
-
-- **Consumer main** (`index.ts`):
-  - Retry messages → include error message inline
-  - "Giving up" → logs parsed data types and message timestamp
+**All error messages enriched with diagnostic context**:
+- Parser: raw preview, envelope keys, payload keys, uR/sR type info
+- Schedule handler: RID, UID, SSD, locations count, generatedAt, stack trace
+- TS handler: RID, UID, SSD, locations count, skipped count, generatedAt, stack trace
+- Handler router: data type flags present
+- Consumer main: retry messages, "giving up" with parsed types and timestamp
 
 ### Key Files Changed
-- `packages/consumer/src/parser.ts` — 5 error messages enriched with context
-- `packages/consumer/src/handlers/schedule.ts` — Error logging with stack trace
-- `packages/consumer/src/handlers/trainStatus.ts` — Error logging with stack trace
-- `packages/consumer/src/handlers/index.ts` — Error log includes data type list
-- `packages/consumer/src/index.ts` — Retry and "giving up" messages enriched
+- `packages/consumer/src/parser.ts` — `ParseResult` type, all `return null` → proper result, error codes
+- `packages/consumer/src/handlers/index.ts` — `logDarwinAudit` exported for consumer, `logDarwinSkip` documented
+- `packages/consumer/src/handlers/schedule.ts` — Error logging with context + stack
+- `packages/consumer/src/handlers/trainStatus.ts` — Error logging with context + stack
+- `packages/consumer/src/index.ts` — Handles `ParseResult`, persists parse errors via `logDarwinAudit`
+
+## Seed Deadlock Fix (2026-04-30)
+
+**Problem**: Seed Phase 3 CRS backfill deadlocked with live consumer — bulk `UPDATE calling_points FROM location_ref` locked millions of rows while consumer held `FOR UPDATE` locks on same table. Process 27721 ↔ 28055 circular wait.
+
+**Fix**: Replaced bulk UPDATEs in Phase 3 and Phase 4 with batched updates (5,000 rows per batch using `id IN (SELECT ... LIMIT 5000)` subquery). Phase 3 now prioritises recently-seeded CPs first (`timetable_updated_at >= seed start`), then older CPs. Phase 4 stale marking also batched.
+
+**File**: `packages/api/src/db/seed-timetable.ts` — Phase 3 and Phase 4 rewritten.
 
 ## Previous: PostgreSQL Performance Optimisation — Complete ✅

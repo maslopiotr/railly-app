@@ -34,21 +34,23 @@
   animation: fadeSlideRight 200ms ease-out both;
 }
 
-/* Staggered service rows */
-.animate-stagger > :nth-child(1) { animation-delay: 0ms; }
-.animate-stagger > :nth-child(2) { animation-delay: 25ms; }
-.animate-stagger > :nth-child(3) { animation-delay: 50ms; }
-.animate-stagger > :nth-child(4) { animation-delay: 75ms; }
-.animate-stagger > :nth-child(5) { animation-delay: 100ms; }
-.animate-stagger > :nth-child(6) { animation-delay: 125ms; }
-.animate-stagger > :nth-child(7) { animation-delay: 150ms; }
-.animate-stagger > :nth-child(8) { animation-delay: 175ms; }
-.animate-stagger > :nth-child(9) { animation-delay: 200ms; }
-.animate-stagger > :nth-child(10) { animation-delay: 225ms; }
-.animate-stagger > :nth-child(n+11) { animation-delay: 250ms; }
+/* Staggered service rows — uses CSS custom property for clean nth-child scaling */
 .animate-stagger > * {
   animation: fadeSlideUp 200ms ease-out both;
+  animation-delay: calc(var(--stagger-index, 0) * 25ms);
 }
+/* Cap delay at 250ms (10 items) — use :nth-child for browsers without style queries */
+.animate-stagger > :nth-child(1) { --stagger-index: 0; }
+.animate-stagger > :nth-child(2) { --stagger-index: 1; }
+.animate-stagger > :nth-child(3) { --stagger-index: 2; }
+.animate-stagger > :nth-child(4) { --stagger-index: 3; }
+.animate-stagger > :nth-child(5) { --stagger-index: 4; }
+.animate-stagger > :nth-child(6) { --stagger-index: 5; }
+.animate-stagger > :nth-child(7) { --stagger-index: 6; }
+.animate-stagger > :nth-child(8) { --stagger-index: 7; }
+.animate-stagger > :nth-child(9) { --stagger-index: 8; }
+.animate-stagger > :nth-child(10) { --stagger-index: 9; }
+.animate-stagger > :nth-child(n+11) { --stagger-index: 10; }
 
 .animate-pulse-subtle {
   animation: pulseSubtle 1.5s ease-in-out infinite;
@@ -488,7 +490,8 @@
   @apply w-8 h-8 flex items-center justify-center rounded-lg
     text-gray-400 hover:text-gray-600 hover:bg-gray-100
     dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-700
-    transition-colors cursor-pointer select-none;
+    transition-colors cursor-pointer select-none
+    focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1;
 }
 
 .loading {

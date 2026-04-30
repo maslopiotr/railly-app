@@ -4,12 +4,14 @@
  * Shows calling pattern with time-based dots, alerts, formation, and service IDs.
  * Navigated to from ServiceRow click — no inline expansion.
  * Supports in-place refresh via onRefresh callback.
+ * Supports both light and dark mode.
  */
 
-import type { HybridBoardService, PlatformSource } from "@railly-app/shared";
-import { normaliseStationName } from "@railly-app/shared";
+import type { HybridBoardService } from "@railly-app/shared";
+import { normaliseStationName, formatDisplayTime } from "@railly-app/shared";
 import { CallingPoints } from "./CallingPoints";
 import { LoadingIndicator } from "./LoadingIndicator";
+import { PlatformBadge } from "./PlatformBadge";
 
 interface ServiceDetailProps {
   service: HybridBoardService;
@@ -20,20 +22,16 @@ interface ServiceDetailProps {
   isRefreshing?: boolean;
 }
 
-/** Format a rail time string (e.g. "0930" → "09:30") */
-function formatTime(time: string | null | undefined): string {
-  if (!time) return "--:--";
-  const cleaned = time.replace("Half", "").trim();
-  if (cleaned.length === 4 && !cleaned.includes(":")) {
-    return `${cleaned.slice(0, 2)}:${cleaned.slice(2)}`;
-  }
-  return cleaned;
+/** Format time for display, falling back to "--:--" when null */
+function displayTime(time: string | null | undefined): string {
+  return formatDisplayTime(time) ?? "--:--";
 }
 
 /** Parse HH:MM to minutes since midnight for delay calc */
 function parseTimeToMinutes(time: string | null | undefined): number | null {
   if (!time) return null;
-  const t = formatTime(time);
+  const t = formatDisplayTime(time);
+  if (!t) return null;
   const [h, m] = t.split(":").map(Number);
   if (isNaN(h) || isNaN(m)) return null;
   return h * 60 + m;
@@ -51,48 +49,6 @@ function computeDelay(scheduled: string | null, estimated: string | null, actual
   let d = e - s;
   if (d < -720) d += 1440;
   return d;
-}
-
-/** Platform badge for service detail — same styling as board row but larger */
-function PlatformBadge({ platformTimetable, platformLive, platformSource }: {
-  platformTimetable: string | null;
-  platformLive: string | null;
-  platformSource: PlatformSource;
-}) {
-  if (!platformTimetable && !platformLive) {
-    return <span className="platform platform-none text-lg px-3 py-1">—</span>;
-  }
-
-  switch (platformSource) {
-    case "confirmed":
-      return <span className="platform platform-confirmed text-lg px-3 py-1">{platformLive || platformTimetable}</span>;
-
-    case "altered":
-      return (
-        <span className="platform platform-altered text-lg px-3 py-1">
-          <span className="platform-booked">{platformTimetable}</span>
-          <span className="platform-arrow">→</span>
-          <span className="platform-live">{platformLive}</span>
-        </span>
-      );
-
-    case "suppressed":
-      return (
-        <span className="platform platform-suppressed text-lg px-3 py-1">
-          {platformLive}
-          <span className="suppressed-indicator">✱</span>
-        </span>
-      );
-
-    case "expected":
-      return <span className="platform platform-expected text-lg px-3 py-1">—</span>;
-
-    case "scheduled":
-      return <span className="platform platform-scheduled text-lg px-3 py-1">{platformTimetable}</span>;
-
-    default:
-      return <span className="platform text-lg px-3 py-1">{platformLive || platformTimetable}</span>;
-  }
 }
 
 export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefresh, isRefreshing }: ServiceDetailProps) {
@@ -113,7 +69,7 @@ export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefres
       <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-200 dark:border-slate-700">
         <button
           onClick={onBack}
-          className="text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors p-1 -ml-1"
+          className="text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors p-1 -ml-1 focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
           aria-label="Back to board"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -124,16 +80,16 @@ export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefres
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-xl font-mono font-bold text-gray-900 dark:text-white">
-              {formatTime(scheduledTime)}
+              {displayTime(scheduledTime)}
             </span>
             {actualTime && (
               <span className="text-xl font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                {formatTime(actualTime)}
+                {displayTime(actualTime)}
               </span>
             )}
             {!actualTime && estimatedTime && !onTime && !cancelled && (
               <span className="text-xl font-mono font-bold text-amber-600 dark:text-amber-400">
-                {formatTime(estimatedTime)}
+                {displayTime(estimatedTime)}
               </span>
             )}
             {onTime && (
@@ -154,7 +110,7 @@ export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefres
             <button
               onClick={onRefresh}
               disabled={isRefreshing}
-              className="refresh-press text-gray-400 hover:text-gray-900 dark:hover:text-white p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 disabled:opacity-50"
+              className="refresh-press text-gray-400 hover:text-gray-900 dark:hover:text-white p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-blue-500"
               aria-label="Refresh service"
             >
               <svg
@@ -174,6 +130,7 @@ export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefres
               platformTimetable={service.platformTimetable}
               platformLive={service.platformLive}
               platformSource={service.platformSource}
+              size="large"
             />
           </div>
         </div>
@@ -232,13 +189,13 @@ export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefres
             {service.sta && (
               <tr className="border-b border-gray-100 dark:border-slate-700/50">
                 <td className="py-1.5">Arrival</td>
-                <td className="py-1.5 font-mono">{formatTime(service.sta)}</td>
+                <td className="py-1.5 font-mono">{displayTime(service.sta)}</td>
                 <td className="py-1.5 font-mono">
                   {service.actualArrival ? (
-                    <span className="text-emerald-600 dark:text-emerald-400">{formatTime(service.actualArrival)}</span>
+                    <span className="text-emerald-600 dark:text-emerald-400">{displayTime(service.actualArrival)}</span>
                   ) : service.eta ? (
                     <span className={service.eta === "On time" ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>
-                      {formatTime(service.eta)}
+                      {displayTime(service.eta)}
                     </span>
                   ) : (
                     <span className="text-gray-400 dark:text-slate-500">--:--</span>
@@ -260,13 +217,13 @@ export function ServiceDetail({ service, isArrival, stationCrs, onBack, onRefres
             {service.std && (
               <tr>
                 <td className="py-1.5">Departure</td>
-                <td className="py-1.5 font-mono">{formatTime(service.std)}</td>
+                <td className="py-1.5 font-mono">{displayTime(service.std)}</td>
                 <td className="py-1.5 font-mono">
                   {service.actualDeparture ? (
-                    <span className="text-emerald-600 dark:text-emerald-400">{formatTime(service.actualDeparture)}</span>
+                    <span className="text-emerald-600 dark:text-emerald-400">{displayTime(service.actualDeparture)}</span>
                   ) : service.etd ? (
                     <span className={service.etd === "On time" ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>
-                      {formatTime(service.etd)}
+                      {displayTime(service.etd)}
                     </span>
                   ) : (
                     <span className="text-gray-400 dark:text-slate-500">--:--</span>

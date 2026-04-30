@@ -643,24 +643,69 @@ async function seed() {
   }
 
   // ── Phase 3: Backfill CRS codes and names from location_ref ──────────────
+  // Run in small batches to avoid deadlocking with the live consumer,
+  // which holds FOR UPDATE locks on calling_points rows.
+  // Only target CPs touched by this seed run (timetable_updated_at >= seed start)
+  // to minimise the lock footprint.
   console.log("\n📋 Phase 3: Backfill CRS and names from location_ref...");
   const phase3Start = Date.now();
+  const seedStartIso = new Date(seedStart).toISOString();
+  const CRS_BATCH_SIZE = 5000;
+  let totalBackfilled = 0;
 
-  const crsBackfillResult = await db
-    .update(callingPoints)
-    .set({
-      crs: sql`COALESCE(${callingPoints.crs}, lr.crs)`,
-      name: sql`COALESCE(${callingPoints.name}, lr.name)`,
-    })
-    .from(
-      sql`${locationRef} AS lr`,
-    )
-    .where(
-      sql`${callingPoints.tpl} = lr.tpl AND (${callingPoints.crs} IS NULL OR ${callingPoints.name} IS NULL)`,
-    );
+  // First: backfill CPs from this seed run (most likely to need CRS)
+  let batchBackfilled = -1; // sentinel: -1 means "keep going"
+  while (batchBackfilled !== 0) {
+    const crsBackfillResult = await db.execute(sql`
+      UPDATE calling_points
+      SET crs = COALESCE(calling_points.crs, lr.crs),
+          name = COALESCE(calling_points.name, lr.name)
+      FROM location_ref AS lr
+      WHERE calling_points.tpl = lr.tpl
+        AND (calling_points.crs IS NULL OR calling_points.name IS NULL)
+        AND calling_points.timetable_updated_at >= ${seedStartIso}::timestamp with time zone
+        AND calling_points.id IN (
+          SELECT cp.id FROM calling_points cp
+          JOIN location_ref lr2 ON cp.tpl = lr2.tpl
+          WHERE (cp.crs IS NULL OR cp.name IS NULL)
+            AND cp.timetable_updated_at >= ${seedStartIso}::timestamp with time zone
+          LIMIT ${CRS_BATCH_SIZE}
+        )
+    `);
+    batchBackfilled = Number(crsBackfillResult.count ?? 0);
+    totalBackfilled += batchBackfilled;
+    if (batchBackfilled > 0) {
+      console.log(`     Batch: ${batchBackfilled} CPs backfilled (total: ${totalBackfilled})`);
+    }
+  }
 
-  const crsBackfillCount = (crsBackfillResult as unknown as { rowCount: number }).rowCount ?? 0;
-  console.log(`   Backfilled ${crsBackfillCount} calling points with CRS/name from location_ref`);
+  // Second: backfill any older CPs still missing CRS (smaller batches, less urgent)
+  batchBackfilled = -1;
+  let oldBackfilled = 0;
+  while (batchBackfilled !== 0) {
+    const crsBackfillResult = await db.execute(sql`
+      UPDATE calling_points
+      SET crs = COALESCE(calling_points.crs, lr.crs),
+          name = COALESCE(calling_points.name, lr.name)
+      FROM location_ref AS lr
+      WHERE calling_points.tpl = lr.tpl
+        AND (calling_points.crs IS NULL OR calling_points.name IS NULL)
+        AND calling_points.id IN (
+          SELECT cp.id FROM calling_points cp
+          JOIN location_ref lr2 ON cp.tpl = lr2.tpl
+          WHERE cp.crs IS NULL OR cp.name IS NULL
+          LIMIT ${CRS_BATCH_SIZE}
+        )
+    `);
+    batchBackfilled = Number(crsBackfillResult.count ?? 0);
+    oldBackfilled += batchBackfilled;
+    if (batchBackfilled > 0) {
+      console.log(`     Old CP batch: ${batchBackfilled} backfilled (total: ${oldBackfilled})`);
+    }
+  }
+  totalBackfilled += oldBackfilled;
+
+  console.log(`   Backfilled ${totalBackfilled} calling points with CRS/name from location_ref`);
   logElapsed("Phase 3", phase3Start);
 
   // ── Phase 4: Mark stale timetable CPs ──────────────────────────────────
@@ -670,25 +715,37 @@ async function seed() {
   // data (pta, ptd, wta, wtd, wtp, act, plat) for historical analysis.
   // Darwin Push Port handles cancellations — we don't need to infer them.
   // We do NOT delete orphan CPs — they may still have value for historical queries.
+  // Batched to avoid deadlocking with the live consumer.
   console.log("\n📋 Phase 4: Mark stale timetable calling points...");
   const phase4Start = Date.now();
+  const STALE_BATCH_SIZE = 5000;
+  let totalStaleMarked = 0;
 
-  // Mark stale timetable CPs as no longer sourced from current timetable
-  // BUT preserve all timetable columns for historical analysis
-  const staleUpdateResult = await db
-    .update(callingPoints)
-    .set({
-      sourceTimetable: false,
-      timetableUpdatedAt: sql`NOW()`,
-      // NOTE: timetable columns (pta, ptd, wta, wtd, wtp, act, plat) are PRESERVED
-      // for historical analysis. Darwin announces cancellations separately.
-    })
-    .where(
-      sql`${callingPoints.sourceTimetable} = true AND (${callingPoints.timetableUpdatedAt} < ${new Date(seedStart).toISOString()}::timestamp with time zone OR ${callingPoints.timetableUpdatedAt} IS NULL)`,
-    );
+  while (true) {
+    const staleResult = await db.execute(sql`
+      UPDATE calling_points
+      SET source_timetable = false, timetable_updated_at = NOW()
+      WHERE source_timetable = true
+        AND (timetable_updated_at < ${new Date(seedStart).toISOString()}::timestamp with time zone
+             OR timetable_updated_at IS NULL)
+        AND id IN (
+          SELECT cp.id FROM calling_points cp
+          WHERE cp.source_timetable = true
+            AND (cp.timetable_updated_at < ${new Date(seedStart).toISOString()}::timestamp with time zone
+                 OR cp.timetable_updated_at IS NULL)
+          LIMIT ${STALE_BATCH_SIZE}
+        )
+    `);
+    const batchCount = Number(staleResult.count ?? 0);
+    totalStaleMarked += batchCount;
+    if (batchCount > 0) {
+      console.log(`     Stale batch: ${batchCount} CPs marked (total: ${totalStaleMarked})`);
+    } else {
+      break;
+    }
+  }
 
-  const staleUpdateCount = (staleUpdateResult as unknown as { rowCount: number }).rowCount ?? 0;
-  console.log(`   Marked ${staleUpdateCount} stale timetable CPs as source_timetable=false (timetable data preserved)`);
+  console.log(`   Marked ${totalStaleMarked} stale timetable CPs as source_timetable=false (timetable data preserved)`);
 
   // Verify with actual counts (Drizzle rowCount can be unreliable for large updates)
   const [staleVerify] = await db

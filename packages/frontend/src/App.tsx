@@ -3,6 +3,7 @@ import { StationSearch } from "./components/StationSearch";
 import { DepartureBoard } from "./components/DepartureBoard";
 import { ServiceDetail } from "./components/ServiceDetail";
 import { TimePicker } from "./components/TimePicker";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { useRecentStations } from "./hooks/useRecentStations";
 import { useFavourites } from "./hooks/useFavourites";
 import { useTheme } from "./hooks/useTheme";
@@ -342,7 +343,7 @@ function App() {
       <header className="px-4 sm:px-6 py-3 border-b border-gray-200 dark:border-slate-700 flex items-center justify-between bg-white dark:bg-slate-900">
         <button
           onClick={handleLogoClick}
-          className="logo-btn cursor-pointer"
+          className="logo-btn cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
           aria-label="Go to home page"
         >
           Railly
@@ -361,6 +362,7 @@ function App() {
       </header>
 
       <main className="flex-1 flex flex-col items-center px-4 sm:px-6 py-6 sm:py-8">
+        <ErrorBoundary>
         {selectedService && selectedStation ? (
           /* Level 3: Service Detail */
           <div className="w-full max-w-2xl animate-fade-slide-right">
@@ -491,6 +493,7 @@ function App() {
             />
           </div>
         )}
+        </ErrorBoundary>
       </main>
 
       <footer className="px-4 sm:px-6 py-4 text-center text-xs text-gray-400 dark:text-slate-500 border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900">

@@ -11,6 +11,23 @@ export function formatRailTime(railTime: string): string {
   return `${hours}:${minutes}`;
 }
 
+/**
+ * Format a rail time string for display.
+ * Handles multiple input formats:
+ * - "HHmm" (e.g. "0930" → "09:30")
+ * - "HH:MM" (already formatted, returned as-is)
+ * - "Half HH:MM" (strips "Half" prefix)
+ * - null/undefined → null
+ */
+export function formatDisplayTime(time: string | null | undefined): string | null {
+  if (!time) return null;
+  const cleaned = time.replace("Half", "").trim();
+  if (cleaned.length === 4 && !cleaned.includes(":")) {
+    return `${cleaned.slice(0, 2)}:${cleaned.slice(2)}`;
+  }
+  return cleaned;
+}
+
 /** Get current time as UK rail format (HHmm) */
 export function getCurrentRailTime(): string {
   const now = new Date();

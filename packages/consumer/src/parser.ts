@@ -4,9 +4,25 @@
  * Parses Kafka STOMP envelope JSON, extracts the Darwin payload from the
  * `bytes` field, and normalises single objects into arrays so downstream
  * handlers always receive arrays.
+ *
+ * Returns a discriminated union `ParseResult` so callers can distinguish
+ * between successful parses, expected skips, and genuine errors that
+ * should be persisted to the `darwin_audit` table.
  */
 
 import type { DarwinMessage } from "@railly-app/shared";
+
+/**
+ * Result of parsing a raw Kafka message.
+ * - `success` — valid DarwinMessage ready for handler routing
+ * - `skip`    — expected/normal skip (control message, metadata-only, empty input)
+ * - `error`   — genuine parse failure; `code` and `message` should be persisted
+ *               to `darwin_audit` for investigation
+ */
+export type ParseResult =
+  | { kind: "success"; message: DarwinMessage }
+  | { kind: "skip"; reason: string }
+  | { kind: "error"; code: string; message: string; rawPreview: string };
 
 /**
  * Control messages that contain no train data and should be silently skipped.
@@ -22,22 +38,26 @@ const METADATA_KEYS = new Set(["updateOrigin", "requestSource", "requestID"]);
  * Parse a raw Kafka message value into a DarwinMessage.
  * Handles the STOMP envelope wrapper that Confluent Cloud delivers.
  *
- * Returns null for:
- * - Malformed JSON or missing fields (logged as errors)
- * - Known control messages like FailureResp (silently skipped)
- * - Empty uR blocks with only metadata like updateOrigin (silently skipped)
+ * Returns a `ParseResult` discriminated union:
+ * - `{ kind: "success", message }` — valid message, route to handlers
+ * - `{ kind: "skip", reason }` — expected skip (null input, control message, metadata-only)
+ * - `{ kind: "error", code, message, rawPreview }` — parse failure, persist to darwin_audit
  */
-export function parseDarwinMessage(raw: Buffer | string | null): DarwinMessage | null {
-  if (!raw) return null;
+export function parseDarwinMessage(raw: Buffer | string | null): ParseResult {
+  if (!raw) return { kind: "skip", reason: "empty input" };
 
-  let envelope: unknown;
-  try {
-    const text = Buffer.isBuffer(raw) ? raw.toString("utf-8") : raw;
-    envelope = JSON.parse(text);
-  } catch {
-    console.error("   ❌ Failed to parse outer STOMP envelope JSON");
-    return null;
-  }
+   const rawText = Buffer.isBuffer(raw) ? raw.toString("utf-8") : raw;
+   const rawPreview = rawText.length > 300 ? rawText.slice(0, 300) + "…" : rawText;
+
+   let envelope: unknown;
+   try {
+     envelope = JSON.parse(rawText);
+   } catch (parseErr) {
+     const errMsg = `Failed to parse outer STOMP envelope JSON`;
+     console.error(`   ❌ ${errMsg}`);
+     console.error(`      Raw preview: ${rawPreview}`);
+     return { kind: "error", code: "ENVELOPE_PARSE_ERROR", message: errMsg, rawPreview };
+   }
 
   // The real Darwin payload is a JSON string inside envelope.bytes
   const bytes =
@@ -49,21 +69,30 @@ export function parseDarwinMessage(raw: Buffer | string | null): DarwinMessage |
       : null;
 
   if (!bytes) {
-    console.error("   ❌ Missing 'bytes' field in STOMP envelope");
-    return null;
+    const envelopeKeys = typeof envelope === "object" && envelope !== null
+      ? Object.keys(envelope as Record<string, unknown>).join(", ")
+      : String(envelope);
+    const errMsg = `Missing 'bytes' field in STOMP envelope (keys: [${envelopeKeys}])`;
+    console.error(`   ❌ ${errMsg}`);
+    return { kind: "error", code: "MISSING_BYTES_FIELD", message: errMsg, rawPreview };
   }
 
   let payload: unknown;
   try {
     payload = JSON.parse(bytes as string);
   } catch {
-    console.error("   ❌ Failed to parse Darwin payload JSON from bytes");
-    return null;
+    const bytesPreview = (bytes as string).length > 300 ? (bytes as string).slice(0, 300) + "…" : bytes;
+    const errMsg = `Failed to parse Darwin payload JSON from bytes`;
+    console.error(`   ❌ ${errMsg}`);
+    console.error(`      Bytes preview: ${bytesPreview}`);
+    return { kind: "error", code: "PAYLOAD_PARSE_ERROR", message: errMsg, rawPreview: bytesPreview as string };
   }
 
   if (typeof payload !== "object" || payload === null) {
-    console.error("   ❌ Darwin payload is not an object");
-    return null;
+    const payloadType = payload === null ? "null" : typeof payload;
+    const errMsg = `Darwin payload is not an object (type: ${payloadType})`;
+    console.error(`   ❌ ${errMsg}`);
+    return { kind: "error", code: "PAYLOAD_NOT_OBJECT", message: errMsg, rawPreview };
   }
 
   const p = payload as Record<string, unknown>;
@@ -75,15 +104,21 @@ export function parseDarwinMessage(raw: Buffer | string | null): DarwinMessage |
   // Silently skip known control messages (heartbeat/status responses)
   for (const key of CONTROL_KEYS) {
     if (key in p) {
-      return null; // No error log — this is expected
+      return { kind: "skip", reason: `control message: ${key}` };
     }
   }
 
   // The data lives inside uR (update) or sR (snapshot)
   const dataBlock = p.uR ?? p.sR;
   if (typeof dataBlock !== "object" || dataBlock === null) {
-    console.error("   ❌ Missing uR or sR data block in Darwin payload");
-    return null;
+    const payloadKeys = Object.keys(p).filter(k => k !== "ts" && k !== "version").join(", ");
+    const hasUR = "uR" in p;
+    const hasSR = "sR" in p;
+    const urType = p.uR !== undefined ? typeof p.uR : "undefined";
+    const srType = p.sR !== undefined ? typeof p.sR : "undefined";
+    const errMsg = `Missing uR or sR data block (keys: [${payloadKeys}], hasUR: ${hasUR}, hasSR: ${hasSR}, urType: ${urType}, srType: ${srType})`;
+    console.error(`   ❌ ${errMsg}`);
+    return { kind: "error", code: "MISSING_DATA_BLOCK", message: errMsg, rawPreview };
   }
 
   const d = dataBlock as Record<string, unknown>;
@@ -93,7 +128,7 @@ export function parseDarwinMessage(raw: Buffer | string | null): DarwinMessage |
   const dataKeys = Object.keys(d);
   const hasOnlyMetadata = dataKeys.length > 0 && dataKeys.every((k) => METADATA_KEYS.has(k));
   if (hasOnlyMetadata) {
-    return null; // No error log — CIS sync markers are expected
+    return { kind: "skip", reason: `metadata-only: [${dataKeys.join(", ")}]` };
   }
 
   // Normalise each possible message type to an array
@@ -467,9 +502,11 @@ export function parseDarwinMessage(raw: Buffer | string | null): DarwinMessage |
     message.alarm;
 
   if (!hasData) {
-    console.error("   ❌ Darwin payload contains no recognised data types");
-    return null;
+    const dataBlockKeys = Object.keys(d).join(", ");
+    const errMsg = `Darwin payload contains no recognised data types (keys: [${dataBlockKeys}], type: ${message.type}, ts: ${ts ?? "none"})`;
+    console.error(`   ❌ ${errMsg}`);
+    return { kind: "error", code: "NO_DATA_TYPES", message: errMsg, rawPreview };
   }
 
-  return message;
+  return { kind: "success", message };
 }

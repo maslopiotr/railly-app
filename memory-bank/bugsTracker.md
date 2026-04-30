@@ -256,8 +256,10 @@ Every bug uses these fields. If a field is unknown, it's marked `?` rather than 
 ### BUG-017: No React Error Boundary
 - **Severity:** Medium
 - **Type:** Bug
-- **Status:** Backlog
+- **Status:** Fixed (2026-04-29)
+- **File:** `packages/frontend/src/components/ErrorBoundary.tsx`
 - **Context:** Any unhandled render error crashes the entire app.
+- **Fix:** Created `ErrorBoundary.tsx` class component wrapping main content in `App.tsx`. Shows recovery UI with "Try again" + "Reload page" buttons and collapsible error details.
 
 ---
 

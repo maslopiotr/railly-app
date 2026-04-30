@@ -219,8 +219,9 @@ function logDarwinEvent(
 /**
  * Log an entry to the darwin_audit table.
  * Severity: "error" (exception), "skip" (intentionally skipped), "warning" (processed with issues)
+ * Exported for use by the consumer's parse error handling.
  */
-async function logDarwinAudit(
+export async function logDarwinAudit(
   messageType: string,
   severity: "error" | "skip" | "warning",
   rid: string | null,
@@ -265,6 +266,7 @@ async function logDarwinError(
 
 /**
  * Convenience: log a skip entry (for intentionally skipped messages/locations).
+ * Also exported for use by the consumer's parse error handling.
  */
 export async function logDarwinSkip(
   messageType: string,
@@ -405,8 +407,22 @@ export async function handleDarwinMessage(
   } catch (err) {
     metrics.messagesErrored++;
     const error = err instanceof Error ? err : new Error(String(err));
+    const hasSchedule = !!message.schedule;
+    const hasTS = !!message.TS;
+    const hasDeactivated = !!message.deactivated;
+    const dataTypes = [
+      hasSchedule && "schedule",
+      hasTS && "TS",
+      hasDeactivated && "deactivated",
+      message.OW && "OW",
+      message.association && "association",
+      message.trainAlert && "trainAlert",
+      message.trainOrder && "trainOrder",
+      message.trackingID && "trackingID",
+      message.alarm && "alarm",
+    ].filter(Boolean).join(", ");
     console.error(
-      `   ❌ Error processing Darwin message (type: ${message.type}, rid: ${rid ?? "unknown"}):`,
+      `   ❌ Error processing Darwin message (type: ${message.type}, rid: ${rid ?? "unknown"}, data: [${dataTypes || "none"}]):`,
       error.message,
     );
     if (error.stack) {

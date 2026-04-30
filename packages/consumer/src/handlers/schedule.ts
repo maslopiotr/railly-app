@@ -497,7 +497,12 @@ export async function handleSchedule(
       }
     }
   } catch (err) {
-    console.error(`   ❌ Schedule upsert failed for ${rid}:`, (err as Error).message);
+    const error = err instanceof Error ? err : new Error(String(err));
+    console.error(`   ❌ Schedule upsert failed for ${rid}:`, error.message);
+    console.error(`      RID: ${rid}, UID: ${uid}, SSD: ${ssd}, Locations: ${cps.length}, GeneratedAt: ${generatedAt}`);
+    if (error.stack) {
+      console.error(`      Stack: ${error.stack.split("\n").slice(0, 3).join(" | ")}`);
+    }
     throw err;
   }
 }
