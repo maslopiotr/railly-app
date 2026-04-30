@@ -59,6 +59,8 @@ router.get("/:serviceId", async (req, res, next) => {
         stopType: callingPoints.stopType,
         tpl: callingPoints.tpl,
         crs: callingPoints.crs,
+        sortTime: callingPoints.sortTime,
+        dayOffset: callingPoints.dayOffset,
         platTimetable: callingPoints.platTimetable,
         ptaTimetable: callingPoints.ptaTimetable,
         ptdTimetable: callingPoints.ptdTimetable,
@@ -135,6 +137,8 @@ router.get("/:serviceId", async (req, res, next) => {
           tpl: cp.tpl,
           crs: cp.crs ?? null,
           name: cp.cpName || cp.locName || cp.tpl,
+          sortTime: cp.sortTime ?? "00:00",
+          dayOffset: cp.dayOffset ?? 0,
           sourceTimetable: cp.sourceTimetable ?? false,
           sourceDarwin: cp.sourceDarwin ?? false,
           // Timetable data

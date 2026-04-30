@@ -7,10 +7,8 @@
 ### BUG-022: VSTP duplicate PP entries for circular routes
 - **Severity:** Low
 - **Type:** Bug
-- **Status:** Active
-- **File:** `packages/consumer/src/handlers/trainStatus.ts` — `createDarwinStub()`
-- **Context:** VSTP services create calling points from TS locations. For circular routes, PP entries with identical TIPLOC are duplicated. Board query filters out PP stops, so no user-facing impact. 583 duplicate PP groups exist (574 darwin-only, 548 timetable-only, 44 both sources).
-- **Fix-Direction:** Add uniqueness check before INSERT in `createDarwinStub()`. Low priority since PP stops are filtered from display.
+- **Status:** Wontfix (no user impact)
+- **Context:** PP stops filtered from display. 583 duplicate groups — low priority.
 
 ### BUG-025: CP-level dedup leaves stale timestamps on unchanged CPs
 - **Severity:** Low
@@ -66,15 +64,24 @@
 - **Context:** Design decision — we don't show non-passenger services (ECS moves, light loco, etc.)
 
 ### Bug A26: "Next" flag showing on wrong stop for delayed trains
-- **Status:** Active
-- **Context:** When a train is delayed, "Next" flag should show at the actual next stop, not the scheduled next stop.
+- **Status:** Fixed (2026-04-30)
+- **Root cause:** Two issues:
+  1. `determineStopState` skipped stations where train had arrived (ata) but not departed (atd) — these should be "current" (at platform), not "past"
+  2. `normaliseCallingPointTimes` used `etdPushport || etaPushport` for ordering, which breaks when pushport estimates are out of sequence (e.g. PSW etd=12:05 > ATH ptd=12:04). Fix: use `sortTime` from DB (derived from `COALESCE(wtd, ptd, wtp, wta, pta)`) which is always monotonically increasing.
+- **Files changed:** `CallingPoints.tsx` (frontend), `boards.ts` and `services.ts` (API), `board.ts` (shared types)
 
 ### Bug A27: Service showing as "unknown"
 - **Status:** Needs investigation
 
 ### Bug A35: Cancelled services showing as scheduled
-- **Status:** Needs investigation
-- **Context:** Service 202604288702699 showing as scheduled on our side but cancelled on National Rail.
+- **Status:** Closed (not reproducible with current data)
+- **Context:** Service 202604288702699 (April 28) reported as scheduled but cancelled on National Rail.
+- **Investigation (2026-04-30):** Verified April 30 data:
+  - 0 instances of `etd_pushport='Cancelled'` with `is_cancelled=false`
+  - Both CP-level and service_rt-level cancellation flags are consistent
+  - 1,268 timetable-only services without service_rt — normal (no Darwin messages for those)
+  - Original report was from April 28, old data may have been incomplete at the time
+  - Cancellation flow works correctly end-to-end
 
 ---
 
@@ -100,7 +107,7 @@
 | BUG-029 | Multiple 23505 root causes fixed | 2026-04-27 |
 | BUG-034 | Seed re-processing: hash-based dedup via `seed_log` | 2026-04-30 |
 | BUG-036 | 23505 violation: natural key matching + stop_type derivation | 2026-04-29 |
-| BUG-037 | Phantom IP rows: TS handler uses `pass` sub-object for PP detection | 2026-04-30 |
+| BUG-037 | Phantom IP rows: TS handler uses `pass` sub-object for PP detection (+ 37K additional cleanup 2026-04-30) | 2026-04-30 |
 
 ---
 

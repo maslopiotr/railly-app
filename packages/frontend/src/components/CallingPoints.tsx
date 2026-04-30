@@ -47,20 +47,39 @@ function timeToMinutes(time: string | null | undefined): number | null {
 
 /**
  * Normalise calling point times to be monotonically increasing.
- * If a stop's raw time ≤ previous stop's raw time, add 1440 (next day).
+ * Uses the sort_time field from the DB (always monotonically increasing per service)
+ * as the authoritative ordering key. This avoids issues where pushport estimates
+ * (etdPushport) can be out of sequence with the next stop's timetable time.
+ *
+ * For display time comparison against "now", we still need to add day_offset
+ * adjustments and handle midnight crossings.
  */
 function normaliseCallingPointTimes(points: HybridCallingPoint[]): number[] {
   const normalised: number[] = [];
   let prevMinutes = -1;
 
   for (const cp of points) {
-    const effectiveTime = cp.etdPushport || cp.etaPushport || cp.ptdTimetable || cp.ptaTimetable;
-    const raw = timeToMinutes(effectiveTime);
+    // Use sort_time from DB as authoritative ordering key.
+    // It's derived from COALESCE(wtd, ptd, wtp, wta, pta) which is always
+    // monotonically increasing per service — never out of sequence.
+    const raw = timeToMinutes(cp.sortTime);
 
     if (raw === null) {
-      normalised.push(prevMinutes + 1);
-      prevMinutes = prevMinutes + 1;
+      // Fallback: if sortTime is missing (shouldn't happen), compute from times
+      const effectiveTime = cp.ptdTimetable || cp.ptaTimetable || cp.etdPushport || cp.etaPushport;
+      const fallback = timeToMinutes(effectiveTime);
+      if (fallback === null) {
+        normalised.push(prevMinutes + 1);
+        prevMinutes = prevMinutes + 1;
+      } else if (fallback <= prevMinutes) {
+        normalised.push(fallback + 1440);
+        prevMinutes = fallback + 1440;
+      } else {
+        normalised.push(fallback);
+        prevMinutes = fallback;
+      }
     } else if (raw <= prevMinutes) {
+      // Cross-midnight: sort_time wraps around, add 1440
       normalised.push(raw + 1440);
       prevMinutes = raw + 1440;
     } else {
@@ -103,8 +122,15 @@ function determineStopState(
   isFirstUpcoming: boolean,
   nowMinutes: number
 ): StopState {
-  if (ataPushport || atdPushport) return "past";
+  // Train has departed this station — definitely past
+  if (atdPushport) return "past";
+  // Train has arrived but not departed — it's at platform.
+  // If this is the first upcoming stop, it's "current" (where the train IS).
+  // Otherwise treat as past (shouldn't normally happen — train is at one station).
+  if (ataPushport && !isFirstUpcoming) return "past";
+  // Time has already passed — past
   if (normalisedTime <= nowMinutes) return "past";
+  // First upcoming stop — this is where the train is or will be next
   if (isFirstUpcoming) return "current";
   return "future";
 }
@@ -200,6 +226,7 @@ function CallingPointRow({
   platPushport,
   isCancelled,
   cancelReason,
+  stopType,
   stopState,
   isLast,
 }: {
@@ -215,6 +242,7 @@ function CallingPointRow({
   platPushport: string | null;
   isCancelled: boolean;
   cancelReason: string | null;
+  stopType: string;
   stopState: StopState;
   isLast: boolean;
 }) {
@@ -223,7 +251,10 @@ function CallingPointRow({
 
   const isCurrent = stopState === "current";
   const isPast = stopState === "past";
-  const visited = !!ataPushport || !!atdPushport;
+  // "visited" means the train has actually been here AND departed (or arrived at DT).
+  // When the train is at platform (current + ata but no atd), it's NOT "visited" —
+  // it's where the train IS right now.
+  const visited = isPast && (!!atdPushport || (ataPushport && stopType === "DT"));
 
   // Determine which times to show: prefer departure times, fall back to arrival
   const hasDeparture = ptdTimetable !== null || etdPushport !== null || atdPushport !== null;
@@ -256,7 +287,7 @@ function CallingPointRow({
         </div>
         {/* Connector line */}
         {!isLast && (
-          <div className={`w-0.5 flex-1 min-h-[1.5rem] ${
+          <div className={`w-0.5 flex-1 min-h-6 ${
             isPast
               ? "bg-emerald-500 dark:bg-green-600"
               : "bg-gray-200 dark:bg-slate-700"
@@ -383,13 +414,22 @@ export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
   const rawNowMinutes = getUkNowMinutes();
   const nowMinutes = normaliseNowMinutes(rawNowMinutes, normalisedTimes[0]);
 
-  // Find first upcoming stop (for yellow dot)
+  // Find first upcoming stop (for "Next" indicator / yellow dot).
+  // A station where the train has arrived (ata) but NOT departed (atd)
+  // is where the train currently IS — it should be "Next", not skipped.
+  // Only skip stations the train has already DEPARTED (atdPushport).
+  // Exception: at destination (DT), ata without atd means "arrived" (past).
   let firstUpcomingIndex = -1;
   for (let i = 0; i < displayPoints.length; i++) {
     const cp = displayPoints[i];
     if (cp.stopType === "PP") continue;
-    if (cp.ataPushport || cp.atdPushport) continue;
-    if (normalisedTimes[i] > nowMinutes) {
+    // Train has departed this station — it's in the past
+    if (cp.atdPushport) continue;
+    // Train has arrived at destination — it's in the past
+    if (cp.ataPushport && cp.stopType === "DT") continue;
+    // Train is at platform (ata but no atd) — this IS the next stop
+    // OR this stop is in the future
+    if (cp.ataPushport || normalisedTimes[i] > nowMinutes) {
       firstUpcomingIndex = i;
       break;
     }
@@ -436,6 +476,7 @@ export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
             platPushport={cp.platPushport}
             isCancelled={cp.isCancelled}
             cancelReason={cp.cancelReason ?? null}
+            stopType={cp.stopType}
             stopState={finalState}
             isLast={i === displayPoints.length - 1}
           />

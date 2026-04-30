@@ -323,6 +323,7 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         tpl: callingPoints.tpl,
         crs: callingPoints.crs,
         cpSsd: callingPoints.ssd,
+        sortTime: callingPoints.sortTime,
         sourceTimetable: callingPoints.sourceTimetable,
         sourceDarwin: callingPoints.sourceDarwin,
         // Timetable columns
@@ -447,6 +448,7 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         tpl: callingPoints.tpl,
         crs: callingPoints.crs,
         cpSsd: callingPoints.ssd,
+        sortTime: callingPoints.sortTime,
         sourceTimetable: callingPoints.sourceTimetable,
         sourceDarwin: callingPoints.sourceDarwin,
         // Timetable columns
@@ -622,6 +624,7 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
           crs: cp.crs ?? null,
           name: cp.cpName || cp.locName || cp.tpl,
           stopType: cp.stopType,
+          sortTime: cp.sortTime ?? "00:00",
           dayOffset: cp.dayOffset ?? 0,
           sourceTimetable: cp.sourceTimetable ?? false,
           sourceDarwin: cp.sourceDarwin ?? false,

@@ -22,6 +22,8 @@ export interface HybridCallingPoint {
   name: string | null;
   /** Stop type: OR=origin, DT=terminus, IP=intermediate, PP=passing point */
   stopType: string;
+  /** Sort time (HH:MM) — authoritative ordering key from DB, always monotonically increasing */
+  sortTime: string;
   /** Day offset from SSD: 0=same day, 1=next day, 2=day after (for cross-midnight) */
   dayOffset: number;
   /** Whether this calling point has PPTimetable data */

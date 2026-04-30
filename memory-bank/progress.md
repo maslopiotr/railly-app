@@ -142,6 +142,27 @@ All 11 known issues from UI-fix-prompt.md addressed:
 - ✅ Frontend: filters out stops with no CRS and no public times (defence in depth)
 - ✅ DB cleanup: deleted ~215K phantom IP rows duplicating existing timetable PP rows
 
+## Completed (2026-04-30) — Session 4
+
+### Bug A26: "Next" flag on wrong station + calling point ordering — FIXED ✅
+- ✅ Root cause 1: `determineStopState` treated "arrived but not departed" (at platform) as "past" instead of "current"
+- ✅ Root cause 2: `normaliseCallingPointTimes` used `etdPushport || etaPushport` for ordering, which breaks when pushport estimates are out of sequence with timetable times (e.g. PSW etd=12:05 > ATH ptd=12:04)
+- ✅ Fix: Added `sortTime` field (from DB `sort_time`) to `HybridCallingPoint` type, API responses, and frontend
+- ✅ `sortTime` uses `COALESCE(wtd, ptd, wtp, wta, pta)` — always monotonically increasing per service
+- ✅ `determineStopState` now handles "at platform" (ata && !atd) as "current" not "past"
+- ✅ "Visited" styling shows amber for at-platform stops (where train currently IS)
+- ✅ Files changed: `CallingPoints.tsx`, `boards.ts`, `services.ts`, `board.ts` (shared types)
+
+### Bug A35: Cancelled services showing as scheduled — CLOSED ✅
+- ✅ Investigation: 0 instances of `etd_pushport='Cancelled'` with `is_cancelled=false`
+- ✅ Both CP-level and service_rt-level cancellation flags are consistent
+- ✅ Original report was from April 28 (old data); current data is correct
+- ✅ Cancellation flow works correctly end-to-end
+
+### Seed Status: NOT stuck in a loop ✅
+- ✅ Seed container running for 4+ hours, hash-based dedup working correctly
+- ✅ All files already processed → seed exits in ~2s, sleeps until next 03:00 run
+
 ## Known Issues Summary
 
 | Bug | Severity | Status | Impact |
