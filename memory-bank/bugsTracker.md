@@ -41,6 +41,14 @@
 ### BUG-016: No tests anywhere in the codebase
 - **Context:** Zero test scripts or test files.
 
+### BUG-017
+2026/04/30 14:46:37 [warn] 21#21: *1 an upstream response is buffered to a temporary file /var/cache/nginx/proxy_temp/2/00/0000000002 while reading upstream, client: 192.168.107.1, server: _, request: "GET /api/v1/stations/EUS/board?timeWindow=120&pastWindow=10&time=16%3A00&_t=1777560397457 HTTP/1.1", upstream: "http://192.168.107.2:3000/api/v1/stations/EUS/board?timeWindow=120&pastWindow=10&time=16%3A00&_t=1777560397457", host: "localhost:8080", referrer: "http://localhost:8080/stations/EUS?name=London%2520Euston&time=16%3A00"
+2026/04/30 14:45:13 [warn] 23#23: *2 an upstream response is buffered to a temporary file /var/cache/nginx/proxy_temp/1/00/0000000001 while reading upstream, client: 192.168.107.1, server: _, request: "GET /api/v1/stations/EUS/board?timeWindow=120&pastWindow=10&type=departures&time=17%3A00&_t=1777560313337 HTTP/1.1", upstream: "http://192.168.107.2:3000/api/v1/stations/EUS/board?timeWindow=120&pastWindow=10&type=departures&time=17%3A00&_t=1777560313337", host: "localhost:8080", referrer: "http://localhost:8080/stations/EUS?name=London%2520Euston&time=17%3A00"
+2026/04/30 14:52:27 [warn] 22#22: *20 an upstream response is buffered to a temporary file /var/cache/nginx/proxy_temp/3/00/0000000003 while reading upstream, client: 192.168.107.1, server: _, request: "GET /api/v1/stations/EUS/board?timeWindow=120&pastWindow=10&type=departures&time=15%3A00&_t=1777560747013 HTTP/1.1", upstream: "http://192.168.107.2:3000/api/v1/stations/EUS/board?timeWindow=120&pastWindow=10&type=departures&time=15%3A00&_t=1777560747013", host: "localhost:8080", referrer: "http://localhost:8080/stations/EUS?name=EUSTON%2520LONDON&time=15%3A00"
+
+### BUG-018
+Journeys are showing as Approaching too soon - review the logic so its closer to actual arrival time at the station - even if delayed. Second thing - On time and At platform are in the same color on the board, which is confusing.
+
 ---
 
 ## User-Reported Bugs (A-series)

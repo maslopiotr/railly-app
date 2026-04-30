@@ -1,11 +1,13 @@
 /**
- * TimePicker — Dropdown popover time selector
+ * TimePicker — Inline time selector with ◀ now ▶ reset pattern
  *
- * Two modes:
- * - "Now" mode: Shows a "🕐 Now" pill button. Clicking opens a dropdown WITHOUT changing results.
- * - Custom time: Shows "🕐 17:00" pill with dropdown open showing steppers.
+ * Four interactive elements in a single bar:
+ * - ◀ arrow: shift time back 1 hour
+ * - Centre label ("now" or "17:00"): opens popover for precise time selection
+ * - ▶ arrow: shift time forward 1 hour
+ * - "reset" button: always visible, resets to now
  *
- * No layout shift — the pill button has fixed width, dropdown opens below it.
+ * No layout shift — all elements always present, popover opens below the label.
  */
 
 import { useState, useCallback, useEffect, useRef } from "react";
@@ -35,18 +37,15 @@ function addHours(time: string, delta: number): string {
 export function TimePicker({ value, onChange, compact = false, className = "" }: TimePickerProps) {
   const isNow = value === null;
   const [isOpen, setIsOpen] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const pillRef = useRef<HTMLButtonElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
 
-  // Close dropdown when clicking outside
+  // Close popover when clicking outside the entire component
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (
         isOpen &&
-        dropdownRef.current &&
-        !dropdownRef.current.contains(e.target as Node) &&
-        pillRef.current &&
-        !pillRef.current.contains(e.target as Node)
+        wrapperRef.current &&
+        !wrapperRef.current.contains(e.target as Node)
       ) {
         setIsOpen(false);
       }
@@ -55,25 +54,20 @@ export function TimePicker({ value, onChange, compact = false, className = "" }:
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [isOpen]);
 
-  const handlePillClick = useCallback(() => {
-    if (isNow) {
-      // Just open the dropdown, don't change the time
-      setIsOpen(true);
-    } else {
-      // Toggle dropdown
-      setIsOpen((prev) => !prev);
-    }
-  }, [isNow]);
-
   const handleStep = useCallback(
     (delta: number) => {
       const base = value || currentTimeStr();
       // Snap to hour first if from "now"
       const hourBase = base.includes(":") ? `${base.split(":")[0]}:00` : base;
       onChange(addHours(hourBase, delta));
+      // Keep popover open if already open, don't open if closed
     },
     [value, onChange]
   );
+
+  const handleLabelClick = useCallback(() => {
+    setIsOpen((prev) => !prev);
+  }, []);
 
   const handleInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -91,80 +85,80 @@ export function TimePicker({ value, onChange, compact = false, className = "" }:
     [onChange]
   );
 
-  const handleResetToNow = useCallback(() => {
+  const handleReset = useCallback(() => {
     onChange(null);
     setIsOpen(false);
   }, [onChange]);
 
-  // Display label on the pill
-  const pillLabel = isNow ? "Now" : value;
+  // Display label in the centre
+  const label = isNow ? "now" : value;
   const displayTime = isNow ? currentTimeStr() : value;
 
   return (
-    <div className={`time-picker-wrapper relative ${className}`}>
-      <button
-        ref={pillRef}
-        onClick={handlePillClick}
-        className={`time-now-toggle ${compact ? "compact" : ""}`}
-        aria-label={isNow ? "Change time" : `Selected time: ${value}`}
-        title={isNow ? "Change time" : `Showing services at ${value}`}
-      >
-        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-        <span>{pillLabel}</span>
-        <svg className="w-3 h-3 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
+    <div ref={wrapperRef} className={`time-picker-wrapper relative inline-flex flex-col items-center ${className}`}>
+      {/* Bar group: ◀ label ▶ reset */}
+      <div className="time-bar-group inline-flex">
+        {/* Left arrow */}
+        <button
+          onClick={() => handleStep(-1)}
+          className={`time-bar-arrow ${compact ? "compact" : ""}`}
+          aria-label="1 hour earlier"
+          title="1 hour earlier"
+        >
+          <svg className={compact ? "w-3.5 h-3.5" : "w-4 h-4"} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
 
+        {/* Centre label — clickable to open popover */}
+        <button
+          onClick={handleLabelClick}
+          className={`time-bar-label ${compact ? "compact" : ""} ${isOpen ? "active" : ""}`}
+          aria-label={isNow ? "Change time" : `Selected time: ${value}`}
+          title={isNow ? "Change time" : `Showing services at ${value}`}
+        >
+          {label}
+        </button>
+
+        {/* Right arrow */}
+        <button
+          onClick={() => handleStep(1)}
+          className={`time-bar-arrow ${compact ? "compact" : ""}`}
+          aria-label="1 hour later"
+          title="1 hour later"
+        >
+          <svg className={compact ? "w-3.5 h-3.5" : "w-4 h-4"} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+
+        {/* Reset button — always visible, resets to now */}
+        <button
+          onClick={handleReset}
+          className={`time-bar-reset ${compact ? "compact" : ""} ${isNow ? "dimmed" : ""}`}
+          aria-label="Reset to now"
+          title="Reset to now"
+          disabled={isNow}
+        >
+          reset
+        </button>
+      </div>
+
+      {/* Popover for precise time selection */}
       {isOpen && (
         <div
-          ref={dropdownRef}
-          className="time-picker-dropdown"
+          className="time-bar-popover"
         >
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => handleStep(-1)}
-              className="time-stepper"
-              aria-label="1 hour earlier"
-              title="1 hour earlier"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
-
-            <div className="relative">
-              <input
-                type="time"
-                value={displayTime || ""}
-                onChange={handleInputChange}
-                className="time-input"
-                aria-label="Select time"
-              />
-            </div>
-
-            <button
-              onClick={() => handleStep(1)}
-              className="time-stepper"
-              aria-label="1 hour later"
-              title="1 hour later"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
+            <input
+              type="time"
+              value={displayTime || ""}
+              onChange={handleInputChange}
+              className="time-input"
+              aria-label="Select time"
+              autoFocus
+            />
           </div>
-
-          {!isNow && (
-            <button
-              onClick={handleResetToNow}
-              className="time-dropdown-reset"
-            >
-              ← Back to now
-            </button>
-          )}
         </div>
       )}
     </div>

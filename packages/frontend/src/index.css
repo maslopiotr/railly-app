@@ -576,33 +576,9 @@
 
 /* ─── Time Picker ──────────────────────────────────────────────────────── */
 
-.time-now-toggle {
-  @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium
-    bg-gray-100 text-gray-700 border border-gray-200
-    hover:bg-gray-200 hover:text-gray-900
-    active:scale-95 transition-all duration-150 cursor-pointer select-none
-    dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700
-    dark:hover:bg-slate-700 dark:hover:text-white dark:hover:border-slate-600;
-}
-
-.time-now-toggle.compact {
-  @apply px-2 py-1 text-xs;
-}
-
-.time-now-toggle svg {
-  @apply w-3.5 h-3.5;
-}
-
-.time-picker-expanded {
-  @apply flex items-center gap-1.5;
-}
-
-.time-picker-expanded.compact {
-  @apply gap-1;
-}
-
-.time-stepper {
-  @apply w-8 h-8 flex items-center justify-center rounded-lg border transition-all duration-150
+/* The inline bar: ◀ now ▶ */
+.time-bar-arrow {
+  @apply w-8 h-8 flex items-center justify-center border transition-all duration-150 cursor-pointer select-none
     bg-gray-100 border-gray-200 text-gray-500
     hover:bg-gray-200 hover:text-gray-900 hover:border-gray-300
     active:scale-90
@@ -610,8 +586,58 @@
     dark:hover:bg-slate-700 dark:hover:text-white dark:hover:border-slate-600;
 }
 
-.time-stepper.compact {
+.time-bar-arrow:first-child {
+  @apply rounded-l-lg;
+}
+
+.time-bar-arrow.compact {
   @apply w-7 h-7;
+}
+
+/* Reset button — always visible, rightmost element */
+.time-bar-reset {
+  @apply px-2.5 h-8 flex items-center justify-center border transition-all duration-150 cursor-pointer select-none rounded-r-lg text-xs font-medium
+    bg-gray-100 border-gray-200 text-gray-500
+    hover:bg-gray-200 hover:text-gray-900 hover:border-gray-300
+    active:scale-95
+    dark:bg-slate-800 dark:border-slate-700 dark:text-slate-400
+    dark:hover:bg-slate-700 dark:hover:text-white dark:hover:border-slate-600;
+}
+
+.time-bar-reset.dimmed {
+  @apply opacity-40 cursor-default;
+}
+
+.time-bar-reset.compact {
+  @apply h-7 px-1.5 text-[10px];
+}
+
+/* Centre label — "now" or "17:00" */
+.time-bar-label {
+  @apply px-3 py-1.5 text-sm font-medium border-x transition-all duration-150 cursor-pointer select-none
+    bg-gray-50 text-gray-700 border-gray-200
+    hover:bg-gray-100 hover:text-gray-900
+    dark:bg-slate-800/60 dark:text-slate-300 dark:border-slate-700
+    dark:hover:bg-slate-700 dark:hover:text-white;
+}
+
+.time-bar-label.active {
+  @apply bg-gray-100 text-gray-900
+    dark:bg-slate-700 dark:text-white;
+}
+
+.time-bar-label.compact {
+  @apply px-2 py-1 text-xs;
+}
+
+/* Popover for precise time selection (opens below centre label) */
+.time-bar-popover {
+  @apply absolute top-full mt-1 p-3 rounded-lg border shadow-lg z-50
+    bg-white border-gray-200
+    dark:bg-slate-800 dark:border-slate-700;
+  /* Centre the popover under the bar */
+  left: 50%;
+  transform: translateX(-50%);
 }
 
 .time-input {
@@ -630,30 +656,6 @@
   inset: 0;
   width: 100%;
   height: 100%;
-}
-
-.time-input.compact {
-  @apply px-2 py-1 text-xs w-20;
-}
-
-.time-reset-btn {
-  @apply w-7 h-7 flex items-center justify-center rounded-lg text-sm transition-all duration-150 cursor-pointer
-    text-gray-400 hover:text-gray-700 hover:bg-gray-100
-    active:scale-90
-    dark:text-slate-500 dark:hover:text-slate-300 dark:hover:bg-slate-700;
-}
-
-/* Time picker dropdown (popover) */
-.time-picker-dropdown {
-  @apply absolute top-full left-0 mt-1 p-3 rounded-lg border shadow-lg z-50
-    bg-white border-gray-200
-    dark:bg-slate-800 dark:border-slate-700;
-}
-
-.time-dropdown-reset {
-  @apply mt-2 text-xs text-center w-full py-1 rounded transition-colors cursor-pointer
-    text-gray-500 hover:text-gray-900 hover:bg-gray-100
-    dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-700;
 }
 
 /* ─── Station Search ──────────────────────────────────────────────────── */
