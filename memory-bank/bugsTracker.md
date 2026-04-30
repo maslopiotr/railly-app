@@ -41,10 +41,6 @@
 ### BUG-016: No tests anywhere in the codebase
 - **Context:** Zero test scripts or test files.
 
-### BUG-017: 202604308706803 should show as departed for Euston - why is it not showing as departed?
-London Euston plat 11 EUS 13:39
-
-
 ---
 
 ## User-Reported Bugs (A-series)
@@ -76,6 +72,15 @@ London Euston plat 11 EUS 13:39
 
 ### Bug A27: Service showing as "unknown"
 - **Status:** Needs investigation
+
+### BUG-017b: Origin stops not showing "departed" when train has left
+- **Severity:** High
+- **Type:** Bug
+- **Status:** Fixed (2026-04-30)
+- **Root cause:** Darwin Push Port does not send `atd` (actual time of departure) for origin stops that depart on time. It only sends `etd = std` with `confirmed: true`. The board's `determineTrainStatus()` relied solely on `atd` to mark a service as "departed", so on-time origin departures showed as "on_time" even after the train had long since left.
+- **Fix:** In `boards.ts`, when `atd` is null for the board station, scan ALL subsequent calling points (including PP/passing points which have track circuit data) for any `atd` or `ata`. If found, infer the train has departed and set `trainStatus = "departed"`. For `actualDeparture`, fall back to `etd` when inferred departed (safe because `confirmed: true` from Darwin means this is the actual time).
+- **Safety:** If the train is still at the platform (delayed), no subsequent stops have actual times, so inference doesn't fire. Only track circuit-confirmed data triggers the departed override.
+- **Files changed:** `packages/api/src/routes/boards.ts`
 
 ### Bug A35: Cancelled services showing as scheduled
 - **Status:** Closed (not reproducible with current data)
