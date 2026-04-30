@@ -118,11 +118,20 @@ All 11 known issues from UI-fix-prompt.md addressed:
 - ✅ Status logic now uses `service.trainStatus` from backend (handles `etd === std` → "on_time")
 - ✅ Mobile: 2-line compact layout. Tablet+: inline row with status badge
 
+## Completed (2026-04-30)
+
+### BUG-023: Seed Phase 3 Infinite Loop — FIXED ✅
+- ✅ Root cause: `COALESCE(cp.crs, lr.crs)` + `WHERE (cp.crs IS NULL OR cp.name IS NULL)` never terminated because ~3,700 TIPLOCs have `lr.crs = NULL`, making `COALESCE(NULL, NULL) = NULL` → rows re-matched forever
+- ✅ Split Phase 3 into 4 separate terminating loops: 3a (CRS new CPs), 3b (name new CPs), 3c (CRS older CPs), 3d (name older CPs)
+- ✅ Each loop only selects rows where `location_ref` has data to fill (`lr.crs IS NOT NULL` / `lr.name IS NOT NULL`)
+- ✅ Added `process.exit(0)` at end of seed — postgres connection pool keeps event loop alive
+- ✅ No coverage loss: every row the old code successfully updated, the new code also updates. Only difference is new code skips unfillable rows instead of re-processing them infinitely.
+
 ## Known Issues Summary
 
 | Bug | Severity | Status | Impact |
 |-----|----------|--------|--------|
-| BUG-023: CRS gap remaining | Critical | Partially Fixed | 2 missing CRS codes, board fallback needed |
+| BUG-023: CRS gap + infinite loop | Critical | Fixed | Seed no longer hangs; 0.8% remaining are genuine junctions |
 | BUG-021: Mobile UI | High | Fixed | CSS specificity override in Tailwind v4 fixed |
 | BUG-022: VSTP duplicate PP | Low | Fixed | Eliminated by natural key (stop_type in unique constraint) |
 | BUG-025: CP stale timestamps | Low | Active | No data loss, observability gap |

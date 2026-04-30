@@ -295,5 +295,33 @@ export const skippedLocations = pgTable(
   ],
 );
 
+/**
+ * Seed log — tracks which PPTimetable files have been processed
+ * Uses SHA-256 hash + mtime + file size to avoid re-processing unchanged files.
+ * Full mode ignores this; normal mode skips files whose hash matches.
+ */
+export const seedLog = pgTable(
+  "seed_log",
+  {
+    id: serial("id").primaryKey(),
+    filename: varchar("filename", { length: 255 }).notNull().unique(),
+    fileHash: varchar("file_hash", { length: 64 }).notNull(), // SHA-256 hex
+    fileSize: integer("file_size"), // bytes
+    fileMtime: timestamp("file_mtime", { withTimezone: true }), // filesystem mtime
+    fileType: varchar("file_type", { length: 10 }).notNull(), // 'ref' or 'tt'
+    ssd: varchar("ssd", { length: 10 }), // schedule start date (from filename)
+    version: integer("version"), // version number (from filename)
+    rowsAffected: integer("rows_affected"), // total rows processed
+    processedAt: timestamp("processed_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("idx_seed_log_file_type").on(table.fileType),
+    index("idx_seed_log_processed_at").on(table.processedAt),
+  ],
+);
+
+/** Type for inserting a seed log row */
+export type NewSeedLog = typeof seedLog.$inferInsert;
+
 /** Type for inserting a skipped location row */
 export type NewSkippedLocation = typeof skippedLocations.$inferInsert;

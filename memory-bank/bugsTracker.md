@@ -111,22 +111,26 @@ Every bug uses these fields. If a field is unknown, it's marked `?` rather than 
 ### BUG-023: 42% of passenger calling points missing CRS codes — board query silently drops them
 - **Severity:** Critical
 - **Type:** Data-Integrity
-- **Status:** Partially Fixed
+- **Status:** Fixed (2026-04-30: infinite loop fix)
 - **File:** `packages/api/src/db/seed-timetable.ts`, `packages/api/src/routes/boards.ts`
 - **Context:** The board query requires `source_timetable = true` AND a CRS match, but 73,481 timetable-sourced passenger stops had NULL CRS. These were invisible on departure boards. Root cause: PPTimetable reference data has CRS for only ~3,700 of 12,100 TIPLOCs. The seed's `tplToCrs` lookup uses this incomplete data.
   - Backfilled 129,469 calling_points with CRS/name from `location_ref`.
   - Added Phase 3 to seed: post-insert backfill from `location_ref`.
   - Only 1,465 passenger stops still without CRS (374 genuine TIPLOCs without CRS — junctions and operational points).
+  - **Infinite loop bug fixed (2026-04-30):** Phase 3 backfill used `COALESCE(cp.crs, lr.crs)` + `WHERE (cp.crs IS NULL OR cp.name IS NULL)`, which never terminated because ~3,700 TIPLOCs have `lr.crs = NULL`, causing `COALESCE(NULL, NULL) = NULL` → rows re-matched forever. Split into separate CRS and name loops, each only targeting rows where `location_ref` has data to fill. Added `process.exit(0)` so seed process terminates cleanly.
 - **Evidence:**
   - Before fix: 77,388 passenger stops without CRS (42%).
   - After backfill: 1,465 without CRS (0.8%), all genuine junctions.
+  - Phase 3 processed 11+ million batches of 5,000 rows (~55M row-touches) before the infinite loop was detected.
   - 2 CRS codes not in `stations` table: TRX (Troon Harbour), ZZY (Paddington Low Level).
-- **Impact:** Services at major stations like London Bridge, Bond Street, Clapham Junction were invisible on departure boards.
+- **Impact:** Services at major stations like London Bridge, Bond Street, Clapham Junction were invisible on departure boards. Seed process hung indefinitely in Phase 3.
 - **Fix-Direction (remaining):**
   1. ✅ Backfill CRS from `location_ref` (done)
   2. ✅ Seed Phase 3 backfill (done)
-  3. Add TRX and ZZY to `stations` seed
-  4. Consider board query fallback: when `crs` is NULL, use `tpl` + `location_ref.name` for display
+  3. ✅ Fix Phase 3 infinite loop — split into separate CRS and name loops (done 2026-04-30)
+  4. ✅ Add `process.exit(0)` at end of seed (done 2026-04-30)
+  5. Add TRX and ZZY to `stations` seed
+  6. Consider board query fallback: when `crs` is NULL, use `tpl` + `location_ref.name` for display
 
 ### BUG-006-revised: Skipped TIPLOCs persisted for investigation + isPass matching fix
 - **Severity:** Medium
@@ -388,9 +392,23 @@ stations/BHI/202604276772376?name=BIRMINGHAM%2520INTERNATIONAL when viewed from 
 ### Bug 33
 202604278706885 is showing as on time when viewed from Milton Keynes departure board before it actually departed, but it has been delayed departure.
 
-### Bug 34
-
-For timetable seed, we need to find a way to track hash of the processed files, so even if the files were uploaded within the last 12hrs, they won't get processed twice.
+### BUG-034: Timetable seed re-processes unchanged files on every run
+- **Severity:** Medium
+- **Type:** Infra
+- **Status:** Fixed (2026-04-30)
+- **File:** `packages/api/src/db/seed-timetable.ts`, `packages/api/src/db/schema.ts`, `packages/api/seed-entrypoint.sh`
+- **Context:** The `--incremental` flag used mtime-based filtering (files modified in last 12h). On container restart, all files within 12h were re-processed — safe (UPSERT is idempotent) but wasteful (~7 min per run). No way to distinguish already-processed files from new ones.
+- **Evidence:** Full re-seed on every container restart. Phase 2 alone takes ~25 min for 7 timetable files.
+- **Impact:** Wasted compute, unnecessary DB load, slow startup on restart.
+- **Fix:**
+  1. Added `seed_log` table: `(filename UNIQUE, file_hash, file_size, file_mtime, file_type, ssd, version, rows_affected, processed_at)`.
+  2. `discoverFiles()` now computes SHA-256 hash + stat mtime + size for each file.
+  3. `filterAlreadyProcessed()` queries `seed_log` for matching (filename, hash) and skips matches.
+  4. `logProcessedFile()` logs each processed file to `seed_log` after successful processing.
+  5. Removed `--incremental` flag entirely — hash dedup replaces mtime-based filtering.
+  6. Removed `STATE_FILE` from entrypoint — no longer needed.
+  7. On restart: all files already logged → hash matches → seed exits in ~2s (just hashing + query).
+  8. New/changed files: different hash → processed normally → logged after completion.
 
 ## Bug 35
 Service 202604288702699 is showing as scheduled but should be showing as cancelled - RTT is showing cancellation message: This service was cancelled due to a problem with signalling equipment (J3). - was it affected by the deletion of data that we fixed 21:00 on 28 April?

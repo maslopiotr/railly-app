@@ -4,6 +4,7 @@ import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { readdirSync, readFileSync, statSync } from "fs";
 import { gunzipSync } from "zlib";
+import { createHash } from "crypto";
 import sax from "sax";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -16,6 +17,7 @@ import {
   callingPoints,
   tocRef,
   locationRef,
+  seedLog,
   type NewJourney,
   type NewCallingPoint,
   type NewTocRef,
@@ -26,10 +28,8 @@ import { sql } from "drizzle-orm";
 const DATA_DIR = resolve(__dirname, "../../../../data/PPTimetable");
 
 // ── CLI flags ─────────────────────────────────────────────────────────────────
-
-const args = process.argv.slice(2);
-const incremental = args.includes("--incremental");
-const HOURS_THRESHOLD = 12; // Only process files modified in the last 12 hours
+// No flags needed — hash-based dedup replaces --incremental.
+// All files are discovered; already-processed files (matching hash) are skipped.
 
 // ── Observability ─────────────────────────────────────────────────────────────
 
@@ -92,6 +92,15 @@ interface TimetableFile {
   ssd: string;
   version: number;
   isRef: boolean;
+  fileHash: string; // SHA-256 hex of compressed file
+  fileSize: number; // bytes
+  fileMtime: Date; // filesystem last-modified time
+}
+
+/** Compute SHA-256 hash of a file (reads compressed bytes, no decompression) */
+function computeFileHash(filePath: string): string {
+  const data = readFileSync(filePath);
+  return createHash("sha256").update(data).digest("hex");
 }
 
 function discoverFiles(): { refFiles: TimetableFile[]; ttFiles: TimetableFile[] } {
@@ -105,9 +114,15 @@ function discoverFiles(): { refFiles: TimetableFile[]; ttFiles: TimetableFile[] 
     if (refMatch) {
       const ssdMatch = f.match(/PPTimetable_(\d{8})/);
       const ssd = ssdMatch ? ssdMatch[1] : "unknown";
-      parsed.push({ filename: f, ssd, version: parseInt(refMatch[1]), isRef: true });
+      const filePath = resolve(DATA_DIR, f);
+      const stat = statSync(filePath);
+      const fileHash = computeFileHash(filePath);
+      parsed.push({ filename: f, ssd, version: parseInt(refMatch[1]), isRef: true, fileHash, fileSize: stat.size, fileMtime: stat.mtime });
     } else if (ttMatch) {
-      parsed.push({ filename: f, ssd: ttMatch[1], version: parseInt(ttMatch[2]), isRef: false });
+      const filePath = resolve(DATA_DIR, f);
+      const stat = statSync(filePath);
+      const fileHash = computeFileHash(filePath);
+      parsed.push({ filename: f, ssd: ttMatch[1], version: parseInt(ttMatch[2]), isRef: false, fileHash, fileSize: stat.size, fileMtime: stat.mtime });
     }
   }
 
@@ -127,39 +142,64 @@ function discoverFiles(): { refFiles: TimetableFile[]; ttFiles: TimetableFile[] 
     }
   }
 
-  let refFiles = [...refBySsd.values()].sort((a, b) => a.version - b.version);
-  let ttFiles = [...ttBySsd.values()].sort((a, b) => a.version - b.version);
+  const refFiles = [...refBySsd.values()].sort((a, b) => a.version - b.version);
+  const ttFiles = [...ttBySsd.values()].sort((a, b) => a.version - b.version);
 
-  if (incremental) {
-    const cutoff = new Date(Date.now() - HOURS_THRESHOLD * 60 * 60 * 1000);
-    console.log(`   Incremental mode: processing files modified after ${cutoff.toISOString()}`);
+  return { refFiles, ttFiles };
+}
 
-    refFiles = refFiles.filter((f) => {
-      try {
-        const stat = statSync(resolve(DATA_DIR, f.filename));
-        return stat.mtime > cutoff;
-      } catch (_e) {
-        return false;
-      }
-    });
-    ttFiles = ttFiles.filter((f) => {
-      try {
-        const stat = statSync(resolve(DATA_DIR, f.filename));
-        return stat.mtime > cutoff;
-      } catch (_e) {
-        return false;
-      }
-    });
+/** Filter out files already processed (matching hash in seed_log) */
+async function filterAlreadyProcessed(files: TimetableFile[]): Promise<TimetableFile[]> {
+  if (files.length === 0) return [];
 
-    console.log(`   Files to process: ${refFiles.length} ref, ${ttFiles.length} timetable`);
+  const filenames = files.map((f) => f.filename);
+  const logged = await db
+    .select({ filename: seedLog.filename, fileHash: seedLog.fileHash })
+    .from(seedLog)
+    .where(sql`${seedLog.filename} IN (${sql.join(filenames.map((f) => sql`${f}`), sql`, `)})`);
 
-    if (refFiles.length === 0 && ttFiles.length === 0) {
-      console.log("   ℹ️ No new files to process. Exiting.");
-      return { refFiles: [], ttFiles: [] };
+  const processedMap = new Map(logged.map((r) => [r.filename, r.fileHash]));
+
+  const newFiles: TimetableFile[] = [];
+  for (const f of files) {
+    const existingHash = processedMap.get(f.filename);
+    if (existingHash === f.fileHash) {
+      console.log(`   ⏭️ Skipping ${f.filename} (already processed, hash matches)`);
+    } else {
+      newFiles.push(f);
     }
   }
 
-  return { refFiles, ttFiles };
+  return newFiles;
+}
+
+/** Log a successfully processed file to seed_log */
+async function logProcessedFile(file: TimetableFile, rowsAffected: number): Promise<void> {
+  await db
+    .insert(seedLog)
+    .values({
+      filename: file.filename,
+      fileHash: file.fileHash,
+      fileSize: file.fileSize,
+      fileMtime: file.fileMtime,
+      fileType: file.isRef ? "ref" : "tt",
+      ssd: file.ssd,
+      version: file.version,
+      rowsAffected,
+    })
+    .onConflictDoUpdate({
+      target: seedLog.filename,
+      set: {
+        fileHash: sql`EXCLUDED.file_hash`,
+        fileSize: sql`EXCLUDED.file_size`,
+        fileMtime: sql`EXCLUDED.file_mtime`,
+        fileType: sql`EXCLUDED.file_type`,
+        ssd: sql`EXCLUDED.ssd`,
+        version: sql`EXCLUDED.version`,
+        rowsAffected: sql`EXCLUDED.rows_affected`,
+        processedAt: sql`NOW()`,
+      },
+    });
 }
 
 // ── SAX parser for PPTimetable ────────────────────────────────────────────────
@@ -350,25 +390,28 @@ async function seed() {
     "🚂 Seeding timetable data from PPTimetable (UPSERT mode)...",
   );
   console.log(`   Data directory: ${DATA_DIR}`);
-  if (incremental) {
-    console.log(
-      `   Mode: INCREMENTAL (only files modified in last ${HOURS_THRESHOLD}h)`,
-    );
-  } else {
-    console.log("   Mode: FULL (process all files)");
-  }
 
   logMemory("start");
 
-  const { refFiles, ttFiles } = discoverFiles();
-
-  if (incremental && refFiles.length === 0 && ttFiles.length === 0) {
-    console.log("\n✅ No new files to process. Seed skipped.");
-    return;
-  }
+  // Discover all latest files and compute hashes
+  let { refFiles, ttFiles } = discoverFiles();
 
   console.log(
     `   Found ${refFiles.length} reference files (latest only), ${ttFiles.length} timetable files (latest only per day)`,
+  );
+
+  // Filter out already-processed files (hash-based dedup)
+  console.log("   Checking seed_log for already-processed files...");
+  refFiles = await filterAlreadyProcessed(refFiles);
+  ttFiles = await filterAlreadyProcessed(ttFiles);
+
+  if (refFiles.length === 0 && ttFiles.length === 0) {
+    console.log("\n✅ No new files to process. Seed skipped.");
+    process.exit(0);
+  }
+
+  console.log(
+    `   Files to process: ${refFiles.length} ref, ${ttFiles.length} timetable`,
   );
 
   // ── Phase 1: Reference data ──────────────────────────────────────────────
@@ -391,6 +434,9 @@ async function seed() {
     for (const [toc, data] of tocs) {
       allTocs.set(toc, data);
     }
+
+    // Log processed file to seed_log
+    await logProcessedFile(refFile, locations.size + tocs.size);
   }
 
   // Upsert location references
@@ -640,6 +686,9 @@ async function seed() {
       `     ✅ ${passengerJourneys.size} journeys, ${filePointsUpserted} calling points upserted`,
     );
     logElapsed(`File ${ttFile.filename}`, fileStart);
+
+    // Log processed file to seed_log
+    await logProcessedFile(ttFile, passengerJourneys.size + filePointsUpserted);
   }
 
   // ── Phase 3: Backfill CRS codes and names from location_ref ──────────────
@@ -647,65 +696,131 @@ async function seed() {
   // which holds FOR UPDATE locks on calling_points rows.
   // Only target CPs touched by this seed run (timetable_updated_at >= seed start)
   // to minimise the lock footprint.
+  //
+  // BUG-023 FIX: Split into separate CRS and name loops. The previous combined
+  // loop used COALESCE(cp.crs, lr.crs) which produced NULL for TIPLOCs with no
+  // CRS code, causing the WHERE (cp.crs IS NULL OR cp.name IS NULL) clause to
+  // re-match the same rows infinitely. Each loop now only selects rows it can
+  // actually fill, guaranteeing termination.
   console.log("\n📋 Phase 3: Backfill CRS and names from location_ref...");
   const phase3Start = Date.now();
   const seedStartIso = new Date(seedStart).toISOString();
   const CRS_BATCH_SIZE = 5000;
-  let totalBackfilled = 0;
+  let totalCrsBackfilled = 0;
+  let totalNameBackfilled = 0;
 
-  // First: backfill CPs from this seed run (most likely to need CRS)
-  let batchBackfilled = -1; // sentinel: -1 means "keep going"
+  // ── 3a: CRS backfill — only rows where location_ref HAS a CRS code ──────
+  console.log("   Phase 3a: CRS backfill (new CPs)...");
+  let batchBackfilled = -1;
   while (batchBackfilled !== 0) {
-    const crsBackfillResult = await db.execute(sql`
+    const result = await db.execute(sql`
       UPDATE calling_points
-      SET crs = COALESCE(calling_points.crs, lr.crs),
-          name = COALESCE(calling_points.name, lr.name)
+      SET crs = lr.crs
       FROM location_ref AS lr
       WHERE calling_points.tpl = lr.tpl
-        AND (calling_points.crs IS NULL OR calling_points.name IS NULL)
+        AND calling_points.crs IS NULL
+        AND lr.crs IS NOT NULL
         AND calling_points.timetable_updated_at >= ${seedStartIso}::timestamp with time zone
         AND calling_points.id IN (
           SELECT cp.id FROM calling_points cp
           JOIN location_ref lr2 ON cp.tpl = lr2.tpl
-          WHERE (cp.crs IS NULL OR cp.name IS NULL)
+          WHERE cp.crs IS NULL
+            AND lr2.crs IS NOT NULL
             AND cp.timetable_updated_at >= ${seedStartIso}::timestamp with time zone
           LIMIT ${CRS_BATCH_SIZE}
         )
     `);
-    batchBackfilled = Number(crsBackfillResult.count ?? 0);
-    totalBackfilled += batchBackfilled;
+    batchBackfilled = Number(result.count ?? 0);
+    totalCrsBackfilled += batchBackfilled;
     if (batchBackfilled > 0) {
-      console.log(`     Batch: ${batchBackfilled} CPs backfilled (total: ${totalBackfilled})`);
+      console.log(`     CRS batch: ${batchBackfilled} CPs (total: ${totalCrsBackfilled})`);
     }
   }
 
-  // Second: backfill any older CPs still missing CRS (smaller batches, less urgent)
+  // ── 3b: Name backfill — location_ref.name is always non-NULL (defaults to tpl) ──
+  console.log("   Phase 3b: Name backfill (new CPs)...");
   batchBackfilled = -1;
-  let oldBackfilled = 0;
   while (batchBackfilled !== 0) {
-    const crsBackfillResult = await db.execute(sql`
+    const result = await db.execute(sql`
       UPDATE calling_points
-      SET crs = COALESCE(calling_points.crs, lr.crs),
-          name = COALESCE(calling_points.name, lr.name)
+      SET name = lr.name
       FROM location_ref AS lr
       WHERE calling_points.tpl = lr.tpl
-        AND (calling_points.crs IS NULL OR calling_points.name IS NULL)
+        AND calling_points.name IS NULL
+        AND lr.name IS NOT NULL
+        AND calling_points.timetable_updated_at >= ${seedStartIso}::timestamp with time zone
         AND calling_points.id IN (
           SELECT cp.id FROM calling_points cp
           JOIN location_ref lr2 ON cp.tpl = lr2.tpl
-          WHERE cp.crs IS NULL OR cp.name IS NULL
+          WHERE cp.name IS NULL
+            AND lr2.name IS NOT NULL
+            AND cp.timetable_updated_at >= ${seedStartIso}::timestamp with time zone
           LIMIT ${CRS_BATCH_SIZE}
         )
     `);
-    batchBackfilled = Number(crsBackfillResult.count ?? 0);
-    oldBackfilled += batchBackfilled;
+    batchBackfilled = Number(result.count ?? 0);
+    totalNameBackfilled += batchBackfilled;
     if (batchBackfilled > 0) {
-      console.log(`     Old CP batch: ${batchBackfilled} backfilled (total: ${oldBackfilled})`);
+      console.log(`     Name batch: ${batchBackfilled} CPs (total: ${totalNameBackfilled})`);
     }
   }
-  totalBackfilled += oldBackfilled;
 
-  console.log(`   Backfilled ${totalBackfilled} calling points with CRS/name from location_ref`);
+  // ── 3c: CRS backfill for older CPs (no timetable_updated_at filter) ─────
+  console.log("   Phase 3c: CRS backfill (older CPs)...");
+  let oldCrsBackfilled = 0;
+  batchBackfilled = -1;
+  while (batchBackfilled !== 0) {
+    const result = await db.execute(sql`
+      UPDATE calling_points
+      SET crs = lr.crs
+      FROM location_ref AS lr
+      WHERE calling_points.tpl = lr.tpl
+        AND calling_points.crs IS NULL
+        AND lr.crs IS NOT NULL
+        AND calling_points.id IN (
+          SELECT cp.id FROM calling_points cp
+          JOIN location_ref lr2 ON cp.tpl = lr2.tpl
+          WHERE cp.crs IS NULL
+            AND lr2.crs IS NOT NULL
+          LIMIT ${CRS_BATCH_SIZE}
+        )
+    `);
+    batchBackfilled = Number(result.count ?? 0);
+    oldCrsBackfilled += batchBackfilled;
+    if (batchBackfilled > 0) {
+      console.log(`     Old CRS batch: ${batchBackfilled} CPs (total: ${oldCrsBackfilled})`);
+    }
+  }
+
+  // ── 3d: Name backfill for older CPs ──────────────────────────────────────
+  console.log("   Phase 3d: Name backfill (older CPs)...");
+  let oldNameBackfilled = 0;
+  batchBackfilled = -1;
+  while (batchBackfilled !== 0) {
+    const result = await db.execute(sql`
+      UPDATE calling_points
+      SET name = lr.name
+      FROM location_ref AS lr
+      WHERE calling_points.tpl = lr.tpl
+        AND calling_points.name IS NULL
+        AND lr.name IS NOT NULL
+        AND calling_points.id IN (
+          SELECT cp.id FROM calling_points cp
+          JOIN location_ref lr2 ON cp.tpl = lr2.tpl
+          WHERE cp.name IS NULL
+            AND lr2.name IS NOT NULL
+          LIMIT ${CRS_BATCH_SIZE}
+        )
+    `);
+    batchBackfilled = Number(result.count ?? 0);
+    oldNameBackfilled += batchBackfilled;
+    if (batchBackfilled > 0) {
+      console.log(`     Old name batch: ${batchBackfilled} CPs (total: ${oldNameBackfilled})`);
+    }
+  }
+
+  console.log(`   CRS backfilled: ${totalCrsBackfilled + oldCrsBackfilled} (${totalCrsBackfilled} new, ${oldCrsBackfilled} older)`);
+  console.log(`   Name backfilled: ${totalNameBackfilled + oldNameBackfilled} (${totalNameBackfilled} new, ${oldNameBackfilled} older)`);
   logElapsed("Phase 3", phase3Start);
 
   // ── Phase 4: Mark stale timetable CPs ──────────────────────────────────
@@ -825,6 +940,9 @@ async function seed() {
     `\n✅ Seed complete in ${elapsed}s — ${totalJourneys} journeys, ${totalPointsUpserted} calling points upserted`,
   );
   logMemory("end");
+
+  // Exit cleanly — the postgres connection pool keeps the event loop alive
+  process.exit(0);
 }
 
 seed().catch((err) => {

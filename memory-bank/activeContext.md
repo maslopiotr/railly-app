@@ -68,12 +68,32 @@
 - `packages/consumer/src/handlers/trainStatus.ts` — Error logging with context + stack
 - `packages/consumer/src/index.ts` — Handles `ParseResult`, persists parse errors via `logDarwinAudit`
 
-## Seed Deadlock Fix (2026-04-30)
+## Seed Phase 3 Infinite Loop Fix (2026-04-30)
 
-**Problem**: Seed Phase 3 CRS backfill deadlocked with live consumer — bulk `UPDATE calling_points FROM location_ref` locked millions of rows while consumer held `FOR UPDATE` locks on same table. Process 27721 ↔ 28055 circular wait.
+**Problem**: Seed Phase 3 CRS/name backfill ran in an infinite loop. The combined `COALESCE(cp.crs, lr.crs)` + `WHERE (cp.crs IS NULL OR cp.name IS NULL)` never terminated because ~3,700 of 12,100 TIPLOCs have `lr.crs = NULL`, making `COALESCE(NULL, NULL) = NULL` — rows re-matched forever. Logs showed 11+ million batches processed (~55M row-touches for ~2M rows).
 
-**Fix**: Replaced bulk UPDATEs in Phase 3 and Phase 4 with batched updates (5,000 rows per batch using `id IN (SELECT ... LIMIT 5000)` subquery). Phase 3 now prioritises recently-seeded CPs first (`timetable_updated_at >= seed start`), then older CPs. Phase 4 stale marking also batched.
+**Fix**: 
+1. Split Phase 3 into 4 separate terminating loops: 3a (CRS backfill for new CPs), 3b (name backfill for new CPs), 3c (CRS backfill for older CPs), 3d (name backfill for older CPs). Each loop only selects rows where `location_ref` has data to fill (`lr.crs IS NOT NULL` or `lr.name IS NOT NULL`), guaranteeing rows drop out after update.
+2. Added `process.exit(0)` at end of seed function — postgres connection pool keeps Node.js event loop alive otherwise.
 
-**File**: `packages/api/src/db/seed-timetable.ts` — Phase 3 and Phase 4 rewritten.
+**File**: `packages/api/src/db/seed-timetable.ts` — Phase 3 rewritten, process.exit(0) added.
+
+**Also**: Seed Phase 3 previously had deadlock fix (batched updates, 5,000 rows per batch) — this is preserved in the new code.
+
+## Hash-Based File Dedup for Seed (2026-04-30)
+
+**Problem**: Seed re-processed all PPTimetable files on every container restart (~25 min). The `--incremental` flag used mtime-based filtering (files modified in last 12h), but on restart all files within 12h were re-processed. No way to distinguish already-processed files from new ones.
+
+**Fix**:
+1. Added `seed_log` table to `schema.ts`: `(filename UNIQUE, file_hash, file_size, file_mtime, file_type, ssd, version, rows_affected, processed_at)`
+2. `discoverFiles()` computes SHA-256 hash + stat mtime + size for each file
+3. `filterAlreadyProcessed()` queries `seed_log` for matching (filename, hash) and skips matches
+4. `logProcessedFile()` logs each processed file after successful processing
+5. Removed `--incremental` flag entirely — hash dedup replaces mtime-based filtering
+6. Removed `STATE_FILE` from entrypoint — no longer needed
+
+**Result**: On restart, all files already logged → hash matches → seed exits in ~2s (just hashing + query). New/changed files get processed normally and logged.
+
+**Files changed**: `schema.ts`, `seed-timetable.ts`, `seed-entrypoint.sh`
 
 ## Previous: PostgreSQL Performance Optimisation — Complete ✅
