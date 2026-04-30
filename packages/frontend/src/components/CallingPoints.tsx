@@ -359,9 +359,16 @@ function CallingPointRow({
 }
 
 export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
-  // Filter out passing points (PP) — these are operational junctions without
-  // passenger stops and show raw TIPLOC codes like CMDNSTH, WLSDWLJ
-  const displayPoints = points.filter((cp) => cp.stopType !== "PP");
+  // Filter out non-passenger stops: PP (passing point), OPOR (operational origin),
+  // OPIP (operational intermediate), OPDT (operational destination).
+  // Only passenger stop types are: IP, OR, DT.
+  // Also filter out phantom stops with no CRS and no public times (defence in depth).
+  const NON_PASSENGER_STOP_TYPES = new Set(["PP", "OPOR", "OPIP", "OPDT"]);
+  const displayPoints = points.filter((cp) => {
+    if (NON_PASSENGER_STOP_TYPES.has(cp.stopType)) return false;
+    if (!cp.crs && !cp.ptaTimetable && !cp.ptdTimetable) return false;
+    return true;
+  });
 
   if (displayPoints.length === 0) {
     return (

@@ -121,7 +121,11 @@ function computeDelayMinutes(scheduled: string | null, estimated: string | null,
  *   Same logic but without OP prefix: OR, DT, PP, IP
  */
 function deriveStopType(loc: DarwinTSLocation, isVstp: boolean): string {
-  if (loc.isPass === true) return "PP";
+  // TS messages lack stopType — infer from flags and pass sub-object.
+  // The `pass` sub-object (passing estimate) is set by Darwin for locations
+  // where the train passes through without stopping. Its presence is a
+  // reliable PP indicator even when isPass is not explicitly set.
+  if (loc.isPass === true || loc.pass) return "PP";
   const prefix = isVstp ? "OP" : "";
   if (loc.isOrigin === true && loc.isDestination !== true) return `${prefix}OR`;
   if (loc.isDestination === true && loc.isOrigin !== true) return `${prefix}DT`;
@@ -175,7 +179,10 @@ function matchLocationsToCps(
     const tpl = loc.tpl?.trim();
     if (!tpl) continue;
 
-    const isPassingPoint = loc.isPass === true;
+    // Use both isPass flag and pass sub-object to detect passing points.
+    // Darwin TS messages for non-stopping locations include a `pass` sub-object
+    // with passing estimates but may not set isPass=true explicitly.
+    const isPassingPoint = loc.isPass === true || !!(loc as unknown as Record<string, unknown>).pass;
 
     // Route to the correct candidate pool based on isPass flag
     const candidatePool = isPassingPoint ? ppRows : nonPPRows;

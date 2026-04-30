@@ -127,11 +127,28 @@ All 11 known issues from UI-fix-prompt.md addressed:
 - ✅ Added `process.exit(0)` at end of seed — postgres connection pool keeps event loop alive
 - ✅ No coverage loss: every row the old code successfully updated, the new code also updates. Only difference is new code skips unfillable rows instead of re-processing them infinitely.
 
+## Completed (2026-04-30) — Session 3
+
+### BUG-034: Seed re-processes unchanged files — FIXED ✅
+- ✅ Hash-based dedup: `seed_log` table stores (filename, SHA-256 hash)
+- ✅ On restart: all files already logged → hash matches → seed exits in ~2s
+- ✅ New/changed files: different hash → processed normally
+
+### BUG-037: TS handler creates phantom "IP" rows for passing points — FIXED ✅
+- ✅ Root cause: TS messages lack `stopType` and `isPass` flag; Darwin uses `pass` sub-object for passing estimates
+- ✅ `deriveStopType()`: `loc.isPass === true || loc.pass` → returns "PP" for passing points
+- ✅ `matchLocationsToCps()`: `loc.isPass === true || !!loc.pass` → routes to PP candidate pool
+- ✅ Schedule handler: removed "IP" fallback, warns + defaults to "PP"
+- ✅ Frontend: filters out stops with no CRS and no public times (defence in depth)
+- ✅ DB cleanup: deleted ~215K phantom IP rows duplicating existing timetable PP rows
+
 ## Known Issues Summary
 
 | Bug | Severity | Status | Impact |
 |-----|----------|--------|--------|
 | BUG-023: CRS gap + infinite loop | Critical | Fixed | Seed no longer hangs; 0.8% remaining are genuine junctions |
+| BUG-034: Seed re-processing | Medium | Fixed | Hash dedup replaces mtime filtering |
+| BUG-037: Phantom IP rows for passing points | High | Fixed | Junctions no longer appear as passenger stops |
 | BUG-021: Mobile UI | High | Fixed | CSS specificity override in Tailwind v4 fixed |
 | BUG-022: VSTP duplicate PP | Low | Fixed | Eliminated by natural key (stop_type in unique constraint) |
 | BUG-025: CP stale timestamps | Low | Active | No data loss, observability gap |

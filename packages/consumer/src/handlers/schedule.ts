@@ -154,13 +154,13 @@ export async function handleSchedule(
   // Build calling points with day_offset and collect skip info
   let dayOffset = 0;
   let prevMinutes = -1;
-  const skippedTpls: Array<{ tpl: string; raw: string }> = [];
+  const skippedTpls: Array<{ tpl: string; raw: string; reason: string }> = [];
   const cps = sortedLocations
     .map((loc: DarwinScheduleLocation) => {
       const tpl = loc.tpl?.trim();
       if (!tpl) {
         console.warn(`   ⚠️ Schedule ${rid}: location missing tpl — skipping`);
-        skippedTpls.push({ tpl: "", raw: JSON.stringify(loc).slice(0, 200) });
+        skippedTpls.push({ tpl: "", raw: JSON.stringify(loc).slice(0, 200), reason: "MISSING_TPL" });
         return null;
       }
       // Compute day_offset: when time wraps from evening to morning, increment
@@ -173,10 +173,21 @@ export async function handleSchedule(
       }
       if (currentMinutes >= 0) prevMinutes = currentMinutes;
 
+      // Darwin schedule messages always include stopType (verified across 157K+
+      // messages). If missing, skip the location entirely rather than assuming
+      // a stop type — assumptions cause data integrity problems (e.g. the phantom
+      // IP bug). Log for investigation instead.
+      if (!loc.stopType) {
+        const msg = `Schedule ${rid}: location ${tpl} missing stopType — skipping (no assumption made)`;
+        console.warn(`   ⚠️ ${msg}`);
+        skippedTpls.push({ tpl, raw: JSON.stringify(loc).slice(0, 300), reason: "MISSING_STOP_TYPE" });
+        return null;
+      }
+
       return {
         rid,
         ssd,
-        stopType: loc.stopType || "IP",
+        stopType: loc.stopType,
         tpl,
         act: loc.act || null,
         plat: loc.plat || null,
@@ -483,15 +494,18 @@ export async function handleSchedule(
 
     console.log(`   ✅ Schedule upserted: ${rid} (${cps.length} calling points)`);
 
-    // Log skipped locations to darwin_audit and skipped_locations
+    // Log skipped/anomalous locations to darwin_audit and skipped_locations
     if (skippedTpls.length > 0) {
       for (const skip of skippedTpls) {
-        await logDarwinSkip("schedule", rid, "MISSING_TPL", `Schedule ${rid}: location missing tpl`, skip.raw);
-        // Also persist to skipped_locations for per-location investigation
+        const description = skip.reason === "MISSING_STOP_TYPE"
+          ? `Schedule ${rid}: location ${skip.tpl} missing stopType — skipped (no assumption made)`
+          : `Schedule ${rid}: location missing tpl`;
+        await logDarwinSkip("schedule", rid, skip.reason, description, skip.raw);
+        // Persist to skipped_locations for per-location investigation
         try {
           await sql`
             INSERT INTO skipped_locations (rid, tpl, ssd, reason, message_type)
-            VALUES (${rid}, ${skip.tpl || "UNKNOWN"}, ${ssd}, ${"Missing TIPLOC in schedule location"}, 'schedule')
+            VALUES (${rid}, ${skip.tpl || "UNKNOWN"}, ${ssd}, ${skip.reason}, 'schedule')
           `;
         } catch { /* Don't let skip logging fail the main processing */ }
       }

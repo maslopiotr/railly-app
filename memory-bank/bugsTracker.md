@@ -447,4 +447,22 @@ Original error examples:
 ### Train 202604298011062 showing as cancelled on NationalRail, Scheduled on our side
 Why train 202604298011062 is showing as scheduled, but it was cancelled? Investigate if there were any messages today 29 April for service 202604298011062.
 
+### BUG-037: TS handler creates phantom "IP" rows for passing points
+- **Severity:** High
+- **Type:** Data-Integrity
+- **Status:** Fixed (2026-04-30)
+- **File:** `packages/consumer/src/handlers/trainStatus.ts`, `packages/consumer/src/handlers/schedule.ts`, `packages/frontend/src/components/CallingPoints.tsx`
+- **Context:** TS messages for passing points (junctions) don't include `isPass=true` or `stopType`. They DO include a `pass` sub-object with estimated passing time. The TS handler's `deriveStopType()` defaulted to "IP" when no flags were set, and `matchLocationsToCps()` routed `isPass=undefined` to the non-PP pool — missing the existing PP row, then INSERTing a duplicate phantom "IP" row. This caused junctions like MKNSCEN to appear as passenger stops on the frontend.
+- **Evidence:**
+  - 219,249 phantom IP rows found duplicating existing timetable PP rows (same journey_rid + tpl + sort_time)
+  - Raw TS for MKNSCEN: `{"tpl":"MKNSCEN","wtp":"10:35","pass":{"et":"10:36","src":"Darwin"}}` — no `isPass` or `stopType`
+  - Schedule messages: 157,341/157,341 include stopType; TS messages: 699,060/699,060 do NOT
+- **Impact:** Junction TIPLOCs displayed as passenger stops on departure boards and calling points.
+- **Fix:**
+  1. **TS `deriveStopType()`**: Check `loc.pass` sub-object as PP indicator: `if (loc.isPass === true || loc.pass) return "PP"`
+  2. **TS `matchLocationsToCps()`**: Use `loc.pass` for routing: `const isPassingPoint = loc.isPass === true || !!loc.pass`
+  3. **Schedule handler**: Skip locations with missing `stopType` entirely — no assumptions made. Log to `skipped_locations` and `darwin_audit` with reason `MISSING_STOP_TYPE` for investigation.
+  4. **Frontend `CallingPoints.tsx`**: Filter out ALL non-passenger stop types (PP, OPOR, OPIP, OPDT) plus phantom stops with no CRS and no public times (defence in depth)
+  5. **DB cleanup**: Deleted ~215K phantom IP rows that duplicate existing timetable PP rows
+
 ### Train 202604298050953 showing as cancelled on Natinal Rail but scheduled on our side
