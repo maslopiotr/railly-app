@@ -651,14 +651,52 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
 
       const currentLocation = determineCurrentLocation(cpList);
 
+      // BUG-017: Darwin often doesn't send atd for origin stops that depart
+      // on time. Detect departure by checking if ANY subsequent calling point
+      // (including PPs — which have track circuit data) has actual times.
+      // This is safe: if a later stop has atd/ata, the train must have left
+      // this station. If the train is still at platform, no subsequent stop
+      // will have actual times, so this won't fire.
+      let inferredDeparted = false;
+      if (trainStatus !== "departed" && entry.atdPushport == null) {
+        const fullPattern = callingPatternMap.get(rid) || [];
+        const boardIndex = fullPattern.findIndex(cp => cp.tpl === entry.tpl);
+        if (boardIndex >= 0) {
+          for (let i = boardIndex + 1; i < fullPattern.length; i++) {
+            if (fullPattern[i].atdPushport || fullPattern[i].ataPushport) {
+              inferredDeparted = true;
+              trainStatus = "departed";
+              break;
+            }
+          }
+        }
+      }
+
       // If the train is physically approaching this station, override status
       if (
-        trainStatus !== "at_platform" &&
         trainStatus !== "departed" &&
+        trainStatus !== "at_platform" &&
         currentLocation?.status === "approaching" &&
         currentLocation.tpl === entry.tpl
       ) {
         trainStatus = "approaching";
+      }
+
+      // BUG-017: When we inferred departure but atd is null, use etd as
+      // the best available actual departure time. For on-time departures
+      // etd equals std; for delayed departures etd shows the delayed time.
+      const actualDeparture = inferredDeparted
+        ? (entry.atdPushport || entry.etdPushport || null)
+        : (entry.atdPushport || null);
+
+      // BUG-017: Also patch the calling point in cpList so the frontend's
+      // CallingPoints.tsx (which checks atdPushport for "Departed" status)
+      // works without any changes.
+      if (inferredDeparted && !entry.atdPushport && entry.etdPushport) {
+        const boardCp = cpList.find(cp => cp.tpl === entry.tpl);
+        if (boardCp && !boardCp.atdPushport) {
+          boardCp.atdPushport = entry.etdPushport;
+        }
       }
 
       services.push({
@@ -704,7 +742,7 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         trainStatus,
         currentLocation,
         actualArrival: entry.ataPushport || null,
-        actualDeparture: entry.atdPushport || null,
+        actualDeparture,
       });
     }
 
