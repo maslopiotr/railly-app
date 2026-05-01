@@ -1,35 +1,29 @@
 # Active Context
 
-## Current Focus: Station Name Normalisation & UI Fixes
+## Current Focus: Consumer Logging Levels
 
-### Latest Changes (2026-05-01 — Session 8)
+### Latest Changes (Session 9 — Consumer Logging Overhaul)
 
-**Station name "London" reordering** — CORPUS data stores London terminals in suffix form (e.g. "EUSTON LONDON") but UK convention is prefix form ("LONDON EUSTON" → "London Euston"). The `location_ref` table (Darwin) already stores correct prefix form, but the `stations` table (CORPUS) stores suffix form. The API `stationName` field comes from `stations`, so the board header was showing "Euston London".
-
-Fix approach: display-time normalisation in `normaliseStationName()` — keeps raw CORPUS data in DB (no data integrity risk), reorders at display time.
+Replaced all `console.*` calls in the Darwin consumer with a structured `LOG_LEVEL` system. Created `packages/consumer/src/log.ts` with `error/warn/info/debug` levels controlled by `LOG_LEVEL` env var (default: `info`).
 
 | File | Change |
 |------|--------|
-| `shared/utils/stationName.ts` | Added London reordering rule: trailing "LONDON" → prefix "LONDON" before title-casing |
-| `StationSearch.tsx` | Applied `normaliseStationName()` to dropdown items and input query |
-| `App.tsx` | Applied `normaliseStationName()` to "Remove from favourites" aria-label |
+| `consumer/src/log.ts` | New — `LOG_LEVEL` env var controls `log.error/warn/info/debug` |
+| `consumer/src/index.ts` | All `console.*` → `log.*`; startup/metrics/shutdown → `info`; batch → `debug`; retries → `debug` |
+| `consumer/src/handlers/index.ts` | Errors → `log.error`; overflow/audit → `log.error`; buffer config → `log.info`; P2/P3 stubs → `log.debug`; deactivated cancelled → `log.info`; completed journey → `log.debug` |
+| `consumer/src/handlers/trainStatus.ts` | Stub created → `log.info`; TS updated → `log.debug`; dedup skip → `log.debug`; **new**: skipped locations warn summary with breakdown by reason |
+| `consumer/src/handlers/schedule.ts` | Missing RID/tpl/stopType → `log.warn`; dedup skip → `log.debug`; upserted → `log.debug`; **new**: skipped locations warn summary with breakdown |
+| `consumer/src/parser.ts` | All parse errors → `log.error`; missing tpl → `log.warn` |
+| `memory-bank/featuresPlanner.md` | Added P2/P3 handler stubs table |
 
-**Previous changes (Session 7)** — Theme/background fix (light mode dark bg was Brave browser force-dark, not CSS bug).
+**Skipped locations now logged at `warn` level** with breakdown:
+- `origin_no_match` — critical, origin missing from timetable
+- `destination_no_match` — critical, destination missing
+- `passenger_stop_no_match` — potential data loss
+- `passing_point_no_match` — less severe but surfaced
 
-**Previous changes (Session 6)** — Design token system overhaul, 12 bug fixes.
+**`LOG_LEVEL=debug`** restores previous behaviour (all per-message logs).
 
-## Key Files Recently Changed
-- `packages/shared/src/utils/stationName.ts` — London reordering rule for CORPUS suffix names
-- `packages/frontend/src/components/StationSearch.tsx` — normalises station names in dropdown/input
-- `packages/frontend/src/App.tsx` — normalises all remaining raw `station.name` references
-- `packages/frontend/src/index.css` — `color-scheme: light` on `:root`; `color-scheme: dark` in `.dark`
-- `packages/frontend/src/hooks/useTheme.ts` — Only toggles `.dark` class
-- `packages/frontend/index.html` — Inline script only adds `.dark` class
-
-## Architecture Notes
-- **Theme switching**: Pure CSS cascade — `:root` defines light custom properties + `color-scheme: light`, `.dark` overrides them for dark + `color-scheme: dark`. `useTheme` only toggles `.dark` class (no inline styles).
-- **Background**: `html { background-color: var(--surface-page); }` works in both modes via CSS custom property cascade.
-- **Design tokens**: `:root` (light) + `.dark` (dark) define CSS custom properties → `@theme` block maps them to Tailwind utilities → components use `bg-surface-card`, `text-status-on-time`, etc.
-- **`--glow-live`**: Light mode `0 0 6px rgba(16, 185, 129, 0.6)`, dark mode `0 0 6px rgba(52, 211, 153, 0.4)`
-- **No raw colour classes**: Zero `text-amber-*`, `dark:text-*`, `dark:bg-*` in any component — verified by search
-- **Station name normalisation**: `normaliseStationName()` handles CORPUS suffix form → prefix form reordering, title-casing, hyphens, slashes. Applied at all display surfaces. DB stores raw CORPUS names (no data mutation).
+### Previous Changes (Session 8)
+- Station name "London" reordering via `normaliseStationName()`
+- Docker per-service rebuild scripts with `--no-cache`

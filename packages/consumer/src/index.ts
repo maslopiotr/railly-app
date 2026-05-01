@@ -11,6 +11,7 @@ import { sql, closeDb } from "./db.js";
 import { handleDarwinMessage, metrics, startEventBufferTimer, stopEventBufferTimer, flushEventBuffer, getEventBufferStats, logDarwinAudit } from "./handlers/index.js";
 import { skippedLocationsTotal } from "./handlers/trainStatus.js";
 import { parseDarwinMessage } from "./parser.js";
+import { log } from "./log.js";
 
 // ── Configuration ──────────────────────────────────────────────────────────────
 
@@ -82,7 +83,7 @@ async function shutdown(signal: string): Promise<void> {
   if (isShuttingDown) return;
   isShuttingDown = true;
 
-  console.log(`\n   🛑 Received ${signal}, shutting down gracefully...`);
+  log.info(`\n   🛑 Received ${signal}, shutting down gracefully...`);
 
   // Clear timers immediately to prevent new timer-triggered flushes
   if (metricsInterval) {
@@ -98,28 +99,28 @@ async function shutdown(signal: string): Promise<void> {
   // 1. Disconnect Kafka FIRST — no new messages can arrive after this
   try {
     await consumer.disconnect();
-    console.log("   ✅ Kafka consumer disconnected");
+    log.info("   ✅ Kafka consumer disconnected");
   } catch (err) {
-    console.error("   ❌ Error disconnecting Kafka consumer:", err);
+    log.error("   ❌ Error disconnecting Kafka consumer:", err);
   }
 
   // 2. Flush event buffer — definitive, nothing can add to it now
   try {
     await flushEventBuffer();
-    console.log("   ✅ Event buffer flushed");
+    log.info("   ✅ Event buffer flushed");
   } catch (err) {
-    console.error("   ❌ Error flushing event buffer:", err);
+    log.error("   ❌ Error flushing event buffer:", err);
   }
 
   // 3. Close DB connection
   try {
     await closeDb();
-    console.log("   ✅ PostgreSQL connection closed");
+    log.info("   ✅ PostgreSQL connection closed");
   } catch (err) {
-    console.error("   ❌ Error closing PostgreSQL:", err);
+    log.error("   ❌ Error closing PostgreSQL:", err);
   }
 
-  console.log("   👋 Consumer stopped");
+  log.info("   👋 Consumer stopped");
   process.exit(0);
 }
 
@@ -135,15 +136,15 @@ function startMetricsLogging(): ReturnType<typeof setInterval> {
     const errored = metrics.messagesErrored;
     const rate = total > 0 ? ((processed / total) * 100).toFixed(1) : "0.0";
 
-    console.log(
+    log.info(
       `📊 Metrics — total: ${total}, processed: ${processed}, errored: ${errored}, success: ${rate}%`,
     );
-    console.log(
+    log.info(
       `   byType: ${JSON.stringify(metrics.byType)}`,
       `   skippedLocations: ${skippedLocationsTotal}`,
     );
     const bufStats = getEventBufferStats();
-    console.log(
+    log.info(
       `   eventBuffer: ${bufStats.buffered} buffered, ${bufStats.flushed} flushed, ${bufStats.failed} failed`,
     );
   }, METRICS_INTERVAL_MS);
@@ -167,7 +168,7 @@ async function runRetentionCleanup(): Promise<number> {
     `;
     const deleted = result.count ?? 0;
     if (deleted > 0) {
-      console.log(`🧹 Retention cleanup: deleted ${deleted} old darwin_events (>${RETENTION_DAYS} days)`);
+      log.info(`🧹 Retention cleanup: deleted ${deleted} old darwin_events (>${RETENTION_DAYS} days)`);
     }
 
     // Also clean up old skipped_locations (keep 7 days for investigation)
@@ -178,12 +179,12 @@ async function runRetentionCleanup(): Promise<number> {
     `;
     const skippedDeleted = skippedResult.count ?? 0;
     if (skippedDeleted > 0) {
-      console.log(`🧹 Retention cleanup: deleted ${skippedDeleted} old skipped_locations (>7 days)`);
+      log.info(`🧹 Retention cleanup: deleted ${skippedDeleted} old skipped_locations (>7 days)`);
     }
 
     return deleted + skippedDeleted;
   } catch (err) {
-    console.error("   ⚠️ Retention cleanup failed:", (err as Error).message);
+    log.warn("   ⚠️ Retention cleanup failed:", (err as Error).message);
     return 0;
   }
 }
@@ -199,22 +200,22 @@ function startRetentionCleanup(): ReturnType<typeof setInterval> {
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  console.log("🚂 Railly Darwin Push Port Consumer");
-  console.log(`[RESTART] Consumer starting — PID: ${process.pid}, Time: ${new Date().toISOString()}`);
-  console.log(`   Kafka broker: ${KAFKA_BROKER}`);
-  console.log(`   Kafka topic: ${KAFKA_TOPIC}`);
-  console.log(`   Consumer group: ${KAFKA_GROUP_ID}`);
+  log.info("🚂 Railly Darwin Push Port Consumer");
+  log.info(`[RESTART] Consumer starting — PID: ${process.pid}, Time: ${new Date().toISOString()}`);
+  log.info(`   Kafka broker: ${KAFKA_BROKER}`);
+  log.info(`   Kafka topic: ${KAFKA_TOPIC}`);
+  log.info(`   Consumer group: ${KAFKA_GROUP_ID}`);
 
   // Ensure PostgreSQL is connected
   await sql`SELECT 1`;
-  console.log("   ✅ PostgreSQL ready");
+  log.info("   ✅ PostgreSQL ready");
 
   // Connect to Kafka
   await consumer.connect();
-  console.log("   ✅ Kafka connected");
+  log.info("   ✅ Kafka connected");
 
   await consumer.subscribe({ topic: KAFKA_TOPIC, fromBeginning: false });
-  console.log(`   ✅ Subscribed to topic: ${KAFKA_TOPIC}`);
+  log.info(`   ✅ Subscribed to topic: ${KAFKA_TOPIC}`);
 
   // ── Offset out-of-range recovery ─────────────────────────────────────────────
   // Darwin's Kafka retention is ~5 min. If the consumer restarts after downtime
@@ -226,21 +227,21 @@ async function main(): Promise<void> {
       (error.message && error.message.includes("Offset out of range"));
 
     if (isOffsetError) {
-      console.warn("⚠️ Kafka offset out of range — committed offset expired during downtime");
+      log.warn("⚠️ Kafka offset out of range — committed offset expired during downtime");
       // Extract partition info if available
       const partition = (error as unknown as Record<string, unknown>).partition;
-      console.warn(`   Seeking to latest offset (partition: ${partition ?? "unknown"})`);
+      log.warn(`   Seeking to latest offset (partition: ${partition ?? "unknown"})`);
       try {
         if (typeof partition === "number") {
           await consumer.seek({ topic: KAFKA_TOPIC, partition, offset: "latest" });
         }
       } catch (seekErr) {
-        console.error("   ❌ Seek failed:", seekErr);
+        log.error("   ❌ Seek failed:", seekErr);
       }
     }
 
     if (!restart) {
-      console.error("💥 Kafka consumer crashed and will not restart. Exiting.");
+      log.error("💥 Kafka consumer crashed and will not restart. Exiting.");
       process.exit(1);
     }
     // KafkaJS will auto-restart when restart === true
@@ -263,7 +264,7 @@ async function main(): Promise<void> {
       isRunning,
       isStale,
     }) => {
-      console.log(
+      log.debug(
         `📦 Batch — partition: ${batch.partition}, messages: ${batch.messages.length}`,
       );
 
@@ -341,7 +342,7 @@ async function main(): Promise<void> {
             attempts++;
             if (attempts < maxAttempts) {
               const backoff = Math.min(100 * Math.pow(2, attempts), 2000);
-              console.warn(`   ⏳ Retry ${attempts}/${maxAttempts} for offset ${msg.offset} in ${backoff}ms: ${lastError.message}`);
+              log.debug(`   ⏳ Retry ${attempts}/${maxAttempts} for offset ${msg.offset} in ${backoff}ms: ${lastError.message}`);
               await new Promise(r => setTimeout(r, backoff));
             }
           }
@@ -355,7 +356,7 @@ async function main(): Promise<void> {
           parsed.deactivated && "deactivated",
           parsed.OW && "OW",
         ].filter(Boolean).join(", ");
-        console.error(`   ❌ Giving up on offset ${msg.offset} after ${maxAttempts} attempts (types: [${parsedTypes || "none"}], ts: ${parsed.ts || "none"}): ${lastError?.message}`);
+        log.error(`   ❌ Giving up on offset ${msg.offset} after ${maxAttempts} attempts (types: [${parsedTypes || "none"}], ts: ${parsed.ts || "none"}]): ${lastError?.message}`);
         processedOffsets.set(offsetNum, true); // Commit to move past it
       };
 
@@ -387,6 +388,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error("   ❌ Fatal error starting consumer:", err);
+  log.error("   ❌ Fatal error starting consumer:", err);
   process.exit(1);
 });

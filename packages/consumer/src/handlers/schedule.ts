@@ -14,6 +14,7 @@
 import type { DarwinSchedule, DarwinScheduleLocation } from "@railly-app/shared";
 import { sql } from "../db.js";
 import { logDarwinSkip } from "./index.js";
+import { log } from "../log.js";
 
 /**
  * Preserved pushport data for a calling point, used to match
@@ -121,7 +122,7 @@ export async function handleSchedule(
   const { rid } = schedule;
 
   if (!rid) {
-    console.warn("   ⚠️ Schedule message missing RID — skipping");
+    log.warn("   ⚠️ Schedule message missing RID — skipping");
     await logDarwinSkip("schedule", null, "MISSING_RID", "Schedule message missing RID", JSON.stringify(schedule).slice(0, 500));
     return;
   }
@@ -159,7 +160,7 @@ export async function handleSchedule(
     .map((loc: DarwinScheduleLocation) => {
       const tpl = loc.tpl?.trim();
       if (!tpl) {
-        console.warn(`   ⚠️ Schedule ${rid}: location missing tpl — skipping`);
+        log.warn(`   ⚠️ Schedule ${rid}: location missing tpl — skipping`);
         skippedTpls.push({ tpl: "", raw: JSON.stringify(loc).slice(0, 200), reason: "MISSING_TPL" });
         return null;
       }
@@ -179,7 +180,7 @@ export async function handleSchedule(
       // IP bug). Log for investigation instead.
       if (!loc.stopType) {
         const msg = `Schedule ${rid}: location ${tpl} missing stopType — skipping (no assumption made)`;
-        console.warn(`   ⚠️ ${msg}`);
+        log.warn(`   ⚠️ ${msg}`);
         skippedTpls.push({ tpl, raw: JSON.stringify(loc).slice(0, 300), reason: "MISSING_STOP_TYPE" });
         return null;
       }
@@ -216,7 +217,7 @@ export async function handleSchedule(
         const storedTime = parseTs(existing[0].generated_at as string);
         const incomingTime = parseTs(generatedAt);
         if (incomingTime < storedTime) {
-          console.log(`   ⏭️ Schedule ${rid}: incoming (${incomingTime}) older than stored (${storedTime}) — skipping`);
+          log.debug(`   ⏭️ Schedule ${rid}: incoming (${incomingTime}) older than stored (${storedTime}) — skipping`);
           return;
         }
       }
@@ -492,7 +493,16 @@ export async function handleSchedule(
       }
     });
 
-    console.log(`   ✅ Schedule upserted: ${rid} (${cps.length} calling points)`);
+    // Log skipped locations summary at warn level
+    if (skippedTpls.length > 0) {
+      const skipBreakdown = skippedTpls.reduce((acc, s) => {
+        acc[s.reason] = (acc[s.reason] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+      const skipSummary = Object.entries(skipBreakdown).map(([r, c]) => `${r}: ${c}`).join(", ");
+      log.warn(`   ⚠️ Schedule ${rid}: ${skippedTpls.length} locations skipped — ${skipSummary}`);
+    }
+    log.debug(`   ✅ Schedule upserted: ${rid} (${cps.length} calling points)`);
 
     // Log skipped/anomalous locations to darwin_audit and skipped_locations
     if (skippedTpls.length > 0) {
@@ -512,10 +522,10 @@ export async function handleSchedule(
     }
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));
-    console.error(`   ❌ Schedule upsert failed for ${rid}:`, error.message);
-    console.error(`      RID: ${rid}, UID: ${uid}, SSD: ${ssd}, Locations: ${cps.length}, GeneratedAt: ${generatedAt}`);
+    log.error(`   ❌ Schedule upsert failed for ${rid}:`, error.message);
+    log.error(`      RID: ${rid}, UID: ${uid}, SSD: ${ssd}, Locations: ${cps.length}, GeneratedAt: ${generatedAt}`);
     if (error.stack) {
-      console.error(`      Stack: ${error.stack.split("\n").slice(0, 3).join(" | ")}`);
+      log.error(`      Stack: ${error.stack.split("\n").slice(0, 3).join(" | ")}`);
     }
     throw err;
   }

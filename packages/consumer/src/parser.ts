@@ -11,6 +11,7 @@
  */
 
 import type { DarwinMessage } from "@railly-app/shared";
+import { log } from "./log.js";
 
 /**
  * Result of parsing a raw Kafka message.
@@ -54,8 +55,8 @@ export function parseDarwinMessage(raw: Buffer | string | null): ParseResult {
      envelope = JSON.parse(rawText);
    } catch (parseErr) {
      const errMsg = `Failed to parse outer STOMP envelope JSON`;
-     console.error(`   ❌ ${errMsg}`);
-     console.error(`      Raw preview: ${rawPreview}`);
+      log.error(`   ❌ ${errMsg}`);
+      log.error(`      Raw preview: ${rawPreview}`);
      return { kind: "error", code: "ENVELOPE_PARSE_ERROR", message: errMsg, rawPreview };
    }
 
@@ -73,7 +74,7 @@ export function parseDarwinMessage(raw: Buffer | string | null): ParseResult {
       ? Object.keys(envelope as Record<string, unknown>).join(", ")
       : String(envelope);
     const errMsg = `Missing 'bytes' field in STOMP envelope (keys: [${envelopeKeys}])`;
-    console.error(`   ❌ ${errMsg}`);
+    log.error(`   ❌ ${errMsg}`);
     return { kind: "error", code: "MISSING_BYTES_FIELD", message: errMsg, rawPreview };
   }
 
@@ -83,15 +84,15 @@ export function parseDarwinMessage(raw: Buffer | string | null): ParseResult {
   } catch {
     const bytesPreview = (bytes as string).length > 300 ? (bytes as string).slice(0, 300) + "…" : bytes;
     const errMsg = `Failed to parse Darwin payload JSON from bytes`;
-    console.error(`   ❌ ${errMsg}`);
-    console.error(`      Bytes preview: ${bytesPreview}`);
+    log.error(`   ❌ ${errMsg}`);
+    log.error(`      Bytes preview: ${bytesPreview}`);
     return { kind: "error", code: "PAYLOAD_PARSE_ERROR", message: errMsg, rawPreview: bytesPreview as string };
   }
 
   if (typeof payload !== "object" || payload === null) {
     const payloadType = payload === null ? "null" : typeof payload;
     const errMsg = `Darwin payload is not an object (type: ${payloadType})`;
-    console.error(`   ❌ ${errMsg}`);
+    log.error(`   ❌ ${errMsg}`);
     return { kind: "error", code: "PAYLOAD_NOT_OBJECT", message: errMsg, rawPreview };
   }
 
@@ -117,7 +118,7 @@ export function parseDarwinMessage(raw: Buffer | string | null): ParseResult {
     const urType = p.uR !== undefined ? typeof p.uR : "undefined";
     const srType = p.sR !== undefined ? typeof p.sR : "undefined";
     const errMsg = `Missing uR or sR data block (keys: [${payloadKeys}], hasUR: ${hasUR}, hasSR: ${hasSR}, urType: ${urType}, srType: ${srType})`;
-    console.error(`   ❌ ${errMsg}`);
+    log.error(`   ❌ ${errMsg}`);
     return { kind: "error", code: "MISSING_DATA_BLOCK", message: errMsg, rawPreview };
   }
 
@@ -231,7 +232,7 @@ export function parseDarwinMessage(raw: Buffer | string | null): ParseResult {
           if (typeof loc === "object" && loc !== null) {
             const l = loc as Record<string, unknown>;
             if (!l.tpl) {
-              console.warn("   ⚠️ TS location missing tpl (raw):", JSON.stringify(l).slice(0, 200));
+              log.warn("   ⚠️ TS location missing tpl (raw):", JSON.stringify(l).slice(0, 200));
             }
             // Convert string booleans for TS location fields
             if (l.cancelled !== undefined) l.cancelled = toBool(l.cancelled) ?? false;
@@ -425,7 +426,7 @@ export function parseDarwinMessage(raw: Buffer | string | null): ParseResult {
           if (typeof loc === "object" && loc !== null) {
             const l = loc as Record<string, unknown>;
             if (!l.tpl) {
-              console.warn("   ⚠️ Schedule location missing tpl (raw):", JSON.stringify(l).slice(0, 200));
+              log.warn("   ⚠️ Schedule location missing tpl (raw):", JSON.stringify(l).slice(0, 200));
             }
             normalizePlatform(l);
           }
@@ -503,8 +504,8 @@ export function parseDarwinMessage(raw: Buffer | string | null): ParseResult {
 
   if (!hasData) {
     const dataBlockKeys = Object.keys(d).join(", ");
-    const errMsg = `Darwin payload contains no recognised data types (keys: [${dataBlockKeys}], type: ${message.type}, ts: ${ts ?? "none"})`;
-    console.error(`   ❌ ${errMsg}`);
+  const errMsg = `Darwin payload contains no recognised data types (keys: [${dataBlockKeys}], type: ${message.type}, ts: ${ts ?? "none"})`;
+  log.error(`   ❌ ${errMsg}`);
     return { kind: "error", code: "NO_DATA_TYPES", message: errMsg, rawPreview };
   }
 

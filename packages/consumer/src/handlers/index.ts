@@ -21,6 +21,7 @@ import type {
 import { handleSchedule } from "./schedule.js";
 import { handleTrainStatus } from "./trainStatus.js";
 import { sql } from "../db.js";
+import { log } from "../log.js";
 
 // ── Event Buffer for batched darwin_events inserts ─────────────────────────────
 // Instead of one INSERT per message, buffer events and flush in batches.
@@ -64,12 +65,12 @@ class EventBuffer {
       // Drop oldest events — audit data, not critical processing
       const dropped = this.buffer.splice(0, this.buffer.length - EVENT_BUFFER_MAX_SIZE);
       this.totalFailed += dropped.length;
-      console.error(`   ⚠️ Event buffer overflow: dropped ${dropped.length} oldest events (max: ${EVENT_BUFFER_MAX_SIZE})`);
+      log.error(`   ⚠️ Event buffer overflow: dropped ${dropped.length} oldest events (max: ${EVENT_BUFFER_MAX_SIZE})`);
     }
 
     if (this.buffer.length >= EVENT_BUFFER_BATCH_SIZE) {
       this.flush().catch((err) => {
-        console.error("   ⚠️ Event buffer threshold flush error:", (err as Error).message);
+        log.error("   ⚠️ Event buffer threshold flush error:", (err as Error).message);
       });
     }
   }
@@ -109,7 +110,7 @@ class EventBuffer {
       // Re-queue the batch at the front so data is not lost
       this.buffer.unshift(...batch);
       this.totalFailed += batch.length;
-      console.error(
+      log.error(
         `   ⚠️ Event buffer flush failed (${batch.length} rows, re-queued):`,
         (err as Error).message,
       );
@@ -125,10 +126,10 @@ class EventBuffer {
     if (this.timer) return;
     this.timer = setInterval(() => {
       this.flush().catch((err) => {
-        console.error("   ⚠️ Event buffer timer flush error:", (err as Error).message);
+        log.error("   ⚠️ Event buffer timer flush error:", (err as Error).message);
       });
     }, EVENT_BUFFER_FLUSH_INTERVAL_MS);
-    console.log(
+    log.info(
       `   📋 Event buffer: batch size ${EVENT_BUFFER_BATCH_SIZE}, ` +
       `flush interval ${EVENT_BUFFER_FLUSH_INTERVAL_MS / 1000}s, ` +
       `max size ${EVENT_BUFFER_MAX_SIZE}`,
@@ -242,7 +243,7 @@ export async function logDarwinAudit(
     `;
   } catch (logErr) {
     // Last resort: don't let audit logging itself crash the consumer
-    console.error("   ⚠️ Audit log insert failed:", (logErr as Error).message);
+    log.error("   ⚠️ Audit log insert failed:", (logErr as Error).message);
   }
 }
 
@@ -302,7 +303,7 @@ export async function handleDarwinMessage(
           incrementType("schedule");
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
-          console.error(`   ❌ Schedule handler error for ${s.rid}:`, error.message);
+          log.error(`   ❌ Schedule handler error for ${s.rid}:`, error.message);
           metrics.messagesErrored++;
           await logDarwinError("schedule", s.rid ?? null, error, JSON.stringify(s));
         }
@@ -316,7 +317,7 @@ export async function handleDarwinMessage(
           incrementType("TS");
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
-          console.error(`   ❌ TS handler error for ${ts.rid}:`, error.message);
+          log.error(`   ❌ TS handler error for ${ts.rid}:`, error.message);
           metrics.messagesErrored++;
           await logDarwinError("TS", ts.rid ?? null, error, JSON.stringify(ts));
         }
@@ -330,7 +331,7 @@ export async function handleDarwinMessage(
           incrementType("deactivated");
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
-          console.error(`   ❌ Deactivated handler error for ${d.rid}:`, error.message);
+          log.error(`   ❌ Deactivated handler error for ${d.rid}:`, error.message);
           metrics.messagesErrored++;
           await logDarwinError("deactivated", d.rid ?? null, error, JSON.stringify(d));
         }
@@ -421,12 +422,12 @@ export async function handleDarwinMessage(
       message.trackingID && "trackingID",
       message.alarm && "alarm",
     ].filter(Boolean).join(", ");
-    console.error(
+    log.error(
       `   ❌ Error processing Darwin message (type: ${message.type}, rid: ${rid ?? "unknown"}, data: [${dataTypes || "none"}]):`,
       error.message,
     );
     if (error.stack) {
-      console.error("   📚 Stack:", error.stack.split("\n").slice(0, 4).join("\n"));
+      log.error("   📚 Stack:", error.stack.split("\n").slice(0, 4).join("\n"));
     }
     await logDarwinError(message.type ?? "unknown", rid ?? null, error, rawJson);
   }
@@ -473,7 +474,7 @@ export async function handleDeactivated(rid: string): Promise<void> {
         SET is_cancelled = true
         WHERE journey_rid = ${rid}
       `;
-      console.log(`   🗑️ Deactivated (no movement, marking cancelled): ${rid}`);
+      log.info(`   🗑️ Deactivated (no movement, marking cancelled): ${rid}`);
     } else {
       // Service ran (has actual times) — just update last_updated
       await tx`
@@ -481,7 +482,7 @@ export async function handleDeactivated(rid: string): Promise<void> {
         SET last_updated = NOW()
         WHERE rid = ${rid}
       `;
-      console.log(`   🗑️ Deactivated (completed journey): ${rid}`);
+      log.debug(`   🗑️ Deactivated (completed journey): ${rid}`);
     }
   });
 }
@@ -494,47 +495,47 @@ async function handleStationMessage(
 ): Promise<void> {
   // TODO: Store station messages in PostgreSQL
   // For now, log only (P1 — not critical for board/service detail)
-  console.log("   📢 Station message received");
+  log.debug("   📢 Station message received");
 }
 
 // ── Stubbed P2/P3 Handlers ───────────────────────────────────────────────────
 
 async function handleAssociation(assoc: DarwinAssociation): Promise<void> {
   // TODO: Phase 2 — store association data for service detail joins/splits
-  console.log("   📎 Association:", assoc.tiploc, assoc.category);
+  log.debug("   📎 Association:", assoc.tiploc, assoc.category);
 }
 
 async function handleScheduleFormations(formations: DarwinScheduleFormations): Promise<void> {
   // TODO: Phase 2 — store coach formation data
-  console.log("   🚃 Formations:", formations.rid);
+  log.debug("   🚃 Formations:", formations.rid);
 }
 
 async function handleServiceLoading(loading: DarwinServiceLoading): Promise<void> {
   // TODO: Phase 2 — store loading data per service/location
-  console.log("   👥 ServiceLoading:", loading.rid);
+  log.debug("   👥 ServiceLoading:", loading.rid);
 }
 
 async function handleFormationLoading(loading: DarwinFormationLoading): Promise<void> {
   // TODO: Phase 2 — store per-coach loading data
-  console.log("   👥 FormationLoading:", loading.rid);
+  log.debug("   👥 FormationLoading:", loading.rid);
 }
 
 async function handleTrainAlert(alert: DarwinTrainAlert): Promise<void> {
   // TODO: Phase 3 — store train-specific alerts
-  console.log("   🚨 TrainAlert:", alert.rid, alert.alert);
+  log.debug("   🚨 TrainAlert:", alert.rid, alert.alert);
 }
 
 async function handleTrainOrder(order: DarwinTrainOrder): Promise<void> {
   // TODO: Phase 3 — store platform departure order
-  console.log("   🚦 TrainOrder:", order.tiploc, order.platform);
+  log.debug("   🚦 TrainOrder:", order.tiploc, order.platform);
 }
 
 async function handleTrackingID(tracking: DarwinTrackingID): Promise<void> {
   // TODO: Phase 3 — update headcode corrections
-  console.log("   🏷️ TrackingID:", tracking.rid, tracking.trainId);
+  log.debug("   🏷️ TrackingID:", tracking.rid, tracking.trainId);
 }
 
 async function handleAlarm(alarm: DarwinAlarm): Promise<void> {
   // Log system alarms for operational awareness
-  console.log("   🔔 Darwin Alarm:", alarm.alarmType, alarm.description);
+  log.debug("   🔔 Darwin Alarm:", alarm.alarmType, alarm.description);
 }

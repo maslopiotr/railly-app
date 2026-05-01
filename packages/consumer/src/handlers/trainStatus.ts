@@ -25,6 +25,7 @@
 import type { DarwinTS, DarwinTSLocation } from "@railly-app/shared";
 import { sql } from "../db.js";
 import { logDarwinSkip } from "./index.js";
+import { log } from "../log.js";
 
 interface CpUpdate {
   id: number; // CP primary key for updates
@@ -269,7 +270,7 @@ async function createDarwinStub(
   locations: DarwinTSLocation[],
   generatedAt: string,
 ): Promise<void> {
-  console.log(`   🆕 Creating Darwin stub for unknown RID: ${rid}`);
+  log.info(`   🆕 Creating Darwin stub for unknown RID: ${rid}`);
 
   // Determine is_passenger: if any location has public times (pta/ptd),
   // it's likely a passenger service. Default true for stubs.
@@ -411,7 +412,7 @@ export async function handleTrainStatus(
   const { rid, uid, ssd, trainId, isCancelled: svcCancelled, cancelReason, delayReason: svcDelayReason } = ts;
 
   if (!rid) {
-    console.warn("   ⚠️ TS message missing RID — skipping");
+    log.warn("   ⚠️ TS message missing RID — skipping");
     await logDarwinSkip("TS", null, "MISSING_RID", "TS message missing RID", JSON.stringify(ts).slice(0, 500));
     return;
   }
@@ -440,7 +441,7 @@ export async function handleTrainStatus(
   // Track locations with empty/null TIPLOCs (silently dropped before matching)
   const emptyTiplocs = locations.filter((loc) => !loc.tpl?.trim()).length;
   if (emptyTiplocs > 0) {
-    console.warn(`   ⚠️ TS ${rid}: ${emptyTiplocs} locations with empty TIPLOC — dropped`);
+    log.warn(`   ⚠️ TS ${rid}: ${emptyTiplocs} locations with empty TIPLOC — dropped`);
   }
 
   // BUG-024: Track new stops inserted for VSTP services (declared outside try for scope)
@@ -463,7 +464,7 @@ export async function handleTrainStatus(
         const storedTime = parseTs(existingService[0].ts_generated_at as string);
         const incomingTime = parseTs(generatedAt);
         if (incomingTime < storedTime) {
-          console.log(`   ⏭️ TS ${rid}: incoming older than stored — skipping`);
+          log.debug(`   ⏭️ TS ${rid}: incoming older than stored — skipping`);
           return;
         }
       }
@@ -489,7 +490,7 @@ export async function handleTrainStatus(
         await createDarwinStub(
           tx, rid, tsUid, tsSsd, tsTrainId, locations, generatedAt,
         );
-        console.log(`   ✅ TS Darwin stub created: ${rid} (${locations.length} calling points)`);
+        log.info(`   ✅ TS Darwin stub created: ${rid} (${locations.length} calling points)`);
         return;
       }
 
@@ -868,17 +869,26 @@ export async function handleTrainStatus(
         }
       } catch (skipErr) {
         // Don't let skip logging fail the main processing
-        console.warn(`   ⚠️ Failed to persist skipped location for ${rid}:`, (skipErr as Error).message);
+        log.warn(`   ⚠️ Failed to persist skipped location for ${rid}:`, (skipErr as Error).message);
       }
     }
+    // Log skipped locations summary at warn level for visibility
+    if (skippedInMessage > 0) {
+      const skipBreakdown = skippedDetails.reduce((acc, s) => {
+        acc[s.reason] = (acc[s.reason] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+      const skipSummary = Object.entries(skipBreakdown).map(([r, c]) => `${r}: ${c}`).join(", ");
+      log.warn(`   ⚠️ TS ${rid}: ${skippedInMessage} locations skipped — ${skipSummary} (persisted to skipped_locations)`);
+    }
     const extraInfo = insertedNewStops > 0 ? `, ${insertedNewStops} new stops inserted` : "";
-    console.log(`   ✅ TS updated: ${rid} (${locations.length} locations, ${skippedInMessage} skipped${extraInfo})`);
+    log.debug(`   ✅ TS updated: ${rid} (${locations.length} locations, ${skippedInMessage} skipped${extraInfo})`);
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));
-    console.error(`   ❌ TS update failed for ${rid}:`, error.message);
-    console.error(`      RID: ${rid}, UID: ${tsUid}, SSD: ${tsSsd}, Locations: ${locations.length}, Skipped: ${skippedInMessage}, GeneratedAt: ${generatedAt}`);
+    log.error(`   ❌ TS update failed for ${rid}:`, error.message);
+    log.error(`      RID: ${rid}, UID: ${tsUid}, SSD: ${tsSsd}, Locations: ${locations.length}, Skipped: ${skippedInMessage}, GeneratedAt: ${generatedAt}`);
     if (error.stack) {
-      console.error(`      Stack: ${error.stack.split("\n").slice(0, 3).join(" | ")}`);
+      log.error(`      Stack: ${error.stack.split("\n").slice(0, 3).join(" | ")}`);
     }
     throw err;
   }
