@@ -56,7 +56,7 @@ interface ParsedJourney {
   toc: string | null;
   trainCat: string | null;
   status: string | null;
-  isPassenger: boolean;
+  isPassenger: boolean | null;
 }
 
 interface ParsedCallingPoint {
@@ -227,7 +227,7 @@ function parseTimetableXml(
         toc: attrs.toc || null,
         trainCat: attrs.trainCat || null,
         status: attrs.status || null,
-        isPassenger: attrs.isPassengerSvc !== "false",
+        isPassenger: attrs.isPassengerSvc === "true" ? true : attrs.isPassengerSvc === "false" ? false : null,
       };
       currentPoints = [];
     } else if (
@@ -528,20 +528,24 @@ async function seed() {
 
     console.log(`     → ${journeyMap.size} journeys parsed`);
 
-    // Filter to passenger services only
-    const passengerJourneys = new Map<string, ParsedJourneyWithPoints>();
-    for (const [rid, data] of journeyMap) {
-      if (data.journey.isPassenger) {
-        passengerJourneys.set(rid, data);
-      }
+    // Insert ALL services — is_passenger may be null if isPassengerSvc was absent.
+    // Darwin pushport will correct nulls when it sends schedule/TS messages.
+    // Board queries filter is_passenger = true, so non-passenger/unknown won't appear.
+
+    // Count passenger types in a single pass
+    let passengerCount = 0;
+    let nonPassengerCount = 0;
+    let unknownCount = 0;
+    for (const d of journeyMap.values()) {
+      if (d.journey.isPassenger === true) passengerCount++;
+      else if (d.journey.isPassenger === false) nonPassengerCount++;
+      else unknownCount++;
     }
 
-    console.log(`     → ${passengerJourneys.size} passenger journeys`);
+    console.log(`     → ${passengerCount} passenger, ${nonPassengerCount} non-passenger, ${unknownCount} unknown`);
     logMemory("after-parse");
 
-    journeyMap.clear();
-
-    const allRids = [...passengerJourneys.keys()];
+    const allRids = [...journeyMap.keys()];
     const totalBatches = Math.ceil(allRids.length / JOURNEY_BATCH_SIZE);
     let filePointsUpserted = 0;
 
@@ -564,7 +568,7 @@ async function seed() {
         // ── Step 1: Upsert journeys ──────────────────────────────────────────
         const journeyRows: NewJourney[] = [];
         for (const rid of batchRids) {
-          const data = passengerJourneys.get(rid)!;
+          const data = journeyMap.get(rid)!;
           journeyRows.push({
             rid: data.journey.rid,
             uid: data.journey.uid,
@@ -606,7 +610,7 @@ async function seed() {
         // duplicate key violations and data loss of Darwin-only CPs (BUG-027).
         const pointRows: NewCallingPoint[] = [];
         for (const rid of batchRids) {
-          const data = passengerJourneys.get(rid)!;
+          const data = journeyMap.get(rid)!;
           const ssd = data.journey.ssd;
           for (const pt of data.points) {
             const crs = tplToCrs.get(pt.tpl) || null;
@@ -680,15 +684,18 @@ async function seed() {
       logMemory(`batch-${batchNum}/${totalBatches}`);
     }
 
-    totalJourneys += passengerJourneys.size;
+    totalJourneys += journeyMap.size;
     totalPointsUpserted += filePointsUpserted;
     console.log(
-      `     ✅ ${passengerJourneys.size} journeys, ${filePointsUpserted} calling points upserted`,
+      `     ✅ ${journeyMap.size} journeys, ${filePointsUpserted} calling points upserted`,
     );
     logElapsed(`File ${ttFile.filename}`, fileStart);
 
     // Log processed file to seed_log
-    await logProcessedFile(ttFile, passengerJourneys.size + filePointsUpserted);
+    await logProcessedFile(ttFile, journeyMap.size + filePointsUpserted);
+
+    // Free the parsed XML data after processing
+    journeyMap.clear();
   }
 
   // ── Phase 3: Backfill CRS codes and names from location_ref ──────────────
@@ -765,113 +772,10 @@ async function seed() {
     }
   }
 
-  // ── 3c: CRS backfill for older CPs (no timetable_updated_at filter) ─────
-  console.log("   Phase 3c: CRS backfill (older CPs)...");
-  let oldCrsBackfilled = 0;
-  batchBackfilled = -1;
-  while (batchBackfilled !== 0) {
-    const result = await db.execute(sql`
-      UPDATE calling_points
-      SET crs = lr.crs
-      FROM location_ref AS lr
-      WHERE calling_points.tpl = lr.tpl
-        AND calling_points.crs IS NULL
-        AND lr.crs IS NOT NULL
-        AND calling_points.id IN (
-          SELECT cp.id FROM calling_points cp
-          JOIN location_ref lr2 ON cp.tpl = lr2.tpl
-          WHERE cp.crs IS NULL
-            AND lr2.crs IS NOT NULL
-          LIMIT ${CRS_BATCH_SIZE}
-        )
-    `);
-    batchBackfilled = Number(result.count ?? 0);
-    oldCrsBackfilled += batchBackfilled;
-    if (batchBackfilled > 0) {
-      console.log(`     Old CRS batch: ${batchBackfilled} CPs (total: ${oldCrsBackfilled})`);
-    }
-  }
-
-  // ── 3d: Name backfill for older CPs ──────────────────────────────────────
-  console.log("   Phase 3d: Name backfill (older CPs)...");
-  let oldNameBackfilled = 0;
-  batchBackfilled = -1;
-  while (batchBackfilled !== 0) {
-    const result = await db.execute(sql`
-      UPDATE calling_points
-      SET name = lr.name
-      FROM location_ref AS lr
-      WHERE calling_points.tpl = lr.tpl
-        AND calling_points.name IS NULL
-        AND lr.name IS NOT NULL
-        AND calling_points.id IN (
-          SELECT cp.id FROM calling_points cp
-          JOIN location_ref lr2 ON cp.tpl = lr2.tpl
-          WHERE cp.name IS NULL
-            AND lr2.name IS NOT NULL
-          LIMIT ${CRS_BATCH_SIZE}
-        )
-    `);
-    batchBackfilled = Number(result.count ?? 0);
-    oldNameBackfilled += batchBackfilled;
-    if (batchBackfilled > 0) {
-      console.log(`     Old name batch: ${batchBackfilled} CPs (total: ${oldNameBackfilled})`);
-    }
-  }
-
-  console.log(`   CRS backfilled: ${totalCrsBackfilled + oldCrsBackfilled} (${totalCrsBackfilled} new, ${oldCrsBackfilled} older)`);
-  console.log(`   Name backfilled: ${totalNameBackfilled + oldNameBackfilled} (${totalNameBackfilled} new, ${oldNameBackfilled} older)`);
+  console.log(`   CRS backfilled: ${totalCrsBackfilled} (new only)`);
+  console.log(`   Name backfilled: ${totalNameBackfilled} (new only)`);
   logElapsed("Phase 3", phase3Start);
 
-  // ── Phase 4: Mark stale timetable CPs ──────────────────────────────────
-  // CPs that had source_timetable=true from a previous seed run but were not
-  // touched by this seed (timetable_updated_at < seed start) are stale.
-  // We mark them as no longer in the current timetable but PRESERVE all timetable
-  // data (pta, ptd, wta, wtd, wtp, act, plat) for historical analysis.
-  // Darwin Push Port handles cancellations — we don't need to infer them.
-  // We do NOT delete orphan CPs — they may still have value for historical queries.
-  // Batched to avoid deadlocking with the live consumer.
-  console.log("\n📋 Phase 4: Mark stale timetable calling points...");
-  const phase4Start = Date.now();
-  const STALE_BATCH_SIZE = 5000;
-  let totalStaleMarked = 0;
-
-  while (true) {
-    const staleResult = await db.execute(sql`
-      UPDATE calling_points
-      SET source_timetable = false, timetable_updated_at = NOW()
-      WHERE source_timetable = true
-        AND (timetable_updated_at < ${new Date(seedStart).toISOString()}::timestamp with time zone
-             OR timetable_updated_at IS NULL)
-        AND id IN (
-          SELECT cp.id FROM calling_points cp
-          WHERE cp.source_timetable = true
-            AND (cp.timetable_updated_at < ${new Date(seedStart).toISOString()}::timestamp with time zone
-                 OR cp.timetable_updated_at IS NULL)
-          LIMIT ${STALE_BATCH_SIZE}
-        )
-    `);
-    const batchCount = Number(staleResult.count ?? 0);
-    totalStaleMarked += batchCount;
-    if (batchCount > 0) {
-      console.log(`     Stale batch: ${batchCount} CPs marked (total: ${totalStaleMarked})`);
-    } else {
-      break;
-    }
-  }
-
-  console.log(`   Marked ${totalStaleMarked} stale timetable CPs as source_timetable=false (timetable data preserved)`);
-
-  // Verify with actual counts (Drizzle rowCount can be unreliable for large updates)
-  const [staleVerify] = await db
-    .select({ count: sql<number>`count(*)` })
-    .from(callingPoints)
-    .where(sql`${callingPoints.sourceTimetable} = true AND ${callingPoints.timetableUpdatedAt} IS NULL`);
-  if (staleVerify.count > 0) {
-    console.log(`   ⚠️  WARNING: ${staleVerify.count} stale CPs still have NULL timetable_updated_at`);
-  }
-
-  logElapsed("Phase 4", phase4Start);
 
   // ── Verification ─────────────────────────────────────────────────────────
   console.log("\n📊 Verification:");

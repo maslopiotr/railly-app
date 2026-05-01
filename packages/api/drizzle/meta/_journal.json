@@ -29,6 +29,13 @@
       "when": 1777246800000,
       "tag": "0003_add_sort_time",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1777333200000,
+      "tag": "0004_nullable_is_passenger",
+      "breakpoints": true
     }
   ]
 }

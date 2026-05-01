@@ -31,8 +31,7 @@
     "db:studio": "npm run db:studio --workspace=packages/api",
     "replay": "npm run replay --workspace=packages/consumer",
     "replay:date": "npm run replay --workspace=packages/consumer --",
-    "rebuild:safe": "./scripts/safe-rebuild.sh",
-    "rebuild:fast": "./scripts/safe-rebuild.sh --fast"
+    "rebuild:safe": "./scripts/safe-rebuild.sh"
   },
   "engines": {
     "node": ">=22.0.0"

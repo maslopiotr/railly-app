@@ -2,7 +2,7 @@
  * Frontend API client for hybrid departure/arrival board
  *
  * Uses the timetable-first /board endpoint which returns HybridBoardResponse.
- * The frontend splits services into departures (has std) and arrivals (sta only) tabs.
+ * Pagination via limit/offset; hasMore flag indicates more services available.
  */
 
 import type { HybridBoardResponse } from "@railly-app/shared";
@@ -11,21 +11,21 @@ const API_BASE = "/api/v1";
 
 /**
  * Fetch hybrid board — timetable-first with LDBWS real-time overlay.
- * Returns all services within the time window (past 10min + next 2hr by default).
+ * Returns services based on visibility rules (cancelled, at-platform, recent departures, upcoming).
  */
 export async function fetchBoard(
   crs: string,
   options?: {
-    timeWindow?: number;
-    pastWindow?: number;
+    limit?: number;
+    offset?: number;
     type?: "departures" | "arrivals";
     time?: string;
     signal?: AbortSignal;
   },
 ): Promise<HybridBoardResponse> {
   const params = new URLSearchParams();
-  if (options?.timeWindow) params.set("timeWindow", String(options.timeWindow));
-  if (options?.pastWindow) params.set("pastWindow", String(options.pastWindow));
+  if (options?.limit) params.set("limit", String(options.limit));
+  if (options?.offset) params.set("offset", String(options.offset));
   if (options?.type) params.set("type", options.type);
   if (options?.time) params.set("time", options.time);
 

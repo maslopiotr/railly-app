@@ -273,9 +273,10 @@ async function createDarwinStub(
   log.info(`   🆕 Creating Darwin stub for unknown RID: ${rid}`);
 
   // Determine is_passenger: if any location has public times (pta/ptd),
-  // it's likely a passenger service. Default true for stubs.
+  // it's a passenger service. If not, null (unknown) — don't assume.
+  // Darwin will correct via subsequent schedule messages.
   const hasPublicTimes = locations.some((loc) => loc.pta || loc.ptd);
-  const isPassenger = hasPublicTimes;
+  const isPassenger = hasPublicTimes || null;
 
   // Create journey row
   await tx`

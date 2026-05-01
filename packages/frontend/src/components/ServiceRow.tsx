@@ -39,9 +39,17 @@ function getNextCallingPoints(
   if (currentIndex === -1) currentIndex = 0;
   return callingPoints
     .slice(currentIndex + 1)
-    .filter((cp) => cp.stopType !== "PP")
+    .filter((cp) => !NON_PASSENGER_STOP_TYPES.has(cp.stopType))
     .slice(0, count);
 }
+
+/** Stop types excluded from passenger-facing calling point displays */
+const NON_PASSENGER_STOP_TYPES = new Set([
+  "PP",   // Passing point
+  "OPOR", // Operational origin
+  "OPIP", // Operational intermediate
+  "OPDT", // Operational destination
+]);
 
 /** Status badge using semantic tokens, driven by service.trainStatus */
 function StatusBadge({ service }: { service: HybridBoardService }) {
@@ -145,6 +153,15 @@ export function ServiceRow({ service, isArrival, stationCrs, onSelect }: Service
       ? "text-text-muted line-through"
       : "text-text-primary";
 
+  // Actual time colour: severity-based like DelayPill/DelayBadge
+  // Green for on-time (≤1 min early/late), amber for 2-14 min, red for ≥15 min
+  const delayAbs = service.delayMinutes !== null ? Math.abs(service.delayMinutes) : 0;
+  const actualTimeClass = (isDeparted || isArrived) && delayAbs >= 15
+    ? "text-status-cancelled"
+    : (isDeparted || isArrived) && delayAbs >= 2
+      ? "text-status-delayed"
+      : "text-status-arrived";
+
   return (
     <div
       className={`${cancelled ? "opacity-60" : ""} cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 rounded-[--radius-card] transition-transform duration-100 active:scale-[0.97]`}
@@ -173,7 +190,7 @@ export function ServiceRow({ service, isArrival, stationCrs, onSelect }: Service
             {displayTime(scheduledTime)}
           </span>
           {(isArrived || isDeparted) && actualTime ? (
-            <span className="text-[11px] font-mono text-status-arrived leading-tight">
+            <span className={`text-[11px] font-mono leading-tight ${actualTimeClass}`}>
               {displayTime(actualTime)}
             </span>
           ) : isDelayed && estimatedTime ? (

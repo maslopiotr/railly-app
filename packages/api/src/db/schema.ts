@@ -51,7 +51,7 @@ export const journeys = pgTable(
     toc: char("toc", { length: 2 }), // Train Operating Company code
     trainCat: varchar("train_cat", { length: 5 }), // e.g. "XX", "OO", "BR"
     status: char("status", { length: 1 }), // "P" = permanent, etc.
-    isPassenger: boolean("is_passenger").default(true).notNull(),
+    isPassenger: boolean("is_passenger"), // Nullable: true = passenger, false = non-passenger, null = unknown (awaiting Darwin correction)
     sourceTimetable: boolean("source_timetable").default(false).notNull(),
     sourceDarwin: boolean("source_darwin").default(false).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),

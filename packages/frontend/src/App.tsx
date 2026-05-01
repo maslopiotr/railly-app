@@ -218,8 +218,6 @@ function App() {
     setIsServiceRefreshing(true);
     try {
       const data = await fetchBoard(selectedStation.crsCode, {
-        timeWindow: 120,
-        pastWindow: 10,
         time: selectedTime || undefined,
         signal: controller.signal,
       });
@@ -253,8 +251,6 @@ function App() {
           abortRef.current = controller;
 
           fetchBoard(station.crsCode, {
-            timeWindow: 120,
-            pastWindow: 10,
             time: time || undefined,
             signal: controller.signal,
           })
@@ -293,8 +289,6 @@ function App() {
         abortRef.current = controller;
 
         fetchBoard(station.crsCode, {
-          timeWindow: 120,
-          pastWindow: 10,
           time: time || undefined,
           signal: controller.signal,
         })
@@ -317,8 +311,6 @@ function App() {
         abortRef.current = controller;
 
         fetchBoard(station.crsCode, {
-          timeWindow: 120,
-          pastWindow: 10,
           time: time || undefined,
           signal: controller.signal,
         })

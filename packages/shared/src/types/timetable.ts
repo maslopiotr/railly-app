@@ -27,7 +27,7 @@ export interface TimetableJourney {
   toc: string | null;
   tocName: string | null;
   trainCat: string | null;
-  isPassenger: boolean;
+  isPassenger: boolean | null; // true = passenger, false = non-passenger, null = unknown
   callingPoints: TimetableCallingPoint[];
 }
 

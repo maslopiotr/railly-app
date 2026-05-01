@@ -1,5 +1,60 @@
 # Progress
 
+## Completed (2026-05-01) — Session 12
+
+### Seed & Consumer Data Integrity Fixes ✅
+- ✅ Phase 4 removed — `source_timetable` stale marking was redundant and harmful (no downstream queries filter on it; flipping it caused VSTP path corruption)
+- ✅ Phase 3c/3d removed — unnecessary full-table CRS/name scans (3a/3b handle new CPs)
+- ✅ `is_passenger` made nullable across the stack (schema, migration, seed, consumer, shared types)
+- ✅ Seed now inserts ALL services (not just passenger) — boards filter `is_passenger IS NOT FALSE`
+- ✅ QA: Fixed critical aliasing bug — `const allJourneys = journeyMap` was a reference alias, `journeyMap.clear()` would wipe both
+- ✅ QA: Fixed consumer schedule three-valued logic — `=== true ? true : === false ? false : null`
+- ✅ QA: Single-pass counting for passenger type stats (was triple iteration)
+- ✅ Board visibility fix: `is_passenger = true` → `IS NOT FALSE` — PPTimetable/Darwin never send `isPassengerSvc="true"`, only `"false"` or absent. Absent = passenger → stored as `null` → `IS NOT FALSE` includes them.
+- ✅ Clean-start deployment script (`scripts/clean-start.sh`) — stops consumer, runs migration, truncates journey data, re-seeds
+
+### Clean-Start Deployment
+Run `./scripts/clean-start.sh` to:
+1. Build packages → Stop consumer/seed → Run migration → Truncate calling_points, journeys, service_rt, seed_log
+2. Preserves: stations, location_ref, toc_ref, darwin_events, darwin_audit, skipped_locations
+3. Rebuild Docker images → Start services → Health checks
+
+## Completed (2026-05-01) — Session 11
+
+### BUG-038 Investigation + Session 10 Verification ✅
+- ✅ Deep investigation of phantom duplicate CP rows — stop-type routing in TS handler
+- ✅ Root cause: `matchLocationsToCps()` routes Darwin locations into PP vs non-PP pools; wrong pool → phantom INSERT
+- ✅ Evidence: train 202604308705792 at MKNSCEN has IP (correct) + PP (phantom); CMDNSTH has PP (correct) + IP (phantom)
+- ✅ Scale: 28,717 phantom IP rows + unknown phantom PP rows for passenger stops
+- ✅ BUG-038 documented in bugsTracker.md; BUG-037 updated to "partially fixed"
+- ✅ Session 10 board visibility rewrite verified — all logic sound, build passes
+- ✅ `boardGrid.ts` confirmed exists and exports correctly
+- ⏳ BUG-038 fix deferred — another bug needs fixing first
+
+## Completed (2026-05-01) — Session 10
+
+### Board Visibility Rewrite + Bug Fixes ✅
+- ✅ Bug 1: Time column severity colours — actual departure/arrival now coloured by delay: green (≤1 min), amber (2–14 min), red (≥15 min)
+- ✅ Bug 2: Expanded calling points filter — `getNextCallingPoints()` now filters PP, OPOR, OPIP, OPDT, RM
+- ✅ Bug 3: Board visibility rewrite — SQL-level visibility filtering with 5 conditions (cancelled, at platform, recently departed, display time window, scheduled-only)
+- ✅ NULLIF chain fix — replaced broken `COALESCE(NULLIF(etd, 'On time'), NULLIF(etd, 'Cancelled'), ...)` with `COALESCE(atd, etd, ptd)` priority: actual > estimated > scheduled
+- ✅ Frontend: load-more pagination (limit/offset), removed timeWindow/pastWindow
+- ✅ Data verification: 7 stop types in DB (no RM), etd_pushport only HH:MM, is_cancelled boolean for cancellation
+
+### Verification Results
+- ✅ Database: 7 stop types (IP, PP, DT, OR, OPIP, OPDT, OPOR) — no RM in pipeline
+- ✅ etd_pushport: 100% HH:MM format, no sentinel strings ("On time"/"Cancelled" can't fit in char(5))
+- ✅ Cancellation: `is_cancelled` boolean on service_rt is source of truth, not time sentinels
+- ✅ Parser `normaliseTime()`: truncates to HH:MM only, never produces sentinel strings
+- ✅ All edge cases verified for display time priority (atd > etd > ptd)
+
+## Completed (2026-05-01) — Session 9
+
+### Consumer Logging Overhaul ✅
+- ✅ Replaced all `console.*` with structured `LOG_LEVEL` system
+- ✅ `consumer/src/log.ts` — LOG_LEVEL env var controls error/warn/info/debug
+- ✅ Skipped locations now logged at warn level with breakdown by reason
+
 ## Completed (2026-05-01) — Session 8
 
 ### Station Name Normalisation — "London" Prefix Fix ✅
@@ -115,7 +170,8 @@
 | Bug | Severity | Status |
 |-----|----------|--------|
 | BUG-017b: Origin stops departed | High | Fixed |
-| BUG-037: Phantom IP rows | High | Fixed |
+| BUG-037: Phantom IP rows | High | Partially fixed (see BUG-038) |
+| BUG-038: Phantom CP rows (stop-type routing) | High | Open — fix deferred |
 | BUG-023: Seed infinite loop | Critical | Fixed |
 | BUG-021: Mobile UI | High | Fixed |
 | BUG-022: VSTP duplicate PP | Low | Fixed |

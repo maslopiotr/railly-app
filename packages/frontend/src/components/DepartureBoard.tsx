@@ -43,9 +43,12 @@ export function DepartureBoard({
 }: DepartureBoardProps) {
   const [board, setBoard] = useState<HybridBoardResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
   const [isLive, setIsLive] = useState(true); // auto-polling is active
+  const [allServices, setAllServices] = useState<HybridBoardService[]>([]);
+  const [hasMore, setHasMore] = useState(false);
 
   // Relative time string ("just now", "30s ago", "1m ago", etc.)
   const [relativeTime, setRelativeTime] = useState<string>("");
@@ -77,6 +80,8 @@ export function DepartureBoard({
     return () => clearInterval(id);
   }, [lastRefreshed]);
 
+  const PAGE_SIZE = 15;
+
   const loadBoard = useCallback(
     async (silent = false) => {
       // Abort any in-flight request
@@ -91,8 +96,7 @@ export function DepartureBoard({
           setIsLoading(true);
         }
         const data = await fetchBoard(station.crsCode, {
-          timeWindow: 120,
-          pastWindow: 10,
+          limit: PAGE_SIZE,
           type: activeTab,
           time: selectedTime || undefined,
           signal: controller.signal,
@@ -100,6 +104,8 @@ export function DepartureBoard({
         // Only update if this request wasn't aborted
         if (!controller.signal.aborted) {
           setBoard(data);
+          setAllServices(data.services);
+          setHasMore(data.hasMore);
           setError(null);
           setLastRefreshed(new Date());
         }
@@ -117,6 +123,26 @@ export function DepartureBoard({
     },
     [station.crsCode, activeTab, selectedTime],
   );
+
+  const loadMore = useCallback(async () => {
+    if (isLoadingMore || !hasMore) return;
+    setIsLoadingMore(true);
+    try {
+      const data = await fetchBoard(station.crsCode, {
+        limit: PAGE_SIZE,
+        offset: allServices.length,
+        type: activeTab,
+        time: selectedTime || undefined,
+      });
+      setAllServices((prev) => [...prev, ...data.services]);
+      setHasMore(data.hasMore);
+    } catch (err) {
+      // Silently fail — the user can try again
+      console.error("Failed to load more services:", err);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [isLoadingMore, hasMore, station.crsCode, activeTab, selectedTime, allServices.length]);
 
   // Load on mount and when tab/time changes; abort on cleanup
   useEffect(() => {
@@ -208,7 +234,7 @@ export function DepartureBoard({
     }
   }, [pullDistance, isRefreshing, loadBoard]);
 
-  const displayServices = board?.services || [];
+  const displayServices = allServices;
 
   // Compute pull indicator opacity
   const pullOpacity = Math.min(pullDistance / PULL_THRESHOLD, 1);
@@ -411,6 +437,26 @@ export function DepartureBoard({
             />
           ))}
         </div>
+
+        {/* ─── Load more ─── */}
+        {hasMore && !isLoading && (
+          <div className="flex justify-center py-3">
+            <button
+              className="px-4 py-2 text-sm font-medium rounded-lg border border-border-default bg-surface-card text-text-secondary hover:bg-surface-hover hover:text-text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-blue-500"
+              onClick={loadMore}
+              disabled={isLoadingMore}
+            >
+              {isLoadingMore ? (
+                <span className="flex items-center gap-2">
+                  <span className="w-3 h-3 border-2 border-border-emphasis border-t-transparent rounded-full animate-spin" />
+                  Loading…
+                </span>
+              ) : (
+                "Load more services"
+              )}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

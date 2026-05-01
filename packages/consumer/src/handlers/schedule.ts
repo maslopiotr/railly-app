@@ -131,7 +131,7 @@ export async function handleSchedule(
   const ssd = schedule.ssd || deriveSsdFromRid(rid);
   const trainId = schedule.trainId || "";
   const toc = schedule.toc || null;
-  const isPassengerSvc = schedule.isPassengerSvc !== false;
+  const isPassengerSvc = schedule.isPassengerSvc === true ? true : schedule.isPassengerSvc === false ? false : null;
   const isCancelled = schedule.can === true;
   const cancelReason = schedule.cancelReason?.reasontext || null;
 

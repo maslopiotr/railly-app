@@ -9,11 +9,16 @@
  * back into DarwinMessage objects and call handlers directly, bypassing
  * parseDarwinMessage and logDarwinEvent.
  *
- * Usage: DATABASE_URL=... npx tsx src/replay.ts [--date YYYY-MM-DD]
+ * Usage: DATABASE_URL=... npx tsx src/replay.ts [--from YYYY-MM-DD] [--to YYYY-MM-DD]
  *
- * Processes events in order: schedule → TS → deactivated
- * Skips unknown and OW message types.
+ * Processes ALL events in received_at order within the date range.
+ * Each raw_json row is a complete DarwinMessage envelope that may contain
+ * schedule, TS, and/or deactivated data. We process each message exactly once
+ * in insertion order, routing inner messages to their handlers.
+ *
  * Does NOT re-insert into darwin_events (avoids duplicates).
+ * Does NOT re-insert into darwin_audit (avoids duplicate error records).
+ * Does NOT re-insert into skipped_locations (avoids duplicate skip records).
  */
 
 import "./env.js";
@@ -30,33 +35,50 @@ const LOG_EVERY = 1000;
 
 // Parse CLI args
 const args = process.argv.slice(2);
-let targetDate = "2026-04-27"; // Default
 
-const dateArg = args.findIndex((a) => a.startsWith("--date"));
-if (dateArg >= 0) {
-  const val = args[dateArg].split("=")[1];
-  if (val) {
-    targetDate = val;
-  } else if (args[dateArg + 1]) {
-    targetDate = args[dateArg + 1];
-  }
+let fromDate = "";
+let toDate = "";
+
+const fromIdx = args.findIndex((a) => a === "--from");
+const toIdx = args.findIndex((a) => a === "--to");
+
+if (fromIdx >= 0 && args[fromIdx + 1]) {
+  fromDate = args[fromIdx + 1];
+}
+if (toIdx >= 0 && args[toIdx + 1]) {
+  toDate = args[toIdx + 1];
 }
 
-const nextDay = new Date(targetDate + "T12:00:00Z");
+// Legacy: support --date YYYY-MM-DD as shorthand for --from and --to same day
+const dateIdx = args.findIndex((a) => a === "--date");
+if (dateIdx >= 0 && args[dateIdx + 1]) {
+  fromDate = args[dateIdx + 1];
+  toDate = args[dateIdx + 1];
+}
+
+if (!fromDate) {
+  console.error("❌ Usage: npx tsx src/replay.ts --from YYYY-MM-DD [--to YYYY-MM-DD]");
+  console.error("   Or:  npx tsx src/replay.ts --date YYYY-MM-DD");
+  process.exit(1);
+}
+
+// Build date range: from YYYY-MM-DD 00:00:00 to (toDate+1 day) 00:00:00
+const nextDay = new Date(toDate + "T12:00:00Z");
 nextDay.setUTCDate(nextDay.getUTCDate() + 1);
-const nextDayStr = nextDay.toISOString().split("T")[0];
+const endDateStr = nextDay.toISOString().split("T")[0];
 
 console.log(`🔄 Darwin Replay Script`);
-console.log(`   Target date: ${targetDate}`);
-console.log(`   Processing events from ${targetDate} 00:00:00 to ${nextDayStr} 00:00:00`);
+console.log(`   From: ${fromDate} 00:00:00`);
+console.log(`   To:   ${endDateStr} 00:00:00 (exclusive)`);
 
 // ── Metrics ──────────────────────────────────────────────────────────────────────
 
 const metrics = {
-  schedule: { total: 0, processed: 0, errors: 0 },
-  TS: { total: 0, processed: 0, errors: 0 },
-  deactivated: { total: 0, processed: 0, errors: 0 },
+  schedule: 0,
+  TS: 0,
+  deactivated: 0,
   skipped: 0,
+  errors: 0,
   startTime: Date.now(),
 };
 
@@ -72,8 +94,8 @@ async function replay() {
       count(*) FILTER (WHERE message_type = 'TS') as ts_count,
       count(*) FILTER (WHERE message_type = 'deactivated') as deactivated_count
     FROM darwin_events
-    WHERE received_at >= ${targetDate + " 00:00:00"}::timestamptz
-      AND received_at < ${nextDayStr + " 00:00:00"}::timestamptz
+    WHERE received_at >= ${fromDate + " 00:00:00"}::timestamptz
+      AND received_at < ${endDateStr + " 00:00:00"}::timestamptz
   `;
 
   const totalEvents = Number(countResult.total);
@@ -81,35 +103,121 @@ async function replay() {
   const tsCount = Number(countResult.ts_count);
   const deactivatedCount = Number(countResult.deactivated_count);
 
-  console.log(`   Total events for ${targetDate}: ${totalEvents.toLocaleString()}`);
+  console.log(`   Total events: ${totalEvents.toLocaleString()}`);
   console.log(`   Schedule: ${scheduleCount.toLocaleString()}, TS: ${tsCount.toLocaleString()}, Deactivated: ${deactivatedCount.toLocaleString()}`);
 
-  // Phase 2: Replay schedule messages
-  console.log("\n📋 Phase 2: Replaying schedule messages...");
-  const scheduleStart = Date.now();
-  await replayMessageType("schedule", targetDate, nextDayStr);
-  console.log(`   ✅ Schedule replay complete in ${((Date.now() - scheduleStart) / 1000).toFixed(1)}s`);
+  if (totalEvents === 0) {
+    console.log("   ⚠️ No events found in date range. Exiting.");
+    await closeDb();
+    return;
+  }
 
-  // Phase 3: Replay TS messages
-  console.log("\n📋 Phase 3: Replaying TS messages...");
-  const tsStart = Date.now();
-  await replayMessageType("TS", targetDate, nextDayStr);
-  console.log(`   ✅ TS replay complete in ${((Date.now() - tsStart) / 1000).toFixed(1)}s`);
+  // Phase 2: Replay all events in received_at order
+  // Each darwin_events row is a complete DarwinMessage envelope.
+  // A single row may contain schedule + TS + deactivated data.
+  // We process in insertion order (id ASC) to preserve temporal causality:
+  //   schedule creates the journey/CPs → TS updates real-time data →
+  //   deactivated marks completion. If a TS arrives before its schedule
+  //   (different rows), the schedule handler creates the journey first,
+  //   then TS can match. This is why we MUST process all types together
+  //   in a single pass, NOT by message_type.
+  console.log("\n📋 Phase 2: Replaying events in order...");
+  let lastId = 0;
+  let batchNum = 0;
 
-  // Phase 4: Replay deactivated messages
-  console.log("\n📋 Phase 4: Replaying deactivated messages...");
-  const deactivatedStart = Date.now();
-  await replayMessageType("deactivated", targetDate, nextDayStr);
-  console.log(`   ✅ Deactivated replay complete in ${((Date.now() - deactivatedStart) / 1000).toFixed(1)}s`);
+  while (true) {
+    const rows = await sql`
+      SELECT id, raw_json, generated_at
+      FROM darwin_events
+      WHERE id > ${lastId}
+        AND received_at >= ${fromDate + " 00:00:00"}::timestamptz
+        AND received_at < ${endDateStr + " 00:00:00"}::timestamptz
+      ORDER BY id ASC
+      LIMIT ${BATCH_SIZE}
+    `;
+
+    if (rows.length === 0) break;
+
+    batchNum++;
+    lastId = Number(rows[rows.length - 1].id);
+
+    for (const row of rows) {
+      try {
+        const message: DarwinMessage = JSON.parse(row.raw_json as string);
+        const generatedAt = message.ts || row.generated_at?.toISOString() || new Date().toISOString();
+
+        // Route each inner message type to its handler
+        if (message.schedule) {
+          for (const s of message.schedule) {
+            try {
+              await handleSchedule(s, generatedAt);
+              metrics.schedule++;
+            } catch (err) {
+              metrics.errors++;
+              const error = err instanceof Error ? err : new Error(String(err));
+              console.error(`   ❌ Schedule error for ${s.rid}: ${error.message}`);
+            }
+          }
+        }
+
+        if (message.TS) {
+          for (const ts of message.TS) {
+            try {
+              await handleTrainStatus(ts, generatedAt);
+              metrics.TS++;
+            } catch (err) {
+              metrics.errors++;
+              const error = err instanceof Error ? err : new Error(String(err));
+              console.error(`   ❌ TS error for ${ts.rid}: ${error.message}`);
+            }
+          }
+        }
+
+        if (message.deactivated) {
+          for (const d of message.deactivated) {
+            try {
+              await handleDeactivated(d.rid);
+              metrics.deactivated++;
+            } catch (err) {
+              metrics.errors++;
+              const error = err instanceof Error ? err : new Error(String(err));
+              console.error(`   ❌ Deactivated error for ${d.rid}: ${error.message}`);
+            }
+          }
+        }
+
+        // If message has none of the above, it's an unknown/OW type  skip
+        if (!message.schedule && !message.TS && !message.deactivated) {
+          metrics.skipped++;
+        }
+      } catch (err) {
+        metrics.errors++;
+        console.error(`   ❌ Parse error for event ${row.id}: ${(err as Error).message}`);
+      }
+
+      // Log progress
+      const totalProcessed = metrics.schedule + metrics.TS + metrics.deactivated;
+      if (totalProcessed > 0 && totalProcessed % LOG_EVERY === 0) {
+        const elapsed = ((Date.now() - metrics.startTime) / 1000).toFixed(1);
+        const rate = (totalProcessed / ((Date.now() - metrics.startTime) / 1000)).toFixed(0);
+        console.log(`   ${totalProcessed.toLocaleString()} processed (${rate}/s, ${elapsed}s)`);
+      }
+    }
+
+    console.log(`   Batch ${batchNum}: processed up to event id ${lastId.toLocaleString()}`);
+  }
 
   // Summary
   const elapsed = ((Date.now() - metrics.startTime) / 1000).toFixed(1);
+  const totalProcessed = metrics.schedule + metrics.TS + metrics.deactivated;
   console.log("\n📊 Replay Summary:");
-  console.log(`   Schedule: ${metrics.schedule.processed.toLocaleString()} processed, ${metrics.schedule.errors} errors`);
-  console.log(`   TS: ${metrics.TS.processed.toLocaleString()} processed, ${metrics.TS.errors} errors`);
-  console.log(`   Deactivated: ${metrics.deactivated.processed.toLocaleString()} processed, ${metrics.deactivated.errors} errors`);
-  console.log(`   Skipped (empty/unknown): ${metrics.skipped.toLocaleString()}`);
-  console.log(`   Total time: ${elapsed}s`);
+  console.log(`   Schedule: ${metrics.schedule.toLocaleString()}`);
+  console.log(`   TS: ${metrics.TS.toLocaleString()}`);
+  console.log(`   Deactivated: ${metrics.deactivated.toLocaleString()}`);
+  console.log(`   Skipped (unknown/OW): ${metrics.skipped.toLocaleString()}`);
+  console.log(`   Errors: ${metrics.errors.toLocaleString()}`);
+  console.log(`   Total processed: ${totalProcessed.toLocaleString()}`);
+  console.log(`   Elapsed: ${elapsed}s`);
 
   // Verify counts
   const [journeysResult] = await sql`SELECT count(*) as cnt FROM journeys`;
@@ -125,103 +233,6 @@ async function replay() {
 
   await closeDb();
   console.log("\n✅ Replay complete!");
-}
-
-async function replayMessageType(
-  messageType: "schedule" | "TS" | "deactivated",
-  startDate: string,
-  endDate: string,
-): Promise<void> {
-  const typeMetrics = metrics[messageType];
-  let offset = 0;
-  let batchNum = 0;
-
-  while (true) {
-    const rows = await sql`
-      SELECT id, raw_json, generated_at
-      FROM darwin_events
-      WHERE message_type = ${messageType}
-        AND received_at >= ${startDate + " 00:00:00"}::timestamptz
-        AND received_at < ${endDate + " 00:00:00"}::timestamptz
-      ORDER BY id ASC
-      LIMIT ${BATCH_SIZE}
-      OFFSET ${offset}
-    `;
-
-    if (rows.length === 0) break;
-
-    batchNum++;
-    typeMetrics.total += rows.length;
-
-    for (const row of rows) {
-      try {
-        // raw_json is already a parsed DarwinMessage object (stored by handleDarwinMessage)
-        // We do NOT pass it through parseDarwinMessage — that expects the Kafka STOMP envelope
-        const message: DarwinMessage = JSON.parse(row.raw_json as string);
-        const generatedAt = message.ts || row.generated_at?.toISOString() || new Date().toISOString();
-
-        // Route to appropriate handler directly (bypassing logDarwinEvent)
-        if (message.schedule) {
-          for (const s of message.schedule) {
-            try {
-              await handleSchedule(s, generatedAt);
-              typeMetrics.processed++;
-            } catch (err) {
-              typeMetrics.errors++;
-              const error = err instanceof Error ? err : new Error(String(err));
-              console.error(`   ❌ Schedule error for ${s.rid}: ${error.message}`);
-            }
-          }
-        }
-
-        if (message.TS) {
-          for (const ts of message.TS) {
-            try {
-              await handleTrainStatus(ts, generatedAt);
-              typeMetrics.processed++;
-            } catch (err) {
-              typeMetrics.errors++;
-              const error = err instanceof Error ? err : new Error(String(err));
-              console.error(`   ❌ TS error for ${ts.rid}: ${error.message}`);
-            }
-          }
-        }
-
-        if (message.deactivated) {
-          for (const d of message.deactivated) {
-            try {
-              await handleDeactivated(d.rid);
-              typeMetrics.processed++;
-            } catch (err) {
-              typeMetrics.errors++;
-              const error = err instanceof Error ? err : new Error(String(err));
-              console.error(`   ❌ Deactivated error for ${d.rid}: ${error.message}`);
-            }
-          }
-        }
-
-        // If message has none of the above, it's an unknown/OW type — skip
-        if (!message.schedule && !message.TS && !message.deactivated) {
-          metrics.skipped++;
-        }
-      } catch (err) {
-        typeMetrics.errors++;
-        console.error(`   ❌ Parse error for event ${row.id}: ${(err as Error).message}`);
-      }
-
-      // Log progress
-      if (typeMetrics.processed > 0 && typeMetrics.processed % LOG_EVERY === 0) {
-        const elapsed = ((Date.now() - metrics.startTime) / 1000).toFixed(1);
-        const rate = (typeMetrics.processed / ((Date.now() - metrics.startTime) / 1000)).toFixed(0);
-        console.log(`   ${messageType}: ${typeMetrics.processed.toLocaleString()} processed (${rate}/s, ${elapsed}s elapsed)`);
-      }
-    }
-
-    offset += BATCH_SIZE;
-
-    // Log batch completion
-    console.log(`   Batch ${batchNum}: ${rows.length} ${messageType} events loaded, ${typeMetrics.processed.toLocaleString()} total processed`);
-  }
 }
 
 replay().catch((err) => {

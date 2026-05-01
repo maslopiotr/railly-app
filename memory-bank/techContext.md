@@ -71,6 +71,9 @@ SELECT severity, message_type, error_code, count(*) FROM darwin_audit GROUP BY s
 - **`platIsSuppressed`**: Station operator hides platform number from public displays
 - **`act` field**: "TB" = Train Begins (origin), "TF" = Train Finishes (destination), "T" = Time (intermediate)
 - **`pass` sub-object**: Present for passing points (PP); used to distinguish PPs from intermediate passenger stops
+- **Pushport time columns** (`etd_pushport`, `eta_pushport`, `atd_pushport`, `ata_pushport`): `char(5)` — only stores HH:MM format. Parser `normaliseTime()` truncates HH:MM:SS to HH:MM. Sentinel strings like "On time" or "Cancelled" physically cannot fit (7/9 chars). Cancellation is tracked via `is_cancelled` boolean on `service_rt`.
+- **Stop types in DB**: IP, PP, DT, OR, OPIP, OPDT, OPOR — 7 types. No `RM` exists in the Darwin data pipeline. Board filter excludes PP, OPOR, OPIP, OPDT from display.
+- **Board visibility**: 5 SQL conditions (cancelled, at platform, recently departed, display time window, scheduled-only). `wall_display` uses COALESCE priority: actual > estimated > scheduled (atd > etd > ptd).
 
 ## Consumer Graceful Shutdown
 The consumer handles SIGTERM with a specific sequence to prevent data loss:

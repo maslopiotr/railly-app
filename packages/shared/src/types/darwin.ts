@@ -72,7 +72,7 @@ export interface DarwinSchedule {
   toc: string; // ATOC Code
   status?: string; // CIF train status, default "P"
   trainCat?: string; // Train category, default "OO"
-  isPassengerSvc?: boolean; // Default true
+  isPassengerSvc?: boolean; // true = passenger, false = non-passenger, undefined = unknown (awaiting correction)
   deleted?: boolean; // Service has been deleted
   isCharter?: boolean; // Charter service
   qtrain?: boolean; // Q Train (runs as required, not yet activated)

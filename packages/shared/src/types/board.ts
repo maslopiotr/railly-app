@@ -161,6 +161,8 @@ export interface HybridBoardResponse {
   nrccMessages: { Value: string }[];
   /** Services ordered by departure/arrival time */
   services: HybridBoardService[];
+  /** Whether more services are available beyond this page */
+  hasMore: boolean;
 }
 
 // ─── Train Status for Board Row ──────────────────────────────────────────────

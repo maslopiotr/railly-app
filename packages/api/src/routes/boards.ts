@@ -7,6 +7,13 @@
  * - service_rt (service-level state)
  * - location_ref (station names)
  *
+ * Visibility rules (applied in SQL):
+ * 1. Cancelled: show for 30 min past scheduled time
+ * 2. At platform: always visible (ata exists, atd is null)
+ * 3. Recently departed/arrived: atd/ata within last 5 min
+ * 4. Everything else: display time (etd preferred over ptd) within [now-5, now+120]
+ * 5. Scheduled-only (no Darwin): ptd within [now-15, now+120]
+ *
  * Uses day_offset on calling_points for correct cross-midnight handling.
  * wall_clock_date = ssd + day_offset days
  */
@@ -34,8 +41,8 @@ const router = Router();
 
 const MAX_CRS_LENGTH = 3;
 const SAFE_CRS_REGEX = /^[A-Z]+$/;
-const MAX_SERVICES = 100;
-const SCHEDULED_ONLY_GRACE = 15;
+const DEFAULT_LIMIT = 15;
+const MAX_LIMIT = 100;
 
 /** Get UK-local date and minutes-since-midnight */
 function getUkNow(): { dateStr: string; nowMinutes: number } {
@@ -199,6 +206,15 @@ function getPlatformSource(
  *
  * Unified board: single PostgreSQL query returns everything.
  * Uses day_offset for correct cross-midnight handling.
+ *
+ * Visibility rules are applied in SQL:
+ * - Cancelled: 30 min past scheduled time
+ * - At platform: always visible
+ * - Recently departed: atd within last 5 min
+ * - Display time (etd > ptd) within [now-5, now+120]
+ * - Scheduled-only: ptd within [now-15, now+120]
+ *
+ * Pagination via limit/offset; hasMore flag in response.
  */
 router.get("/:crs/board", async (req, res, next: NextFunction) => {
   try {
@@ -220,18 +236,14 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       });
     }
 
-    // ── Time window parameters ────────────────────────────────────────────
-    const pastWindow = Math.min(
-      parseInt(req.query.pastWindow as string) || 10,
-      60,
+    // ── Pagination parameters ─────────────────────────────────────────────
+    const limit = Math.min(
+      parseInt(req.query.limit as string) || DEFAULT_LIMIT,
+      MAX_LIMIT,
     );
-    const timeWindow = Math.min(
-      parseInt(req.query.timeWindow as string) || 120,
-      480,
-    );
-    const numRows = Math.min(
-      parseInt(req.query.numRows as string) || MAX_SERVICES,
-      MAX_SERVICES,
+    const offset = Math.max(
+      parseInt(req.query.offset as string) || 0,
+      0,
     );
 
     const boardType = req.query.type === "arrivals" ? "arrivals" : "departures";
@@ -264,11 +276,23 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       todayStr = ukNow.dateStr;
     }
 
-    const earliest = referenceMinutes - pastWindow;
-    const latest = referenceMinutes + timeWindow;
+    // ── Time boundaries for SQL filtering ─────────────────────────────────
+    // Cancelled: visible 30 min past scheduled time
+    const CANCELLED_LOOKBACK = 30;
+    // Recently departed: visible 5 min after actual departure
+    const DEPARTED_LOOKBACK = 5;
+    // Display time window: show upcoming services within 120 min
+    const FUTURE_WINDOW = 120;
+    // Scheduled-only: show within 15 min of scheduled time
+    const SCHEDULED_LOOKBACK = 15;
+    // General lookback for display time (catches inferred departures)
+    const DISPLAY_LOOKBACK = 5;
 
-    // Wide lookback for delayed trains (can go negative for cross-midnight)
-    const queryEarliest = referenceMinutes - 180;
+    const cancelledEarliest = referenceMinutes - CANCELLED_LOOKBACK;
+    const departedEarliest = referenceMinutes - DEPARTED_LOOKBACK;
+    const displayEarliest = referenceMinutes - DISPLAY_LOOKBACK;
+    const displayLatest = referenceMinutes + FUTURE_WINDOW;
+    const scheduledEarliest = referenceMinutes - SCHEDULED_LOOKBACK;
 
     // ── Determine SSD dates to query ─────────────────────────────────────
     // With day_offset, wall-clock date = ssd + day_offset days.
@@ -291,22 +315,75 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       tomorrow.toISOString().split("T")[0],
     ];
 
-    // ── Build SQL time filter using day_offset ─────────────────────────
-    // wall_clock_minutes = days_from_today * 1440 + time_minutes
-    // where days_from_today = (ssd_date + day_offset) - today_date
-    // Uses cp.ssd (denormalized) instead of joining to journeys.ssd
-    // BUG-024: COALESCE with pushport times for VSTP services that may
-    // lack timetable data but have real-time estimates
+    // ── Build SQL time computations ──────────────────────────────────────
+    // wall_sched: wall-clock minutes for the scheduled time (ptd or pta)
     const timeField = boardType === "arrivals"
       ? sql`COALESCE(${callingPoints.ptaTimetable}, ${callingPoints.etaPushport})`
       : sql`COALESCE(${callingPoints.ptdTimetable}, ${callingPoints.etdPushport})`;
-    const wallMinutesSql = sql<number>`
+
+    const wallSchedSql = sql<number>`
       (EXTRACT(EPOCH FROM (COALESCE(${callingPoints.ssd}, ${journeys.ssd})::date + ${callingPoints.dayOffset} * INTERVAL '1 day') - ${todayStr}::date) / 86400)::integer * 1440
       + EXTRACT(HOUR FROM ${timeField}::time) * 60
       + EXTRACT(MINUTE FROM ${timeField}::time)
     `;
 
-    const timeFilter = sql`${wallMinutesSql} BETWEEN ${queryEarliest} AND ${latest}`;
+    // wall_display: wall-clock minutes for display time.
+    // Priority: actual > estimated > scheduled (atd/ata first, then etd/eta, then ptd/pta).
+    // Sentinel strings ("On time", "Cancelled") never appear in pushport columns
+    // (char(5) constraint + parser normalisation to HH:MM only).
+    const displayTimeField = boardType === "arrivals"
+      ? sql`COALESCE(${callingPoints.ataPushport}, ${callingPoints.etaPushport}, ${callingPoints.ptaTimetable})`
+      : sql`COALESCE(${callingPoints.atdPushport}, ${callingPoints.etdPushport}, ${callingPoints.ptdTimetable})`;
+
+    const wallDisplaySql = sql<number>`
+      (EXTRACT(EPOCH FROM (COALESCE(${callingPoints.ssd}, ${journeys.ssd})::date + ${callingPoints.dayOffset} * INTERVAL '1 day') - ${todayStr}::date) / 86400)::integer * 1440
+      + EXTRACT(HOUR FROM ${displayTimeField}::time) * 60
+      + EXTRACT(MINUTE FROM ${displayTimeField}::time)
+    `;
+
+    // wall_actual: wall-clock minutes for actual departure/arrival
+    const actualTimeField = boardType === "arrivals"
+      ? callingPoints.ataPushport
+      : callingPoints.atdPushport;
+
+    const wallActualSql = sql<number>`
+      (EXTRACT(EPOCH FROM (COALESCE(${callingPoints.ssd}, ${journeys.ssd})::date + ${callingPoints.dayOffset} * INTERVAL '1 day') - ${todayStr}::date) / 86400)::integer * 1440
+      + EXTRACT(HOUR FROM ${actualTimeField}::time) * 60
+      + EXTRACT(MINUTE FROM ${actualTimeField}::time)
+    `;
+
+    // ── Visibility filter (SQL-level) ───────────────────────────────────
+    // A service is visible if ANY of these conditions is true:
+    // 1. Cancelled: scheduled time within [now-30, now+120]
+    // 2. At platform: ata exists, atd is null
+    // 3. Recently departed: atd within [now-5, now]
+    // 4. Not yet departed AND display time within [now-5, now+120]
+    //    (handles delayed trains naturally — etd reflects delay)
+    // 5. Scheduled-only (no Darwin): ptd within [now-15, now+120]
+    const visibilityFilter = sql`
+      (
+        -- 1. Cancelled services: visible 30 min past scheduled time
+        (${serviceRt.isCancelled} = true
+         AND ${wallSchedSql} BETWEEN ${cancelledEarliest} AND ${displayLatest})
+
+        -- 2. At platform right now: train is physically at this station
+        OR (${callingPoints.ataPushport} IS NOT NULL AND ${callingPoints.atdPushport} IS NULL)
+
+        -- 3. Recently departed: actual departure within last 5 min
+        OR (${callingPoints.atdPushport} IS NOT NULL
+            AND ${wallActualSql} BETWEEN ${departedEarliest} AND ${referenceMinutes})
+
+        -- 4. Not yet departed AND display time in window
+        --    Display time = etd (preferred, reflects delay) > ptd (fallback)
+        --    atd IS NULL means train hasn't departed this station yet
+        OR (${callingPoints.atdPushport} IS NULL
+            AND ${wallDisplaySql} BETWEEN ${displayEarliest} AND ${displayLatest})
+
+        -- 5. Scheduled-only services (no realtime data at all)
+        OR (${serviceRt.rid} IS NULL
+            AND ${wallSchedSql} BETWEEN ${scheduledEarliest} AND ${displayLatest})
+      )
+    `;
 
     // ── Fetch station name ───────────────────────────────────────────────
     const [station] = await db
@@ -365,20 +442,17 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       .where(
         and(
           eq(callingPoints.crs, crs),
-          // BUG-024: Include VSTP passenger services, not just timetable-sourced.
-          // Filter by is_passenger (set from Darwin isPassengerSvc or PPTimetable)
-          // rather than source_timetable, so real-time VSTP services appear on boards.
-          eq(journeys.isPassenger, true),
+          sql`${journeys.isPassenger} IS NOT FALSE`,
           inArray(journeys.ssd, ssds),
-          // Exclude PP (passing points) and operational stops from board display
+          // Exclude non-passenger stop types from board display
           sql`${callingPoints.stopType} NOT IN ('PP', 'OPOR', 'OPIP', 'OPDT')`,
           boardType === "arrivals"
             ? sql`(${callingPoints.ptaTimetable} IS NOT NULL OR ${callingPoints.etaPushport} IS NOT NULL)`
             : sql`(${callingPoints.ptdTimetable} IS NOT NULL OR ${callingPoints.etdPushport} IS NOT NULL)`,
-          timeFilter,
+          visibilityFilter,
         ),
       )
-      .orderBy(asc(wallMinutesSql), asc(callingPoints.ptaTimetable));
+      .orderBy(asc(wallDisplaySql), asc(callingPoints.ptaTimetable));
 
     if (scheduledResults.length === 0) {
       return res.json({
@@ -388,12 +462,19 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         generatedAt: new Date().toISOString(),
         nrccMessages: [],
         services: [],
+        hasMore: false,
       });
     }
 
-    const uniqueRids = [
-      ...new Set(scheduledResults.map((r) => r.rid)),
-    ];
+    // Deduplicate by RID (a service may match multiple conditions)
+    const seenRids = new Set<string>();
+    const uniqueResults = scheduledResults.filter((r) => {
+      if (seenRids.has(r.rid)) return false;
+      seenRids.add(r.rid);
+      return true;
+    });
+
+    const uniqueRids = [...seenRids];
 
     // ── Query 2: Origin and destination for each journey ──────────────────
     const endpoints = await db
@@ -491,72 +572,13 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       list.push(cp);
     }
 
-    // ── Post-merge intelligent filter ────────────────────────────────────
-    const graceMinutes = Math.min(
-      parseInt(req.query.grace as string) || 60,
-      120,
-    );
-
-    const filteredResults = scheduledResults.filter((entry) => {
-      const hasRealtime =
-        entry.serviceRtRid != null ||
-        entry.etaPushport != null ||
-        entry.etdPushport != null ||
-        entry.ataPushport != null ||
-        entry.atdPushport != null;
-
-      // BUG-024: VSTP services may lack timetable times — use pushport as fallback
-      const schedMinutes = parseTimeToMinutes(
-        boardType === "arrivals"
-          ? entry.ptaTimetable || entry.etaPushport
-          : entry.ptdTimetable || entry.etdPushport
-      );
-      if (schedMinutes === null) return false;
-
-      // Compute wall-clock minutes using day_offset
-      // Use cp.ssd (denormalized) with fallback to RID-derived SSD
-      const ssdStr = entry.cpSsd || (entry.rid.length >= 8 ? `${entry.rid.slice(0,4)}-${entry.rid.slice(4,6)}-${entry.rid.slice(6,8)}` : todayStr);
-      const ssdDate = new Date(ssdStr + "T12:00:00Z");
-      const todayDate = new Date(todayStr + "T12:00:00Z");
-      const daysFromToday = Math.round((ssdDate.getTime() - todayDate.getTime()) / 86400000) + entry.dayOffset;
-      const wallMinutes = daysFromToday * 1440 + schedMinutes;
-
-      // Already departed from this station — only show within pastWindow, no grace
-      const alreadyDeparted = entry.atdPushport != null;
-      // Already arrived at this station (arrivals view) — only show within pastWindow
-      const alreadyArrived = boardType === "arrivals" && entry.ataPushport != null;
-
-      if (hasRealtime) {
-        const rtTime =
-          boardType === "arrivals"
-            ? (entry.ataPushport || entry.etaPushport)
-            : (entry.atdPushport || entry.etdPushport || entry.etaPushport);
-        const rtMinutes = rtTime
-          ? parseTimeToMinutes(rtTime)
-          : null;
-        // Use wall-clock minutes for effective time (rtMinutes are same-day, add daysFromToday)
-        const effectiveMinutes =
-          rtMinutes !== null ? (daysFromToday * 1440 + rtMinutes) : wallMinutes;
-
-        // For departed/arrived trains, use stricter pastWindow without grace
-        const effectiveEarliest = alreadyDeparted || alreadyArrived
-          ? earliest
-          : earliest - graceMinutes;
-
-        return (
-          effectiveMinutes >= effectiveEarliest &&
-          effectiveMinutes <= latest
-        );
-      } else {
-        const cutoff = referenceMinutes - SCHEDULED_ONLY_GRACE;
-        return wallMinutes >= cutoff && wallMinutes <= latest;
-      }
-    });
-
     // ── Build HybridBoardService objects ─────────────────────────────────
     const services: HybridBoardService[] = [];
+    // Fetch one extra to determine hasMore
+    const pagedResults = uniqueResults.slice(offset, offset + limit + 1);
+    const hasMore = pagedResults.length > limit;
 
-    for (const entry of filteredResults.slice(0, numRows)) {
+    for (const entry of pagedResults.slice(0, limit)) {
       const rid = entry.rid;
       const endpoints = endpointMap.get(rid);
       const callingPattern = callingPatternMap.get(rid) || [];
@@ -655,11 +677,7 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       // BUG-017: Darwin often doesn't send atd for origin stops that depart
       // on time. Detect departure by checking if ANY subsequent calling point
       // (including PPs — which have track circuit data) has actual times.
-      // This is safe: if a later stop has atd/ata, the train must have left
-      // this station. If the train is still at platform, no subsequent stop
-      // will have actual times, so this won't fire.
       // BUG-025: For circular trains (same TPL visited twice), match by tpl + sortTime
-      // to find the correct occurrence. Using tpl alone always matches the first visit.
       let inferredDeparted = false;
       if (trainStatus !== "departed" && entry.atdPushport == null) {
         const fullPattern = callingPatternMap.get(rid) || [];
@@ -688,15 +706,13 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       }
 
       // BUG-017: When we inferred departure but atd is null, use etd as
-      // the best available actual departure time. For on-time departures
-      // etd equals std; for delayed departures etd shows the delayed time.
+      // the best available actual departure time.
       const actualDeparture = inferredDeparted
         ? (entry.atdPushport || entry.etdPushport || null)
         : (entry.atdPushport || null);
 
       // BUG-017: Also patch the calling point in cpList so the frontend's
-      // CallingPoints.tsx (which checks atdPushport for "Departed" status)
-      // works without any changes.
+      // CallingPoints.tsx works without any changes.
       // BUG-025: Match by tpl + sortTime for circular trains.
       if (inferredDeparted && !entry.atdPushport && entry.etdPushport) {
         const boardCp = cpList.find(cp => cp.tpl === entry.tpl && cp.sortTime === (entry.sortTime ?? "00:00"));
@@ -768,6 +784,7 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       generatedAt: new Date().toISOString(),
       nrccMessages: [],
       services,
+      hasMore,
     });
   } catch (err) {
     next(err);

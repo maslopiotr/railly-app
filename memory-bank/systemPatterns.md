@@ -28,10 +28,17 @@ Darwin Push Port Kafka → Consumer → PostgreSQL (real-time overlay)
 
 ## Board API Pattern
 1. Single PostgreSQL JOIN: `calling_points` + `journeys` + `service_rt` + `toc_ref` + `location_ref`
-2. Filter by CRS, SSD range, passenger flag, time window, stop type
-3. Post-merge intelligent filter: grace minutes for delayed trains, strict pastWindow for departed
-4. Per service: build `HybridBoardService` with timetable base + real-time overlay
-5. Full calling pattern fetched for current location + departure inference (BUG-017b)
+2. SQL-level visibility filtering (5 conditions in WHERE clause):
+   - **Cancelled**: `is_cancelled AND wall_sched BETWEEN now-30 AND now+120`
+   - **At platform**: `ata IS NOT NULL AND atd IS NULL` (always visible)
+   - **Recently departed**: `atd IS NOT NULL AND wall_actual BETWEEN now-5 AND now`
+   - **Not yet departed**: `atd IS NULL AND wall_display BETWEEN now-5 AND now+120`
+   - **Scheduled-only**: `service_rt.rid IS NULL AND wall_sched BETWEEN now-15 AND now+120`
+3. `wall_display` = COALESCE priority: actual > estimated > scheduled (atd > etd > ptd)
+4. Deduplication by RID (service matching multiple conditions appears once)
+5. Pagination: `limit`/`offset` query params, `hasMore` flag
+6. Per service: build `HybridBoardService` with timetable base + real-time overlay
+7. Full calling pattern fetched for current location + departure inference (BUG-017b)
 
 ## Train Status Logic (`determineTrainStatus`)
 1. **Cancelled** → `isCancelled === true`

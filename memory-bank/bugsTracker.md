@@ -4,6 +4,62 @@
 
 ---
 
+### BUG-038: Phantom duplicate CP rows — stop-type routing in TS handler
+- **Severity:** High
+- **Type:** Data integrity / matching logic
+- **Status:** Open (investigation complete, fix deferred)
+- **Discovered:** 2026-05-01
+- **Impact:** Phantom rows cause incorrect board displays (e.g. MKC showing train at wrong time), inflated CP counts, and potential mis-matching of real-time Darwin updates
+
+#### Summary
+The TS handler's `matchLocationsToCps()` routes Darwin locations into PP vs non-PP pools based on `isPass` / `pass` sub-object. When a location cannot find a match in its assigned pool, a phantom duplicate row is INSERTed. This creates both phantom IPs (28,717 rows with no `pta_timetable`/`ptd_timetable`) and phantom PPs (e.g. MKNSCEN has a PP row that shouldn't exist).
+
+#### Detailed Root Cause
+1. **Current matcher logic** (`trainStatus.ts`): Splits DB rows into two pools — PP (where `stop_type IN ('PP','OPIP')`) and non-PP (everything else). Routes each Darwin TS location to one pool based on `isPass` or presence of `pass` sub-object.
+2. **Darwin incremental update model**: First TS message has full data (`pta`/`ptd` for passenger stops, `wtp` for passing points). Incremental messages only send changed fields + a `pass` estimate. The `pass` sub-object is a **passing time estimate** attached to ANY location in deltas — NOT a stop-type indicator.
+3. **Mismatch scenario (phantom IPs)**: A Darwin location for CMDNSTH (a junction, `stopType=PP` in schedule) arrives WITHOUT `pass`/`isPass`. The matcher routes it to the non-PP pool. But CMDNSTH only exists as PP in DB → no match → INSERT as phantom IP with `wtp_timetable=18:58:30` but no `pta`/`ptd`.
+4. **Mismatch scenario (phantom PPs)**: A Darwin location for MKNSCEN (a passenger stop, `stopType=IP` in schedule) arrives WITH `pass` sub-object in a delta message. The matcher routes it to the PP pool. But MKNSCEN only exists as IP in DB → no match → INSERT as phantom PP with `wtp_timetable=19:36:30`.
+5. **`deriveStopType()` compounds the problem**: When no `pta`/`ptd` exists, defaults to IP instead of PP, creating phantom IPs for junctions.
+
+#### Evidence (train 202604308705792)
+**Schedule message** sends exactly 1 row per stop:
+```
+MKNSCEN  stopType=IP  pta=19:37  ptd=19:38  wta=19:36:30  wtd=19:38
+CMDNSTH  stopType=PP  wtp=18:58:30
+```
+
+**DB reality** (both rows `source_darwin=true, source_timetable=false`):
+```
+MKNSCEN | IP | 19:38 | pta=19:37  ptd=19:38 |               ← correct (from schedule or first TS)
+MKNSCEN | PP | 19:36 |                      | wtp=19:36:30  ← PHANTOM (from delta TS with pass)
+CMDNSTH | PP | 18:58 |                      | wtp=18:58:30  ← correct
+CMDNSTH | IP | 18:58 |                      | wtp=18:58:30  ← PHANTOM (from TS without pass)
+```
+
+**Darwin TS messages across the day** (13 sampled from 109):
+- First message (01:51): MKNSCEN has `pta=19:37, ptd=19:38, wta=19:36:30, wtd=19:38` → full passenger stop data
+- Delta messages (17:59, 18:26, 18:40): MKNSCEN has only `etd=19:37/19:44/19:46, pass={et=...}, wtp=19:36:30` → incremental update with pass estimate, NO pta/ptd
+- Arrival message: MKNSCEN back to `pta/ptd/ata` format
+
+**Scale**: 28,717 phantom IP rows (IP with no pta/ptd). Unknown number of phantom PP rows for passenger stops.
+
+#### Circular Trip Data
+Circular trips (same TIPLOC visited twice) exist but are rare — mainly BRKNHDN (4 visits with different pta/ptd times). Time-based matching handles these correctly since each visit has different pta/ptd.
+
+#### Proposed Fix
+1. **`matchLocationsToCps()`**: Remove stop-type pool routing. Match ALL rows for a TIPLOC by time-field-aware proximity (use Darwin's time field type to select the correct DB time field for comparison).
+2. **`deriveStopType()`**: Default to PP when no pta/ptd (only used for genuinely new CPs from VSTP stubs).
+3. **Board API**: Safety net filter — hide CPs with no public times (`pta`/`ptd`).
+4. **Data migration**: Delete phantom duplicate rows where same (rid, tpl, day_offset) has both a row with pta/ptd and a row without.
+5. **At-platform time bound**: Prevent stale "at platform" trains showing forever.
+
+#### Files to Change
+- `packages/consumer/src/handlers/trainStatus.ts` — matcher + deriveStopType
+- `packages/api/src/routes/boards.ts` — board filter + at-platform bound
+- Data migration SQL
+
+---
+
 ### BUG-022: VSTP duplicate PP entries for circular routes
 - **Severity:** Low
 - **Type:** Bug
@@ -137,7 +193,8 @@ Journey viewed at 17:00 202604306714507 when departure is set to 17:00 and alrea
 | BUG-034 | Seed re-processing: hash-based dedup via `seed_log` | 2026-04-30 |
 | BUG-036 | 23505 violation: natural key matching + stop_type derivation | 2026-04-29 |
 | BUG-025 | Circular trains: match by tpl+sortTime instead of tpl only | 2026-04-30 |
-| BUG-037 | Phantom IP rows: TS handler uses `pass` sub-object for PP detection (+ 37K additional cleanup 2026-04-30) | 2026-04-30 |
+| BUG-037 | Phantom IP rows: TS handler uses `pass` sub-object for PP detection (+ 37K additional cleanup 2026-04-30) — **partially fixed, underlying matching issue persists (see BUG-038)** | 2026-04-30 |
+| BUG-039 | Seed Phase 4 stale-marking corrupted `source_timetable` flag, causing consumer to overwrite timetable data via VSTP path | 2026-05-01 |
 
 ---
 
@@ -145,7 +202,7 @@ Journey viewed at 17:00 202604306714507 when departure is set to 17:00 and alrea
 
 | Check | Result | Status |
 |-------|--------|--------|
-| Phantom IP duplicates | 0 | ✅ Clean |
+| Phantom IP duplicates | 28,717 (IP with no pta/ptd) | ❌ BUG-038 |
 | Darwin audit errors (1h) | 0 | ✅ Clean |
 | Missing stopType skips | 0 | ✅ Clean |
 | Passenger stops without CRS | 1,996 (junctions) | ⚠️ Remaining |

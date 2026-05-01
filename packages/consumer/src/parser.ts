@@ -354,8 +354,10 @@ export function parseDarwinMessage(raw: Buffer | string | null): ParseResult {
         sched.can = toBool(sched.can) ?? false;
       }
       // Schedule-level isPassengerSvc (string boolean)
+      // Only set to true/false when explicitly present; leave undefined when absent.
+      // Darwin will correct via pushport updates if the attribute changes.
       if (sched.isPassengerSvc !== undefined) {
-        sched.isPassengerSvc = toBool(sched.isPassengerSvc) ?? true;
+        sched.isPassengerSvc = toBool(sched.isPassengerSvc);
       }
       // Schedule-level deleted flag
       if (sched.deleted !== undefined) {
