@@ -299,6 +299,9 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
     const displayEarliest = referenceMinutes - DISPLAY_LOOKBACK;
     const displayLatest = referenceMinutes + FUTURE_WINDOW;
     const scheduledEarliest = referenceMinutes - SCHEDULED_LOOKBACK;
+    // At-platform time bound: prevent stale "at platform" trains from yesterday
+    const AT_PLATFORM_BOUND = 120;
+    const atPlatformEarliest = referenceMinutes - AT_PLATFORM_BOUND;
 
     // ── Determine SSD dates to query ─────────────────────────────────────
     // With day_offset, wall-clock date = ssd + day_offset days.
@@ -358,6 +361,14 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       + EXTRACT(MINUTE FROM ${actualTimeField}::time)
     `;
 
+    // wall_ata: wall-clock minutes for actual arrival (ataPushport)
+    // Used to bound the "at platform" condition so stale trains don't show forever
+    const wallAtaSql = sql<number>`
+      (EXTRACT(EPOCH FROM (COALESCE(${callingPoints.ssd}, ${journeys.ssd})::date + ${callingPoints.dayOffset} * INTERVAL '1 day') - ${todayStr}::date) / 86400)::integer * 1440
+      + EXTRACT(HOUR FROM ${callingPoints.ataPushport}::time) * 60
+      + EXTRACT(MINUTE FROM ${callingPoints.ataPushport}::time)
+    `;
+
     // ── Visibility filter (SQL-level) ───────────────────────────────────
     // Two modes: "live" (no time param) and "time-selected" (time param set).
     //
@@ -384,8 +395,10 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         (${serviceRt.isCancelled} = true
          AND ${wallSchedSql} BETWEEN ${cancelledEarliest} AND ${displayLatest})
 
-        -- 2. At platform right now: train is physically at this station
-        OR (${callingPoints.ataPushport} IS NOT NULL AND ${callingPoints.atdPushport} IS NULL)
+        -- 2. At platform: train has arrived but not yet departed,
+        --    and the arrival was within the last ${AT_PLATFORM_BOUND} minutes
+        OR (${callingPoints.ataPushport} IS NOT NULL AND ${callingPoints.atdPushport} IS NULL
+            AND ${wallAtaSql} BETWEEN ${atPlatformEarliest} AND ${referenceMinutes})
 
         -- 3. Recently departed: actual departure within last 5 min
         OR (${callingPoints.atdPushport} IS NOT NULL

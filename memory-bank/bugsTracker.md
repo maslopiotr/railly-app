@@ -7,9 +7,16 @@
 ### BUG-038: Phantom duplicate CP rows — stop-type routing in TS handler
 - **Severity:** High
 - **Type:** Data integrity / matching logic
-- **Status:** Open (investigation complete, fix deferred)
+- **Status:** ✅ Fixed (2026-05-01)
 - **Discovered:** 2026-05-01
-- **Impact:** Phantom rows cause incorrect board displays (e.g. MKC showing train at wrong time), inflated CP counts, and potential mis-matching of real-time Darwin updates
+- **Impact:** Phantom rows caused inflated CP counts and potential mis-matching of real-time Darwin updates (no user-visible board impact — existing filters blocked them)
+- **Fix:** 
+  1. `matchLocationsToCps()` — removed PP/non-PP pool routing; unified candidates with time-field-aware proximity matching
+  2. `deriveStopType()` — returns `null` instead of defaulting to IP when no Darwin flags are set
+  3. Both callers handle `null` by skipping and logging to `darwin_audit` / `skipped_locations`
+  4. Migration 0005 deleted 16,821 phantom rows (13,104 IPs with PP counterpart + 1,349 phantom PPs + 3,595 orphaned IPs)
+  5. Board at-platform time bound (120 min) added to prevent stale trains
+- **Files changed:** `packages/consumer/src/handlers/trainStatus.ts`, `packages/api/src/routes/boards.ts`, `packages/api/drizzle/meta/0005_cleanup_phantom_duplicates.sql`
 
 #### Summary
 The TS handler's `matchLocationsToCps()` routes Darwin locations into PP vs non-PP pools based on `isPass` / `pass` sub-object. When a location cannot find a match in its assigned pool, a phantom duplicate row is INSERTed. This creates both phantom IPs (28,717 rows with no `pta_timetable`/`ptd_timetable`) and phantom PPs (e.g. MKNSCEN has a PP row that shouldn't exist).

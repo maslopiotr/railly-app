@@ -116,12 +116,15 @@ function computeDelayMinutes(scheduled: string | null, estimated: string | null,
  *   isDestination && !isOrigin → OPDT (operational destination)
  *   isPass → PP (passing point)
  *   isOrigin && isDestination → OPOR (both at same stop)
- *   Default → OPIP (operational intermediate)
  *
  * For timetable services (known RIDs), use public conventions:
- *   Same logic but without OP prefix: OR, DT, PP, IP
+ *   Same logic but without OP prefix: OR, DT, PP
+ *
+ * Returns null when no flags are set — Darwin hasn't told us what this
+ * location is, so we must not guess. Callers must skip null locations
+ * and log them to darwin_audit / skipped_locations.
  */
-function deriveStopType(loc: DarwinTSLocation, isVstp: boolean): string {
+function deriveStopType(loc: DarwinTSLocation, isVstp: boolean): string | null {
   // TS messages lack stopType — infer from flags and pass sub-object.
   // The `pass` sub-object (passing estimate) is set by Darwin for locations
   // where the train passes through without stopping. Its presence is a
@@ -131,7 +134,8 @@ function deriveStopType(loc: DarwinTSLocation, isVstp: boolean): string {
   if (loc.isOrigin === true && loc.isDestination !== true) return `${prefix}OR`;
   if (loc.isDestination === true && loc.isOrigin !== true) return `${prefix}DT`;
   if (loc.isOrigin === true && loc.isDestination === true) return `${prefix}OR`;
-  return `${prefix}IP`;
+  // No flags set — Darwin hasn't told us what this location is. Don't guess.
+  return null;
 }
 
 /**
@@ -149,30 +153,28 @@ function parseTimeToMinutes(time: string | null | undefined): number {
  * Match TS locations to existing calling points by (TIPLOC, time).
  *
  * Returns a Map from TS location index → CP id (primary key).
- * Using id instead of sequence means UPDATEs are simpler and more robust.
  *
- * Strategy: Match by TIPLOC + time, separated by stop type:
- * - Non-PP (isPass=false) locations match against non-PP DB rows (IP/OR/DT)
- * - PP (isPass=true) locations match against PP DB rows
- *
- * This separation prevents a PP location from incorrectly matching
- * to an IP/OR/DT row when the same TIPLOC appears as both IP and PP.
- *
- * For circular trips (same TIPLOC visited multiple times), the planned
- * time disambiguates which visit this TS location refers to.
+ * Strategy: All DB rows are candidates for every TS location.
+ * Match by TIPLOC + time-field-aware proximity:
+ * - TS location's time fields determine which DB time column to compare against:
+ *   pta/ptd → pta_timetable/ptd_timetable (public times)
+ *   wta/wtd → wta_timetable/wtd_timetable (working times)
+ *   wtp → wtp_timetable (passing times)
+ * - For circular trips (same TIPLOC visited multiple times), the planned
+ *   time disambiguates which visit this TS location refers to.
  *
  * Unmatched locations are silently skipped — we only UPDATE existing CP rows,
  * never INSERT new ones for known services (prevents route waypoint contamination).
+ *
+ * BUG-038 fix: removed pool-based routing (PP vs non-PP) which caused phantom
+ * duplicate CP rows when Darwin incremental messages attached pass estimates
+ * to passenger stops or sent junction locations without stop-type flags.
  */
 function matchLocationsToCps(
   tsLocations: DarwinTSLocation[],
-  dbRows: Array<{ id: number; tpl: string; stop_type: string; pta_timetable: string | null; ptd_timetable: string | null; wtp_timetable: string | null }>,
+  dbRows: Array<{ id: number; tpl: string; stop_type: string; pta_timetable: string | null; ptd_timetable: string | null; wta_timetable: string | null; wtd_timetable: string | null; wtp_timetable: string | null }>,
 ): Map<number, number> {
   const matches = new Map<number, number>(); // tsLoc index → cp id
-
-  // Separate DB rows by stop type for correct matching
-  const nonPPRows = dbRows.filter((r) => r.stop_type !== "PP");
-  const ppRows = dbRows.filter((r) => r.stop_type === "PP");
   const usedIds = new Set<number>();
 
   for (let locIdx = 0; locIdx < tsLocations.length; locIdx++) {
@@ -180,49 +182,53 @@ function matchLocationsToCps(
     const tpl = loc.tpl?.trim();
     if (!tpl) continue;
 
-    // Use both isPass flag and pass sub-object to detect passing points.
-    // Darwin TS messages for non-stopping locations include a `pass` sub-object
-    // with passing estimates but may not set isPass=true explicitly.
-    const isPassingPoint = loc.isPass === true || !!(loc as unknown as Record<string, unknown>).pass;
+    // Get the TS location's best time and determine which DB column to compare against
+    const tsTime = loc.ptd || loc.pta || loc.wtd || loc.wta || loc.wtp || null;
 
-    // Route to the correct candidate pool based on isPass flag
-    const candidatePool = isPassingPoint ? ppRows : nonPPRows;
-
-    // Get the TS location's planned time for matching
-    // PP locations use wtp, non-PP use wtd/ptd/wta/pta
-    const tsPlannedTime = isPassingPoint
-      ? (loc.wtp || loc.wtd || loc.wta || null)
-      : (loc.wtd || loc.ptd || loc.wta || loc.pta || null);
+    // Select DB time column based on what Darwin provided:
+    // If Darwin gives pta/ptd, match against public timetable times.
+    // If Darwin gives wta/wtd, match against working timetable times.
+    // If Darwin gives wtp (passing), match against wtp_timetable.
+    // Fallback: compare against any available DB time.
+    const getDbTime = (row: typeof dbRows[number]): string | null => {
+      if (loc.ptd || loc.pta) {
+        return (loc.ptd ? row.ptd_timetable : null) || (loc.pta ? row.pta_timetable : null);
+      }
+      if (loc.wtd || loc.wta) {
+        return (loc.wtd ? row.wtd_timetable || row.wtp_timetable : null) || (loc.wta ? row.wta_timetable || row.wtp_timetable : null);
+      }
+      if (loc.wtp) {
+        return row.wtp_timetable;
+      }
+      // Fallback: any DB time
+      return row.ptd_timetable || row.pta_timetable || row.wtp_timetable;
+    };
 
     // Find candidate rows with matching TIPLOC that haven't been used yet
-    const candidates = candidatePool.filter(
+    const candidates = dbRows.filter(
       (r) => r.tpl === tpl && !usedIds.has(r.id),
     );
 
     if (candidates.length === 0) {
-      // No match → silently skip (Darwin-only route waypoint or no PP row)
       continue;
     }
 
     if (candidates.length === 1) {
-      // Single match — use it directly
       matches.set(locIdx, candidates[0].id);
       usedIds.add(candidates[0].id);
       continue;
     }
 
-    // Multiple candidates (circular trip) — match by planned time
-    const tsMinutes = parseTimeToMinutes(tsPlannedTime);
+    // Multiple candidates (circular trip or same TIPLOC as both IP and PP) —
+    // match by planned time proximity
+    const tsMinutes = parseTimeToMinutes(tsTime);
 
     if (tsMinutes >= 0) {
       let bestMatch = candidates[0];
       let bestDiff = Infinity;
 
       for (const candidate of candidates) {
-        // PP rows use wtp_timetable, non-PP rows use ptd/pta
-        const dbTime = isPassingPoint
-          ? candidate.wtp_timetable
-          : (candidate.ptd_timetable || candidate.pta_timetable);
+        const dbTime = getDbTime(candidate);
         const dbMinutes = parseTimeToMinutes(dbTime);
         if (dbMinutes >= 0) {
           const diff = Math.abs(tsMinutes - dbMinutes);
@@ -233,17 +239,14 @@ function matchLocationsToCps(
         }
       }
 
-      // Only accept if the time difference is reasonable (< 60 minutes)
       if (bestDiff < 60) {
         matches.set(locIdx, bestMatch.id);
         usedIds.add(bestMatch.id);
       } else {
-        // Fallback: use first unused candidate (preserves order)
         matches.set(locIdx, candidates[0].id);
         usedIds.add(candidates[0].id);
       }
     } else {
-      // No time available for matching — use first unused candidate
       matches.set(locIdx, candidates[0].id);
       usedIds.add(candidates[0].id);
     }
@@ -331,10 +334,27 @@ async function createDarwinStub(
   };
 
   // Create calling points from TS locations — using natural key
+  // Skip locations where stop type cannot be determined (no Darwin flags)
+  let skippedUnknownType = 0;
   for (let idx = 0; idx < locations.length; idx++) {
     const loc = locations[idx];
     const tpl = loc.tpl?.trim();
     if (!tpl) continue;
+
+    const stopType = deriveStopType(loc, true);
+    if (!stopType) {
+      // Darwin hasn't provided any flags to determine stop type — skip and log
+      skippedUnknownType++;
+      log.warn(`   ⚠️ TS stub ${rid}: location ${tpl} has no stop type flags — skipped (persisted to darwin_audit)`);
+      try {
+        await logDarwinSkip("TS", rid, "UNKNOWN_STOP_TYPE",
+          `Location ${tpl} in VSTP stub has no isPass/isOrigin/isDestination flags`,
+          JSON.stringify(loc).slice(0, 500));
+      } catch {
+        // Don't let audit logging fail stub creation
+      }
+      continue;
+    }
 
     const crsData = crsLookup.get(tpl);
     const crs = crsData?.crs || null;
@@ -367,7 +387,7 @@ async function createDarwinStub(
         source_timetable, source_darwin,
         updated_at, ts_generated_at
       ) VALUES (
-        ${rid}, ${sortTime}, ${ssd}, ${deriveStopType(loc, true)}, ${tpl}, ${crs}, ${name},
+        ${rid}, ${sortTime}, ${ssd}, ${stopType}, ${tpl}, ${crs}, ${name},
         ${etaPushport}, ${etdPushport}, ${ataPushport}, ${atdPushport},
         ${wetaPushport}, ${wetdPushport},
         ${platPushport},
@@ -394,6 +414,10 @@ async function createDarwinStub(
         updated_at = EXCLUDED.updated_at,
         ts_generated_at = EXCLUDED.ts_generated_at
     `;
+  }
+
+  if (skippedUnknownType > 0) {
+    log.warn(`   ⚠️ TS stub ${rid}: ${skippedUnknownType} locations skipped — unknown stop type (no Darwin flags)`);
   }
 }
 
@@ -473,8 +497,8 @@ export async function handleTrainStatus(
       // ── Query existing calling points including id for natural key matching ─
       const existingRows = await tx`
         SELECT id, tpl, stop_type, sort_time, day_offset,
-               pta_timetable, ptd_timetable, wtp_timetable, plat_timetable,
-               source_timetable
+               pta_timetable, ptd_timetable, wta_timetable, wtd_timetable,
+               wtp_timetable, plat_timetable, source_timetable
         FROM calling_points
         WHERE journey_rid = ${rid}
         ORDER BY day_offset, sort_time
@@ -498,7 +522,7 @@ export async function handleTrainStatus(
       // ── Match TS locations to existing CPs by TIPLOC + time ────────────────
       const matches = matchLocationsToCps(
         locations,
-        existingRows as unknown as Array<{ id: number; tpl: string; stop_type: string; pta_timetable: string | null; ptd_timetable: string | null; wtp_timetable: string | null }>,
+        existingRows as unknown as Array<{ id: number; tpl: string; stop_type: string; pta_timetable: string | null; ptd_timetable: string | null; wta_timetable: string | null; wtd_timetable: string | null; wtp_timetable: string | null }>,
       );
 
       // ── Insert new CP rows for unmatched stops (passenger + passing points) ──
@@ -570,6 +594,14 @@ export async function handleTrainStatus(
           // Determine stop type from Darwin TS location flags + service context
           // VSTP services use OP* conventions, timetable services use public conventions
           const stopType = deriveStopType(loc, !isTimetableSourced);
+
+          // If Darwin hasn't provided any flags, skip this location
+          // (don't guess — log to skipped_locations for investigation)
+          if (!stopType) {
+            skippedDetails.push({ tpl, reason: "unknown_stop_type" });
+            skippedInMessage++;
+            continue;
+          }
 
           // Compute day_offset for this stop
           // Falls back to real-time estimates when no planned time is available
