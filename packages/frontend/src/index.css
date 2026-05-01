@@ -79,6 +79,14 @@ html {
   --color-timeline-past: var(--timeline-past);
   --color-timeline-future: var(--timeline-future);
 
+  /* Loading bars (train occupancy) */
+  --color-loading-low-bg: var(--loading-low-bg);
+  --color-loading-low-bar: var(--loading-low-bar);
+  --color-loading-moderate-bg: var(--loading-moderate-bg);
+  --color-loading-moderate-bar: var(--loading-moderate-bar);
+  --color-loading-busy-bg: var(--loading-busy-bg);
+  --color-loading-busy-bar: var(--loading-busy-bar);
+
   /* Favourites */
   --color-favourite: var(--favourite);
   --color-favourite-muted: var(--favourite-muted);
@@ -181,6 +189,13 @@ html {
   --timeline-past: #10b981;
   --timeline-future: #e2e8f0;
 
+  --loading-low-bg: #ecfdf5;
+  --loading-low-bar: #10b981;
+  --loading-moderate-bg: #fffbeb;
+  --loading-moderate-bar: #f59e0b;
+  --loading-busy-bg: #fef2f2;
+  --loading-busy-bar: #ef4444;
+
   --glow-live: 0 0 6px rgba(16, 185, 129, 0.6);
   --favourite: #d97706;
   --favourite-muted: #fbbf24;
@@ -264,6 +279,13 @@ html {
   --call-future-dot-border: #475569;
   --timeline-past: #16a34a;
   --timeline-future: #334155;
+
+  --loading-low-bg: rgba(16, 185, 129, 0.12);
+  --loading-low-bar: #22c55e;
+  --loading-moderate-bg: rgba(245, 158, 11, 0.12);
+  --loading-moderate-bar: #fbbf24;
+  --loading-busy-bg: rgba(239, 68, 68, 0.12);
+  --loading-busy-bar: #f87171;
 
   --alert-cancel-bg: rgba(239, 68, 68, 0.1);
   --alert-cancel-text: #fca5a5;

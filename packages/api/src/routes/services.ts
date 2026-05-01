@@ -84,6 +84,7 @@ router.get("/:serviceId", async (req, res, next) => {
         delayMinutes: callingPoints.delayMinutes,
         delayReason: callingPoints.delayReason,
         cancelReason: callingPoints.cancelReason,
+        loadingPercentage: callingPoints.loadingPercentage,
       })
       .from(callingPoints)
       .leftJoin(locationRef, eq(callingPoints.tpl, locationRef.tpl))
@@ -162,6 +163,8 @@ router.get("/:serviceId", async (req, res, next) => {
           cancelReason: cp.cancelReason ?? rtState?.cancelReason ?? null,
           // Computed delay for this calling point
           delayMinutes: cp.delayMinutes ?? null,
+          // Loading data
+          loadingPercentage: cp.loadingPercentage ?? null,
         };
       });
 

@@ -248,6 +248,12 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
 
     const boardType = req.query.type === "arrivals" ? "arrivals" : "departures";
 
+    // ── Destination filter (optional, by CRS code) ────────────────────────
+    const destinationFilter = req.query.destination as string | undefined;
+    const destinationCrs = destinationFilter
+      ? normalizeCrsCode(destinationFilter.toUpperCase().trim())
+      : null;
+
     // ── Allow filtering by a specific time (like RTT) ────────────────────
     const timeParam = req.query.time as string | undefined;
     let referenceMinutes: number;
@@ -353,14 +359,26 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
     `;
 
     // ── Visibility filter (SQL-level) ───────────────────────────────────
-    // A service is visible if ANY of these conditions is true:
+    // Two modes: "live" (no time param) and "time-selected" (time param set).
+    //
+    // LIVE MODE: A service is visible if ANY of these conditions is true:
     // 1. Cancelled: scheduled time within [now-30, now+120]
     // 2. At platform: ata exists, atd is null
     // 3. Recently departed: atd within [now-5, now]
     // 4. Not yet departed AND display time within [now-5, now+120]
     //    (handles delayed trains naturally — etd reflects delay)
     // 5. Scheduled-only (no Darwin): ptd within [now-15, now+120]
-    const visibilityFilter = sql`
+    //
+    // TIME-SELECTED MODE: Uses a simple scheduled-time window filter,
+    // matching National Rail's behaviour — show services by scheduled time
+    // regardless of whether they've already departed. This avoids the bug
+    // where atd IS NULL filters out nearly all services at a terminus.
+    // Window: [referenceTime-30, referenceTime+120] on scheduled time.
+
+    const timeSelectedLookback = 30;
+    const timeSelectedEarliest = referenceMinutes - timeSelectedLookback;
+
+    const liveVisibilityFilter = sql`
       (
         -- 1. Cancelled services: visible 30 min past scheduled time
         (${serviceRt.isCancelled} = true
@@ -384,6 +402,18 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
             AND ${wallSchedSql} BETWEEN ${scheduledEarliest} AND ${displayLatest})
       )
     `;
+
+    const timeSelectedVisibilityFilter = sql`
+      (
+        -- Time-selected mode: show services by scheduled time,
+        -- regardless of departure status (matches National Rail behaviour)
+        ${wallSchedSql} BETWEEN ${timeSelectedEarliest} AND ${displayLatest}
+      )
+    `;
+
+    const visibilityFilter = timeParam
+      ? timeSelectedVisibilityFilter
+      : liveVisibilityFilter;
 
     // ── Fetch station name ───────────────────────────────────────────────
     const [station] = await db
@@ -423,6 +453,7 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         delayMinutes: callingPoints.delayMinutes,
         delayReason: callingPoints.delayReason,
         platIsSuppressed: callingPoints.platIsSuppressed,
+        loadingPercentage: callingPoints.loadingPercentage,
         updatedAt: callingPoints.updatedAt,
         uid: journeys.uid,
         trainId: journeys.trainId,
@@ -452,7 +483,12 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
           visibilityFilter,
         ),
       )
-      .orderBy(asc(wallDisplaySql), asc(callingPoints.ptaTimetable));
+      // In time-selected mode, sort by scheduled time (timetable-style view).
+      // In live mode, sort by display time (real-time view).
+      .orderBy(
+        timeParam ? asc(wallSchedSql) : asc(wallDisplaySql),
+        asc(callingPoints.ptaTimetable),
+      );
 
     if (scheduledResults.length === 0) {
       return res.json({
@@ -555,6 +591,7 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         delayReason: callingPoints.delayReason,
         cancelReason: callingPoints.cancelReason,
         platIsSuppressed: callingPoints.platIsSuppressed,
+        loadingPercentage: callingPoints.loadingPercentage,
         lengthPushport: callingPoints.lengthPushport,
       })
       .from(callingPoints)
@@ -572,10 +609,27 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       list.push(cp);
     }
 
+    // ── Apply destination filter (matches any calling point along the route) ──
+    let filteredResults = uniqueResults;
+    if (destinationCrs) {
+      filteredResults = uniqueResults.filter((r) => {
+        const pattern = callingPatternMap.get(r.rid);
+        if (!pattern) {
+          // Fallback: check final destination
+          const ep = endpointMap.get(r.rid);
+          return ep?.destination?.crs === destinationCrs;
+        }
+        // Match any passenger stop (has CRS) along the route
+        return pattern.some(
+          (cp) => cp.crs === destinationCrs && !["PP", "OPOR", "OPIP", "OPDT"].includes(cp.stopType)
+        );
+      });
+    }
+
     // ── Build HybridBoardService objects ─────────────────────────────────
     const services: HybridBoardService[] = [];
     // Fetch one extra to determine hasMore
-    const pagedResults = uniqueResults.slice(offset, offset + limit + 1);
+    const pagedResults = filteredResults.slice(offset, offset + limit + 1);
     const hasMore = pagedResults.length > limit;
 
     for (const entry of pagedResults.slice(0, limit)) {
@@ -670,6 +724,7 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
           delayReason: cp.delayReason ?? null,
           cancelReason: cp.cancelReason ?? null,
           delayMinutes: cp.delayMinutes ?? null,
+          loadingPercentage: cp.loadingPercentage ?? null,
         }));
 
       const currentLocation = determineCurrentLocation(cpList);

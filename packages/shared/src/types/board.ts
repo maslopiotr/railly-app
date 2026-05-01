@@ -66,6 +66,9 @@ export interface HybridCallingPoint {
   cancelReason: string | null;
   /** Computed delay in minutes for this calling point */
   delayMinutes: number | null;
+  // ── Loading data (from Darwin serviceLoading messages) ──
+  /** Train loading percentage 0-100 at this stop. Null when no data available. */
+  loadingPercentage: number | null;
 }
 
 // ─── Hybrid Board Service ──────────────────────────────────────────────────

@@ -1,8 +1,37 @@
 # Active Context
 
-## Current Focus: Seed & Consumer Data Integrity Fixes (Session 12)
+## Current Focus: NR-Style Board Redesign (Session 13)
 
-### Latest Changes (Session 12)
+### Latest Changes (Session 13)
+
+**BUG-040 fix + NR-style board redesign**
+- **BUG-040 fix**: Split visibility filter — live mode keeps 5-condition filter, time-selected mode uses scheduled-time window (matching NR behaviour). EUS at 15:00 now shows 58 services (up from 1).
+- **"Earlier/Later" navigation**: ← Earlier / Later → buttons shift time by ±1 hour. "Now" button resets to live mode. NR-style UX.
+- **"Going to" destination filter**: Dropdown of unique destinations from current board results. Backend `destination` query param filters by CRS code. E.g. `?destination=BHM` shows only Birmingham services.
+- **Duration & stops in service rows**: Each row shows "3 stops · 1h 23m" or "Direct · 45m" as subtitle under the destination name.
+- **Auto-polling**: 60s interval when in live mode; pauses when tab hidden.
+
+### Key Files This Session
+- `packages/api/src/routes/boards.ts` — split visibility filter + destination filter param
+- `packages/frontend/src/components/DepartureBoard.tsx` — full NR-style redesign
+- `packages/frontend/src/components/ServiceRow.tsx` — subtitle prop for duration/stops
+- `packages/frontend/src/api/boards.ts` — destination param in fetchBoard
+- **Root cause:** When `time` param was set (e.g. `time=15:00`), the visibility filter's condition 4 required `atdPushport IS NULL` (train not yet departed). At terminus stations like EUS, nearly all services have already departed → only 1 of 57 services visible at 15:00.
+- **NR comparison:** Scraped National Rail's live board via Puppeteer. NR shows services by **scheduled time** regardless of departure status (e.g. "17:02 Departed 17:38" still visible). Their API (`nreservices.nationalrail.co.uk/live-info`) returns services with `departureInfo.scheduled` as the primary time; `estimated`/`actual` are metadata, not used for filtering.
+- **Fix:** Split visibility filter into two modes:
+  - **Live mode** (no time param): keeps existing 5-condition filter (cancelled, at platform, recently departed, not-yet-departed, scheduled-only)
+  - **Time-selected mode** (time param set): uses simple scheduled-time window `[ref-30, ref+120]`, matching NR behaviour
+- **Sort order:** Time-selected mode sorts by scheduled time (timetable-style); live mode sorts by display time (real-time)
+- **Result:** EUS at 15:00 now shows 58 services (up from 1)
+
+### Key Files This Session
+- `packages/api/src/routes/boards.ts` — split visibility filter + sort order
+
+### Previous Sessions
+- Session 12: Seed & Consumer Data Integrity Fixes (Phase 4 removal, isPassenger nullable, aliasing bug)
+- Session 11: BUG-038 investigation (phantom duplicate CP rows)
+- Session 10: Board visibility rewrite + time column severity colours
+- Session 9: Consumer logging overhaul
 
 **1. Phase 4 removal — `source_timetable` stale marking was redundant and harmful**
 - Removed the entire Phase 4 block from `packages/api/src/db/seed-timetable.ts`

@@ -19,6 +19,8 @@ interface ServiceRowProps {
   isArrival?: boolean;
   stationCrs?: string;
   onSelect?: (service: HybridBoardService) => void;
+  /** Optional subtitle line (e.g. "3 stops · 1h 23m") */
+  subtitle?: string;
 }
 
 /** Format time for display, falling back to "--:--" when null */
@@ -50,6 +52,49 @@ const NON_PASSENGER_STOP_TYPES = new Set([
   "OPIP", // Operational intermediate
   "OPDT", // Operational destination
 ]);
+
+/** Loading tier for busy indicator */
+type LoadingTier = "low" | "moderate" | "busy";
+
+function getLoadingTier(percentage: number): LoadingTier {
+  return percentage <= 30 ? "low" : percentage <= 70 ? "moderate" : "busy";
+}
+
+/** Small busy indicator pill for the board row */
+function BusyIndicator({ percentage }: { percentage: number }) {
+  const tier = getLoadingTier(percentage);
+  const dotClass = tier === "low"
+    ? "bg-loading-low-bar"
+    : tier === "moderate"
+      ? "bg-loading-moderate-bar"
+      : "bg-loading-busy-bar";
+  const textClass = tier === "low"
+    ? "text-loading-low-bar"
+    : tier === "moderate"
+      ? "text-loading-moderate-bar"
+      : "text-loading-busy-bar";
+
+  const label = tier === "low" ? "Quiet" : tier === "moderate" ? "Moderate" : "Busy";
+
+  return (
+    <span className={`inline-flex items-center gap-1 text-[10px] font-medium ${textClass}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${dotClass}`} />
+      {label}
+    </span>
+  );
+}
+
+/** Get loading percentage for the board station from calling points */
+function getBoardStationLoading(
+  callingPoints: HybridCallingPoint[],
+  stationCrs: string | null | undefined,
+): number | null {
+  if (!stationCrs || !callingPoints || callingPoints.length === 0) return null;
+  const cp = callingPoints.find(
+    (p) => p.crs === stationCrs && !NON_PASSENGER_STOP_TYPES.has(p.stopType),
+  );
+  return cp?.loadingPercentage ?? null;
+}
 
 /** Status badge using semantic tokens, driven by service.trainStatus */
 function StatusBadge({ service }: { service: HybridBoardService }) {
@@ -125,7 +170,7 @@ function DelayPill({ minutes }: { minutes: number }) {
   );
 }
 
-export function ServiceRow({ service, isArrival, stationCrs, onSelect }: ServiceRowProps) {
+export function ServiceRow({ service, isArrival, stationCrs, onSelect, subtitle }: ServiceRowProps) {
   const scheduledTime = isArrival ? service.sta : service.std;
   const estimatedTime = isArrival ? service.eta : service.etd;
   const actualTime = isArrival ? service.actualArrival : service.actualDeparture;
@@ -145,6 +190,9 @@ export function ServiceRow({ service, isArrival, stationCrs, onSelect }: Service
   const nextStops = getNextCallingPoints(service.callingPoints || [], stationCrs || null, 4);
   const operatorText = service.tocName || service.toc || "";
   const mainName = normaliseStationName(destination?.name) || destination?.crs || "Unknown";
+
+  // Loading percentage at the board station (for busy indicator)
+  const boardLoadingPct = getBoardStationLoading(service.callingPoints || [], stationCrs);
 
   // Time column text classes
   const timeClass = cancelled
@@ -217,13 +265,17 @@ export function ServiceRow({ service, isArrival, stationCrs, onSelect }: Service
         <div className="hidden sm:flex items-center shrink-0 gap-1">
           <StatusBadge service={service} />
           {showDelayPill && <DelayPill minutes={service.delayMinutes!} />}
+          {boardLoadingPct !== null && <BusyIndicator percentage={boardLoadingPct} />}
         </div>
 
         {/* Column 4: Destination + metadata */}
         <div className="min-w-0">
           <div className="text-sm font-medium text-text-primary truncate">{mainName}</div>
           <div className="text-xs text-text-secondary truncate">
-            <span className="hidden sm:inline">{operatorText}</span>
+            {subtitle && (
+              <span className="hidden sm:inline">{subtitle}</span>
+            )}
+            {!subtitle && <span className="hidden sm:inline">{operatorText}</span>}
             {service.trainId && (
               <span className="hidden sm:inline font-mono text-[11px] bg-surface-hover px-1 rounded text-text-secondary ml-1">
                 {service.trainId}
@@ -293,6 +345,7 @@ export function ServiceRow({ service, isArrival, stationCrs, onSelect }: Service
               · {service.length} coaches
             </span>
           )}
+          {boardLoadingPct !== null && <BusyIndicator percentage={boardLoadingPct} />}
         </div>
       </div>
     </div>

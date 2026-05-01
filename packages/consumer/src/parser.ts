@@ -217,6 +217,10 @@ export function parseDarwinMessage(raw: Buffer | string | null): ParseResult {
           if (cr.code !== undefined) ts.cancelReasonCode = Number(cr.code);
         }
       }
+      // Service-level isReverseFormation (string boolean → boolean)
+      if (ts.isReverseFormation !== undefined) {
+        ts.isReverseFormation = toBool(ts.isReverseFormation) ?? false;
+      }
 
       if (ts.Location !== undefined && !Array.isArray(ts.Location)) {
         ts.Location = [ts.Location];
@@ -363,6 +367,10 @@ export function parseDarwinMessage(raw: Buffer | string | null): ParseResult {
       if (sched.deleted !== undefined) {
         sched.deleted = toBool(sched.deleted) ?? false;
       }
+      // Schedule-level isActive (XSD default: true)
+      if (sched.isActive !== undefined) {
+        sched.isActive = toBool(sched.isActive) ?? true;
+      }
 
       // Darwin schedule locations can be: OR, OPOR, IP, OPIP, PP (array), DT, OPDT
       // We need to collect them into a unified locations array with stopType.
@@ -431,6 +439,11 @@ export function parseDarwinMessage(raw: Buffer | string | null): ParseResult {
               log.warn("   ⚠️ Schedule location missing tpl (raw):", JSON.stringify(l).slice(0, 200));
             }
             normalizePlatform(l);
+
+            // ── Location-level boolean fields (Phase 1) ──────────────
+            if (l.affectedByDiversion !== undefined) {
+              l.affectedByDiversion = toBool(l.affectedByDiversion) ?? false;
+            }
           }
         }
       }
@@ -442,21 +455,319 @@ export function parseDarwinMessage(raw: Buffer | string | null): ParseResult {
     return items.map((item) => {
       if (typeof item !== "object" || item === null) return item;
       const fl = item as Record<string, unknown>;
+
+      // Ensure loading is always an array
       if (fl.loading !== undefined && !Array.isArray(fl.loading)) {
         fl.loading = [fl.loading];
       }
+
+      // ── Extract empty-string key "" → loadingPercentage on each coach loading ──
+      // Darwin JSON uses {"coachNumber":"1","":"15"} where "" holds the loading %
+      if (Array.isArray(fl.loading)) {
+        for (const coachEntry of fl.loading) {
+          if (typeof coachEntry === "object" && coachEntry !== null) {
+            const ce = coachEntry as Record<string, unknown>;
+            // Extract the empty-string key value as loadingPercentage
+            if (ce[""] !== undefined && ce.loadingPercentage === undefined) {
+              ce.loadingPercentage = String(ce[""]);
+              delete ce[""];
+            }
+          }
+        }
+      }
+
       return item;
     });
+  };
+
+  /**
+   * Strip HTML tags and decode common entities from a Darwin OW message.
+   * Darwin sends Msg as either a plain string or an HTML-like object:
+   *   - "Msg": "Simple text"
+   *   - "Msg": {"a": "https://...", "linktext": "Click here"}  (HTML anchor)
+   *   - "Msg": {"p": "Some text"}                              (paragraph)
+   *
+   * We extract the plain text content, stripping tags and decoding entities.
+   */
+  const stripHtmlTags = (html: string): string => {
+    return html
+      // Decode common HTML entities
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&nbsp;/g, " ")
+      // Strip HTML tags
+      .replace(/<[^>]*>/g, "")
+      // Normalise whitespace
+      .replace(/\s+/g, " ")
+      .trim();
+  };
+
+  /**
+   * Extract plain text from a Darwin OW Msg field.
+   * Msg can be:
+   *   - undefined/null  → no message
+   *   - string          → plain text or HTML string
+   *   - object          → HTML-like object (extract text values, join)
+   */
+  const extractOwMessageText = (msg: unknown): { message: string; messageRaw: string } | null => {
+    if (msg === undefined || msg === null) return null;
+
+    // Store raw JSON for debugging
+    const messageRaw = JSON.stringify(msg);
+
+    if (typeof msg === "string") {
+      const message = stripHtmlTags(msg);
+      return message ? { message, messageRaw } : null;
+    }
+
+    if (typeof msg === "object") {
+      // HTML-like object: extract text content from values
+      // e.g. {"a": "https://...", "linktext": "Click here"} → "Click here"
+      // e.g. {"p": "Some text"} → "Some text"
+      const obj = msg as Record<string, unknown>;
+      const parts: string[] = [];
+      for (const [, val] of Object.entries(obj)) {
+        // Skip empty-string keys (Darwin uses "" for the primary content,
+        // but for Msg it's usually named keys like "a", "p", etc.)
+        if (typeof val === "string") {
+          const stripped = stripHtmlTags(val);
+          if (stripped) parts.push(stripped);
+        }
+      }
+      const message = parts.join(" ").trim();
+      return message ? { message, messageRaw } : null;
+    }
+
+    return null;
   };
 
   const normalizeOW = (items: unknown[]): unknown[] => {
     return items.map((item) => {
       if (typeof item !== "object" || item === null) return item;
       const ow = item as Record<string, unknown>;
+
       // Ensure Station is always an array
       if (ow.Station !== undefined && !Array.isArray(ow.Station)) {
         ow.Station = [ow.Station];
       }
+
+      // ── Msg → message / messageRaw ──────────────────────────────
+      // Darwin OW Msg can be a plain string or HTML-like object.
+      // Extract plain text into `message`, store original JSON in `messageRaw`.
+      if (ow.Msg !== undefined && ow.message === undefined) {
+        const extracted = extractOwMessageText(ow.Msg);
+        if (extracted) {
+          ow.message = extracted.message;
+          ow.messageRaw = extracted.messageRaw;
+        }
+      }
+
+      // ── suppress (string boolean → boolean) ─────────────────────
+      if (ow.suppress !== undefined) {
+        ow.suppress = toBool(ow.suppress) ?? false;
+      }
+
+      // ── Convenience aliases: category ← cat, severity ← sev ────
+      // These duplicate the Darwin fields with clearer names for downstream use.
+      if (ow.cat !== undefined && ow.category === undefined) {
+        ow.category = ow.cat;
+      }
+      if (ow.sev !== undefined && ow.severity === undefined) {
+        ow.severity = ow.sev;
+      }
+
+      return item;
+    });
+  };
+
+  // ── Schedule Formations (P2) ──────────────────────────────────────────
+  // Darwin JSON: { rid, formation: { fid, src, coaches: { coach: {...} | [...] } } }
+  // Normalise: formation single object → array, coaches.coach single → array
+  const normalizeScheduleFormations = (items: unknown[]): unknown[] => {
+    return items.map((item) => {
+      if (typeof item !== "object" || item === null) return item;
+      const sf = item as Record<string, unknown>;
+
+      // Normalise formation: single object → array
+      if (sf.formation !== undefined && !Array.isArray(sf.formation)) {
+        sf.formation = [sf.formation];
+      }
+
+      // Normalise coaches.coach inside each formation
+      if (Array.isArray(sf.formation)) {
+        for (const f of sf.formation) {
+          if (typeof f === "object" && f !== null) {
+            const fm = f as Record<string, unknown>;
+            if (fm.coaches && typeof fm.coaches === "object") {
+              const coaches = fm.coaches as Record<string, unknown>;
+              if (coaches.coach !== undefined && !Array.isArray(coaches.coach)) {
+                coaches.coach = [coaches.coach];
+              }
+            }
+          }
+        }
+      }
+
+      return item;
+    });
+  };
+
+  // ── Train Alert (P3) ──────────────────────────────────────────────────
+  // Darwin JSON uses PascalCase keys from XML:
+  //   { AlertID, AlertServices: { AlertService: { RID, UID, SSD, Location } },
+  //     SendAlertBySMS, SendAlertByEmail, SendAlertByTwitter,
+  //     Source, AlertText, Audience, AlertType }
+  // Normalise: rename to camelCase, convert string booleans, normalise nested arrays
+  const normalizeTrainAlert = (items: unknown[]): unknown[] => {
+    return items.map((item) => {
+      if (typeof item !== "object" || item === null) return item;
+      const raw = item as Record<string, unknown>;
+
+      // AlertID → alertId
+      if (raw.AlertID !== undefined) {
+        raw.alertId = String(raw.AlertID);
+        delete raw.AlertID;
+      }
+
+      // AlertServices → alertServices (with nested normalisation)
+      if (raw.AlertServices !== undefined && typeof raw.AlertServices === "object" && raw.AlertServices !== null) {
+        const as = raw.AlertServices as Record<string, unknown>;
+        const alertServices: Record<string, unknown> = {};
+
+        // Normalise AlertService: single → array
+        if (as.AlertService !== undefined) {
+          let alertServiceArray = Array.isArray(as.AlertService) ? as.AlertService : [as.AlertService];
+
+          alertServiceArray = alertServiceArray.map((svc: unknown) => {
+            if (typeof svc !== "object" || svc === null) return svc;
+            const s = svc as Record<string, unknown>;
+            if (s.RID !== undefined) { s.rid = String(s.RID); delete s.RID; }
+            if (s.UID !== undefined) { s.uid = String(s.UID); delete s.UID; }
+            if (s.SSD !== undefined) { s.ssd = String(s.SSD); delete s.SSD; }
+            // Location → locations (normalise single → array)
+            if (s.Location !== undefined) {
+              s.locations = Array.isArray(s.Location) ? s.Location : [s.Location];
+              delete s.Location;
+            }
+            return s;
+          });
+
+          alertServices.AlertService = alertServiceArray;
+        }
+
+        raw.alertServices = alertServices;
+        delete raw.AlertServices;
+      }
+
+      // String booleans → boolean
+      if (raw.SendAlertBySMS !== undefined) { raw.sendAlertBySMS = toBool(raw.SendAlertBySMS) ?? false; delete raw.SendAlertBySMS; }
+      if (raw.SendAlertByEmail !== undefined) { raw.sendAlertByEmail = toBool(raw.SendAlertByEmail) ?? false; delete raw.SendAlertByEmail; }
+      if (raw.SendAlertByTwitter !== undefined) { raw.sendAlertByTwitter = toBool(raw.SendAlertByTwitter) ?? false; delete raw.SendAlertByTwitter; }
+      // Source → source
+      if (raw.Source !== undefined) { raw.source = String(raw.Source); delete raw.Source; }
+      // AlertText → alertText
+      if (raw.AlertText !== undefined) { raw.alertText = String(raw.AlertText); delete raw.AlertText; }
+      // Audience → audience
+      if (raw.Audience !== undefined) { raw.audience = String(raw.Audience); delete raw.Audience; }
+      // AlertType → alertType
+      if (raw.AlertType !== undefined) { raw.alertType = String(raw.AlertType); delete raw.AlertType; }
+      // CopiedFromAlertID → copiedFromAlertId
+      if (raw.CopiedFromAlertID !== undefined) { raw.copiedFromAlertId = String(raw.CopiedFromAlertID); delete raw.CopiedFromAlertID; }
+      // CopiedFromSource → copiedFromSource
+      if (raw.CopiedFromSource !== undefined) { raw.copiedFromSource = String(raw.CopiedFromSource); delete raw.CopiedFromSource; }
+
+      return item;
+    });
+  };
+
+  // ── Train Order (P3) ──────────────────────────────────────────────────
+  // Darwin JSON (XSD choice model):
+  //   set: { tiploc, crs, platform, set: { first: { rid|trainID, ... }, second?, third? } }
+  //   clear: { tiploc, crs, platform, clear: { rid } }
+  // Normalise: extract set/clear into `order` field with discriminated union
+  const normalizeTrainOrder = (items: unknown[]): unknown[] => {
+    return items.map((item) => {
+      if (typeof item !== "object" || item === null) return item;
+      const raw = item as Record<string, unknown>;
+
+      if (raw.set !== undefined && typeof raw.set === "object" && raw.set !== null) {
+        const setData = raw.set as Record<string, unknown>;
+        raw.order = {
+          action: "set",
+          data: {
+            first: setData.first,
+            second: setData.second,
+            third: setData.third,
+          },
+        };
+        delete raw.set;
+      } else if (raw.clear !== undefined) {
+        raw.order = { action: "clear" };
+        delete raw.clear;
+      }
+
+      return item;
+    });
+  };
+
+  // ── Tracking ID (P3) ──────────────────────────────────────────────────
+  // Darwin JSON: { area, berthId, incorrectTrainID, correctTrainID }
+  // Normalise: group area+berthId into `berth` object
+  const normalizeTrackingID = (items: unknown[]): unknown[] => {
+    return items.map((item) => {
+      if (typeof item !== "object" || item === null) return item;
+      const raw = item as Record<string, unknown>;
+
+      if (raw.area !== undefined || raw.berthId !== undefined) {
+        raw.berth = {
+          area: raw.area !== undefined ? String(raw.area) : "",
+          berthId: raw.berthId !== undefined ? String(raw.berthId) : "",
+        };
+        delete raw.area;
+        delete raw.berthId;
+      }
+
+      return item;
+    });
+  };
+
+  // ── Alarm (P3) ────────────────────────────────────────────────────────
+  // Darwin JSON (XSD choice model):
+  //   set: { set: { id, tdAreaFail?: { areaId }, tdFeedFail?: {}, tyrellFeedFail?: {} } }
+  //   clear: { clear: { id } }
+  // Normalise: extract set/clear into `action` field with discriminated union
+  const normalizeAlarm = (items: unknown[]): unknown[] => {
+    return items.map((item) => {
+      if (typeof item !== "object" || item === null) return item;
+      const raw = item as Record<string, unknown>;
+
+      if (raw.set !== undefined && typeof raw.set === "object" && raw.set !== null) {
+        const setData = raw.set as Record<string, unknown>;
+        const id = String(setData.id ?? "");
+
+        let alarmDetail: Record<string, unknown>;
+        if (setData.tdAreaFail !== undefined) {
+          const fail = setData.tdAreaFail as Record<string, unknown>;
+          alarmDetail = { type: "tdAreaFail", areaId: String(fail?.areaId ?? "") };
+        } else if (setData.tdFeedFail !== undefined) {
+          alarmDetail = { type: "tdFeedFail" };
+        } else if (setData.tyrellFeedFail !== undefined) {
+          alarmDetail = { type: "tyrellFeedFail" };
+        } else {
+          alarmDetail = { type: "unknown" };
+        }
+
+        raw.action = { type: "set", data: { id, alarmDetail } };
+        delete raw.set;
+      } else if (raw.clear !== undefined && typeof raw.clear === "object" && raw.clear !== null) {
+        const clearData = raw.clear as Record<string, unknown>;
+        raw.action = { type: "clear", id: String(clearData.id ?? "") };
+        delete raw.clear;
+      }
+
       return item;
     });
   };
@@ -465,11 +776,21 @@ export function parseDarwinMessage(raw: Buffer | string | null): ParseResult {
   let tsItems = toArray(d.TS);
   let formationLoadingItems = toArray(d.formationLoading);
   let owItems = toArray(d.OW);
+  let scheduleFormationsItems = toArray(d.scheduleFormations);
+  let trainAlertItems = toArray(d.trainAlert);
+  let trainOrderItems = toArray(d.trainOrder);
+  let trackingIDItems = toArray(d.trackingID);
+  let alarmItems = toArray(d.alarm);
 
   if (scheduleItems) scheduleItems = normalizeSchedule(scheduleItems);
   if (tsItems) tsItems = normalizeTS(tsItems);
   if (formationLoadingItems) formationLoadingItems = normalizeFormationLoading(formationLoadingItems);
   if (owItems) owItems = normalizeOW(owItems);
+  if (scheduleFormationsItems) scheduleFormationsItems = normalizeScheduleFormations(scheduleFormationsItems);
+  if (trainAlertItems) trainAlertItems = normalizeTrainAlert(trainAlertItems);
+  if (trainOrderItems) trainOrderItems = normalizeTrainOrder(trainOrderItems);
+  if (trackingIDItems) trackingIDItems = normalizeTrackingID(trackingIDItems);
+  if (alarmItems) alarmItems = normalizeAlarm(alarmItems);
 
   const message: DarwinMessage = {
     type: p.uR ? "uR" : "sR",
@@ -479,14 +800,14 @@ export function parseDarwinMessage(raw: Buffer | string | null): ParseResult {
     TS: tsItems as DarwinMessage["TS"],
     deactivated: toArray(d.deactivated) as DarwinMessage["deactivated"],
     association: toArray(d.association) as DarwinMessage["association"],
-    scheduleFormations: toArray(d.scheduleFormations) as DarwinMessage["scheduleFormations"],
+    scheduleFormations: scheduleFormationsItems as DarwinMessage["scheduleFormations"],
     serviceLoading: toArray(d.serviceLoading) as DarwinMessage["serviceLoading"],
     formationLoading: formationLoadingItems as DarwinMessage["formationLoading"],
     OW: owItems as DarwinMessage["OW"],
-    trainAlert: toArray(d.trainAlert) as DarwinMessage["trainAlert"],
-    trainOrder: toArray(d.trainOrder) as DarwinMessage["trainOrder"],
-    trackingID: toArray(d.trackingID) as DarwinMessage["trackingID"],
-    alarm: toArray(d.alarm) as DarwinMessage["alarm"],
+    trainAlert: trainAlertItems as DarwinMessage["trainAlert"],
+    trainOrder: trainOrderItems as DarwinMessage["trainOrder"],
+    trackingID: trackingIDItems as DarwinMessage["trackingID"],
+    alarm: alarmItems as DarwinMessage["alarm"],
   };
 
   // Must have at least one data array

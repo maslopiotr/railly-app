@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { StationSearch } from "./components/StationSearch";
 import { DepartureBoard } from "./components/DepartureBoard";
 import { ServiceDetail } from "./components/ServiceDetail";
-import { TimePicker } from "./components/TimePicker";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { useRecentStations } from "./hooks/useRecentStations";
 import { useFavourites } from "./hooks/useFavourites";
@@ -28,12 +27,17 @@ function buildUrl(
   station: StationSearchResult | null,
   service: HybridBoardService | null,
   time: string | null,
+  destinationStation: StationSearchResult | null,
 ): string {
   if (!station) return "/";
   const name = station.name;
   const params = new URLSearchParams();
   params.set("name", name);
   if (time) params.set("time", time);
+  if (destinationStation) {
+    params.set("dest", destinationStation.crsCode);
+    params.set("destName", destinationStation.name);
+  }
   const qs = params.toString();
   if (service) {
     return `/stations/${station.crsCode}/${service.rid}?${qs}`;
@@ -46,11 +50,14 @@ function parseUrl(): {
   station: StationSearchResult | null;
   rid: string | null;
   time: string | null;
+  destinationStation: StationSearchResult | null;
 } {
   const path = window.location.pathname;
   const params = new URLSearchParams(window.location.search);
   const name = decodeURIComponent(params.get("name") || "");
   const time = params.get("time");
+  const destCrs = params.get("dest");
+  const destName = decodeURIComponent(params.get("destName") || "");
 
   const match = path.match(/^\/stations\/([A-Z]{3})(?:\/(\d+))?\/?$/i);
   if (!match)
@@ -58,6 +65,7 @@ function parseUrl(): {
       station: null,
       rid: null,
       time: time && /^(\d{2}):(\d{2})$/.test(time) ? time : null,
+      destinationStation: null,
     };
 
   const crs = match[1].toUpperCase();
@@ -67,6 +75,7 @@ function parseUrl(): {
     station: { name, crsCode: crs, tiploc: "" },
     rid,
     time: time && /^(\d{2}):(\d{2})$/.test(time) ? time : null,
+    destinationStation: destCrs ? { name: destName, crsCode: destCrs.toUpperCase(), tiploc: "" } : null,
   };
 }
 
@@ -142,8 +151,8 @@ function App() {
   // Board tab state — lifted so it persists across service detail navigation
   const [activeTab, setActiveTab] = useState<"departures" | "arrivals">("departures");
 
-  // Selected time-of-day (HH:MM) or null for "now"
-  const [selectedTime, setSelectedTime] = useState<string | null>(null);
+  // Destination station for "Going to" filter (NR-style From/To)
+  const [destinationStation, setDestinationStation] = useState<StationSearchResult | null>(null);
 
   // Service refresh state
   const [isServiceRefreshing, setIsServiceRefreshing] = useState(false);
@@ -156,20 +165,26 @@ function App() {
     (
       station: StationSearchResult | null,
       service: HybridBoardService | null,
-      time: string | null,
+      dest: StationSearchResult | null = destinationStation,
     ) => {
-      const url = buildUrl(station, service, time);
+      const url = buildUrl(station, service, null, dest);
       window.history.pushState(null, "", url);
     },
-    [],
+    [destinationStation],
   );
 
-  // Handle station selection
+  // Handle station selection (From station)
   function handleStationSelect(station: StationSearchResult) {
     addRecentStation(station);
     setSelectedStation(station);
     setSelectedService(null);
-    navigateTo(station, null, selectedTime);
+    navigateTo(station, null);
+  }
+
+  // Handle destination station selection (Going to)
+  function handleDestinationSelect(dest: StationSearchResult | null) {
+    setDestinationStation(dest);
+    navigateTo(selectedStation, selectedService, dest);
   }
 
   // Handle service selection
@@ -177,34 +192,29 @@ function App() {
     const isArrival = service.sta !== null && service.std === null;
     setActiveTab(isArrival ? "arrivals" : "departures");
     setSelectedService(service);
-    navigateTo(selectedStation, service, selectedTime);
+    navigateTo(selectedStation, service);
   }
 
   // Handle back from service detail
   function handleBackFromService() {
     setSelectedService(null);
-    navigateTo(selectedStation, null, selectedTime);
+    navigateTo(selectedStation, null);
   }
 
   // Handle "Railly" logo click — go to landing page
   function handleLogoClick() {
     setSelectedStation(null);
     setSelectedService(null);
-    setSelectedTime(null);
+    setDestinationStation(null);
     navigateTo(null, null, null);
-  }
-
-  // Handle time change from board view
-  function handleTimeChange(time: string | null) {
-    setSelectedTime(time);
-    navigateTo(selectedStation, selectedService, time);
   }
 
   // Handle back from board
   function handleBackFromBoard() {
     setSelectedStation(null);
     setSelectedService(null);
-    navigateTo(null, null, null);
+    setDestinationStation(null);
+    navigateTo(null, null);
   }
 
   // Refresh service data by re-fetching the board
@@ -218,7 +228,6 @@ function App() {
     setIsServiceRefreshing(true);
     try {
       const data = await fetchBoard(selectedStation.crsCode, {
-        time: selectedTime || undefined,
         signal: controller.signal,
       });
 
@@ -227,7 +236,7 @@ function App() {
         setSelectedService(updated);
       } else {
         setSelectedService(null);
-        navigateTo(selectedStation, null, selectedTime);
+        navigateTo(selectedStation, null);
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
@@ -241,8 +250,8 @@ function App() {
   // Restore state from URL on mount, and listen for browser back/forward
   useEffect(() => {
     function handlePopState() {
-      const { station, rid, time } = parseUrl();
-      setSelectedTime(time);
+      const { station, rid, destinationStation: dest } = parseUrl();
+      setDestinationStation(dest);
       if (station) {
         setSelectedStation(station);
         if (rid) {
@@ -251,7 +260,7 @@ function App() {
           abortRef.current = controller;
 
           fetchBoard(station.crsCode, {
-            time: time || undefined,
+            destination: dest?.crsCode || undefined,
             signal: controller.signal,
           })
             .then((data) => {
@@ -263,7 +272,7 @@ function App() {
                 setActiveTab(isArrival ? "arrivals" : "departures");
               } else {
                 setSelectedService(null);
-                window.history.replaceState(null, "", buildUrl(station, null, time));
+                window.history.replaceState(null, "", buildUrl(station, null, null, dest));
               }
             })
             .catch(() => {
@@ -279,8 +288,8 @@ function App() {
     }
 
     // Restore state from URL on initial load
-    const { station, rid, time } = parseUrl();
-    setSelectedTime(time);
+    const { station, rid, destinationStation: dest } = parseUrl();
+    setDestinationStation(dest);
     if (station) {
       setSelectedStation(station);
       if (rid) {
@@ -289,7 +298,7 @@ function App() {
         abortRef.current = controller;
 
         fetchBoard(station.crsCode, {
-          time: time || undefined,
+          destination: dest?.crsCode || undefined,
           signal: controller.signal,
         })
           .then((data) => {
@@ -311,7 +320,7 @@ function App() {
         abortRef.current = controller;
 
         fetchBoard(station.crsCode, {
-          time: time || undefined,
+          destination: dest?.crsCode || undefined,
           signal: controller.signal,
         })
           .then((data) => {
@@ -379,8 +388,8 @@ function App() {
               onSelectService={handleSelectService}
               activeTab={activeTab}
               onTabChange={setActiveTab}
-              selectedTime={selectedTime}
-              onTimeChange={handleTimeChange}
+              destinationStation={destinationStation}
+              onDestinationChange={handleDestinationSelect}
             />
           ) : (
             /* Level 1: Landing */
@@ -398,20 +407,15 @@ function App() {
                 Search any station to see departures, arrivals, and platform info
               </p>
 
-              {/* Search + Time picker */}
+              {/* Search */}
               <div className="w-full flex flex-col items-center mb-6">
-                <div className="w-full flex flex-col sm:flex-row sm:items-center sm:justify-center gap-3">
-                  <div className="w-full sm:flex-1 sm:max-w-md">
-                    <StationSearch
-                      onSelect={handleStationSelect}
-                      placeholder="Search for a station..."
-                      autoFocus
-                      size="large"
-                    />
-                  </div>
-                  <div className="sm:shrink-0 flex justify-center">
-                    <TimePicker value={selectedTime} onChange={setSelectedTime} />
-                  </div>
+                <div className="w-full sm:max-w-md">
+                  <StationSearch
+                    onSelect={handleStationSelect}
+                    placeholder="Search for a station..."
+                    autoFocus
+                    size="large"
+                  />
                 </div>
                 <p className="text-xs text-text-muted mt-2">
                   Try 'Euston', 'Manchester', or 'KGX'

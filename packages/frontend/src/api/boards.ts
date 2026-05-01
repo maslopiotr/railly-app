@@ -20,6 +20,7 @@ export async function fetchBoard(
     offset?: number;
     type?: "departures" | "arrivals";
     time?: string;
+    destination?: string;
     signal?: AbortSignal;
   },
 ): Promise<HybridBoardResponse> {
@@ -28,6 +29,7 @@ export async function fetchBoard(
   if (options?.offset) params.set("offset", String(options.offset));
   if (options?.type) params.set("type", options.type);
   if (options?.time) params.set("time", options.time);
+  if (options?.destination) params.set("destination", options.destination);
 
   // Cache-bust to prevent stale cached responses on back-navigation
   params.set("_t", String(Date.now()));

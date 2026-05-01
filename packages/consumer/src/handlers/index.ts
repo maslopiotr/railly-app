@@ -20,6 +20,7 @@ import type {
 } from "@railly-app/shared";
 import { handleSchedule } from "./schedule.js";
 import { handleTrainStatus } from "./trainStatus.js";
+import { handleServiceLoading as handleServiceLoadingImpl } from "./serviceLoading.js";
 import { sql } from "../db.js";
 import { log } from "../log.js";
 
@@ -363,7 +364,7 @@ export async function handleDarwinMessage(
 
     if (message.serviceLoading) {
       for (const l of message.serviceLoading) {
-        await handleServiceLoading(l);
+        await handleServiceLoading(l, generatedAt);
         incrementType("serviceLoading");
       }
     }
@@ -510,9 +511,8 @@ async function handleScheduleFormations(formations: DarwinScheduleFormations): P
   log.debug("   🚃 Formations:", formations.rid);
 }
 
-async function handleServiceLoading(loading: DarwinServiceLoading): Promise<void> {
-  // TODO: Phase 2 — store loading data per service/location
-  log.debug("   👥 ServiceLoading:", loading.rid);
+async function handleServiceLoading(loading: DarwinServiceLoading, generatedAt: string): Promise<void> {
+  await handleServiceLoadingImpl(loading, generatedAt);
 }
 
 async function handleFormationLoading(loading: DarwinFormationLoading): Promise<void> {
@@ -522,7 +522,7 @@ async function handleFormationLoading(loading: DarwinFormationLoading): Promise<
 
 async function handleTrainAlert(alert: DarwinTrainAlert): Promise<void> {
   // TODO: Phase 3 — store train-specific alerts
-  log.debug("   🚨 TrainAlert:", alert.rid, alert.alert);
+  log.debug("   🚨 TrainAlert:", alert.alertId, alert.alertText);
 }
 
 async function handleTrainOrder(order: DarwinTrainOrder): Promise<void> {
@@ -532,10 +532,10 @@ async function handleTrainOrder(order: DarwinTrainOrder): Promise<void> {
 
 async function handleTrackingID(tracking: DarwinTrackingID): Promise<void> {
   // TODO: Phase 3 — update headcode corrections
-  log.debug("   🏷️ TrackingID:", tracking.rid, tracking.trainId);
+  log.debug("   🏷️ TrackingID:", tracking.berth.area, tracking.berth.berthId, tracking.correctTrainID);
 }
 
 async function handleAlarm(alarm: DarwinAlarm): Promise<void> {
   // Log system alarms for operational awareness
-  log.debug("   🔔 Darwin Alarm:", alarm.alarmType, alarm.description);
+  log.debug("   🔔 Darwin Alarm:", JSON.stringify(alarm.action));
 }

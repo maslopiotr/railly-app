@@ -137,6 +137,39 @@ function DelayBadge({ delay }: { delay: number | null }) {
   );
 }
 
+/** Loading tier: 0-30% = low, 31-70% = moderate, 71-100% = busy */
+type LoadingTier = "low" | "moderate" | "busy";
+
+function getLoadingTier(percentage: number): LoadingTier {
+  return percentage <= 30 ? "low" : percentage <= 70 ? "moderate" : "busy";
+}
+
+/** Thin loading bar showing train occupancy at this stop */
+function LoadingBar({ percentage }: { percentage: number | null }) {
+  if (percentage === null) return null;
+
+  const tier = getLoadingTier(percentage);
+  const barClass = tier === "low"
+    ? "bg-loading-low-bar"
+    : tier === "moderate"
+      ? "bg-loading-moderate-bar"
+      : "bg-loading-busy-bar";
+  const bgClass = tier === "low"
+    ? "bg-loading-low-bg"
+    : tier === "moderate"
+      ? "bg-loading-moderate-bg"
+      : "bg-loading-busy-bg";
+
+  return (
+    <div className={`h-1 rounded-full ${bgClass} w-full mt-1`}>
+      <div
+        className={`h-full rounded-full ${barClass} transition-all`}
+        style={{ width: `${Math.max(percentage, 5)}%` }}
+      />
+    </div>
+  );
+}
+
 /** Checkmark icon for visited stops */
 function CheckIcon() {
   return (
@@ -164,6 +197,7 @@ function CallingPointRow({
   stopType,
   stopState,
   isLast,
+  loadingPercentage,
 }: {
   name: string | null;
   crs: string | null;
@@ -181,6 +215,7 @@ function CallingPointRow({
   stopType: string;
   stopState: StopState;
   isLast: boolean;
+  loadingPercentage: number | null;
 }) {
   const displayName = normaliseStationName(name) || crs || "Unknown";
   const displayCrs = crs || "";
@@ -340,6 +375,9 @@ function CallingPointRow({
             </>
           )}
         </div>
+
+        {/* Loading indicator — train occupancy bar */}
+        <LoadingBar percentage={loadingPercentage} />
       </div>
     </div>
   );
@@ -432,6 +470,7 @@ export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
             stopType={cp.stopType}
             stopState={finalState}
             isLast={i === displayPoints.length - 1}
+            loadingPercentage={cp.loadingPercentage ?? null}
           />
         );
       })}

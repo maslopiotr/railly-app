@@ -117,6 +117,15 @@ export const callingPoints = pgTable(
     suppr: boolean("suppr").default(false).notNull(), // Stop suppressed from public display entirely
     lengthPushport: varchar("length_pushport", { length: 10 }), // Train length in coaches
     detachFront: boolean("detach_front").default(false).notNull(), // Front coaches detach at this stop
+    // -- Loading columns (Darwin serviceLoading messages) --
+    loadingPercentage: integer("loading_percentage"), // 0-100 from serviceLoading
+    loadingPercentageType: varchar("loading_percentage_type", { length: 10 }), // "Typical" | "Expected"
+    loadingPercentageSrc: varchar("loading_percentage_src", { length: 20 }), // e.g. "Darwin", "CIS"
+    loadingPercentageSrcInst: varchar("loading_percentage_src_inst", { length: 20 }), // e.g. "at08"
+    loadingCategory: varchar("loading_category", { length: 10 }), // Category code (not observed in live data yet)
+    loadingCategoryType: varchar("loading_category_type", { length: 10 }),
+    loadingCategorySrc: varchar("loading_category_src", { length: 20 }),
+    loadingCategorySrcInst: varchar("loading_category_src_inst", { length: 20 }),
     updatedAt: timestamp("updated_at", { withTimezone: true }), // Last Darwin message
     tsGeneratedAt: timestamp("ts_generated_at", { withTimezone: true }), // Last TS message timestamp (for dedup)
     timetableUpdatedAt: timestamp("timetable_updated_at", { withTimezone: true }), // Last PPTimetable seed update

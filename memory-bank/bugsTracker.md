@@ -194,7 +194,8 @@ Journey viewed at 17:00 202604306714507 when departure is set to 17:00 and alrea
 | BUG-036 | 23505 violation: natural key matching + stop_type derivation | 2026-04-29 |
 | BUG-025 | Circular trains: match by tpl+sortTime instead of tpl only | 2026-04-30 |
 | BUG-037 | Phantom IP rows: TS handler uses `pass` sub-object for PP detection (+ 37K additional cleanup 2026-04-30) — **partially fixed, underlying matching issue persists (see BUG-038)** | 2026-04-30 |
-| BUG-039 | Seed Phase 4 stale-marking corrupted `source_timetable` flag, causing consumer to overwrite timetable data via VSTP path | 2026-05-01 |
+ | BUG-039 | Seed Phase 4 stale-marking corrupted `source_timetable` flag, causing consumer to overwrite timetable data via VSTP path | 2026-05-01 |
+ | BUG-040 | Time-selected board filter excluded departed services (atd IS NULL at terminus) — now uses scheduled-time window matching NR behaviour | 2026-05-01 |
 
 ---
 
