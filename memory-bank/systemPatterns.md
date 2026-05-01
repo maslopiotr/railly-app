@@ -88,7 +88,7 @@ if (delay > 720) delay -= 1440;
 
 ### Design Token System
 - **Architecture**: `:root`/`.dark` CSS custom properties → `@theme` block → Tailwind utility classes
-- **Token categories**: surfaces, text, borders, status (text/bg/border), platform badges, calling points timeline, alert banners
+- **Token categories**: surfaces, text, borders, status (text/bg/border), platform badges, calling points timeline, loading bars, alert banners
 - **Theme flash prevention**: `<html>` defaults to dark background, inline script swaps to light before first paint
 - **Rule**: No raw Tailwind colour classes in components — always semantic tokens (`bg-surface-card`, `text-status-on-time`, etc.)
 - **Exception**: `dark:` prefix only for mixed-colour elements that can't be tokenised (e.g. amber favourites)
@@ -96,6 +96,7 @@ if (delay > 720) delay -= 1440;
 - **Shared components**: `PlatformBadge` (standard + compact), `DelayBadge`, `formatDisplayTime`/`computeDelay` from shared utils
 - **CallingPoints dots**: green=arrived, yellow=next/current, grey=future, red=cancelled (all via `--call-*` tokens)
 - **ServiceRow**: Single CSS Grid layout — no `sm:hidden`/`hidden sm:flex` dual DOM trees
+- **Loading bars**: 6 `--loading-*` tokens — low/moderate/busy tiers × `-bg` (track background) + `-bar` (filled portion). Consistent 3-tier thresholds (0-30/31-70/71-100) used across both `LoadingBar` (calling points) and `BusyIndicator` (board rows). Minimum 5% bar width prevents invisibility. Dynamic width via inline `style={{ width }}` (Tailwind can't express dynamic percentages).
 
 ## Key Decisions
 

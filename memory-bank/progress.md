@@ -1,5 +1,35 @@
 # Progress
 
+## Completed (2026-05-01) — Session 13
+
+### NR-Style Board Redesign ✅
+- ✅ BUG-040 fix: Split visibility filter — live mode keeps 5-condition filter, time-selected mode uses scheduled-time window `[ref-30, ref+120]` matching National Rail behaviour. EUS at 15:00 now shows 58 services (up from 1).
+- ✅ "Earlier/Later" navigation: ← Earlier / Later → buttons shift time by ±1 hour. "Now" button resets to live mode.
+- ✅ "Going to" destination filter: Dropdown of unique destinations from current board results. Backend `destination` query param filters by CRS code.
+- ✅ Duration & stops in service rows: Each row shows "3 stops · 1h 23m" or "Direct · 45m" as subtitle under the destination name.
+- ✅ Auto-polling: 60s interval when in live mode; pauses when tab hidden.
+
+### Train Loading Display (Option 1 + Option 2) ✅
+- ✅ Option 2 — LoadingBar (CallingPoints): Thin coloured loading bar below the time row on each calling point when `loadingPercentage` is available. Three tiers: 🟢 Green (0-30%, "Quiet"), 🟡 Amber (31-70%, "Moderate"), 🔴 Red (71-100%, "Busy"). Hidden when no data (null).
+- ✅ Option 1 — BusyIndicator (ServiceRow): Small coloured dot + label ("Quiet"/"Moderate"/"Busy") next to status badge on desktop, and in mobile status row. Shows loading at board station via `getBoardStationLoading()`.
+- ✅ Design tokens: 6 `--loading-*` tokens (low/moderate/busy × bg/bar) in both light and dark modes.
+- ✅ Minimum bar width: 5% via `Math.max(percentage, 5)` — prevents invisibility at very low percentages.
+- ✅ Consistent thresholds: Same 3-tier logic (0-30/31-70/71-100) shared across `LoadingBar` and `BusyIndicator`.
+- ✅ API surface: Only `loadingPercentage` exposed; diagnostic fields kept internal.
+- ✅ Build verified: All 4 packages (shared, api, consumer, frontend) compile and build cleanly.
+
+### Files Modified (10 files)
+| File | Change |
+|---|---|
+| `packages/shared/src/types/board.ts` | Added `loadingPercentage: number \| null` to `HybridCallingPoint` |
+| `packages/api/src/routes/boards.ts` | Split visibility filter (BUG-040), destination filter, `loadingPercentage` in Query 1/3 and cpList |
+| `packages/api/src/routes/services.ts` | Added `loadingPercentage` to Query 2 and response mapping |
+| `packages/frontend/src/index.css` | Added 6 `--loading-*` design tokens (theme + light/dark modes) |
+| `packages/frontend/src/components/CallingPoints.tsx` | Added `LoadingBar` component + `loadingPercentage` prop |
+| `packages/frontend/src/components/ServiceRow.tsx` | Added `BusyIndicator` + `getBoardStationLoading` + subtitle prop |
+| `packages/frontend/src/components/DepartureBoard.tsx` | Full NR-style redesign (Earlier/Later, destination filter, auto-polling) |
+| `packages/frontend/src/api/boards.ts` | Destination param in fetchBoard |
+
 ## Completed (2026-05-01) — Session 12
 
 ### Seed & Consumer Data Integrity Fixes ✅

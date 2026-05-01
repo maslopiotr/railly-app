@@ -59,7 +59,7 @@ The following Darwin message handlers are currently stubs that only log at `debu
 | P1 | `handleStationMessage` (OW) | Log only | Station messages (disruption info) |
 | P2 | `handleAssociation` | Log only | Service joins/splits |
 | P2 | `handleScheduleFormations` | Log only | Coach formation data |
-| P2 | `handleServiceLoading` | Log only | Per-service loading data |
+| P2 | `handleServiceLoading` | ✅ Implemented (Session 13) | Per-service loading data — writes `loading_percentage` to calling_points, consumed by LoadingBar (CallingPoints) + BusyIndicator (ServiceRow) |
 | P2 | `handleFormationLoading` | Log only | Per-coach loading data |
 | P3 | `handleTrainAlert` | Log only | Train-specific alerts |
 | P3 | `handleTrainOrder` | Log only | Platform departure order |

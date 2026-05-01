@@ -11,21 +11,22 @@
 - **Duration & stops in service rows**: Each row shows "3 stops · 1h 23m" or "Direct · 45m" as subtitle under the destination name.
 - **Auto-polling**: 60s interval when in live mode; pauses when tab hidden.
 
-### Key Files This Session
-- `packages/api/src/routes/boards.ts` — split visibility filter + destination filter param
-- `packages/frontend/src/components/DepartureBoard.tsx` — full NR-style redesign
-- `packages/frontend/src/components/ServiceRow.tsx` — subtitle prop for duration/stops
-- `packages/frontend/src/api/boards.ts` — destination param in fetchBoard
-- **Root cause:** When `time` param was set (e.g. `time=15:00`), the visibility filter's condition 4 required `atdPushport IS NULL` (train not yet departed). At terminus stations like EUS, nearly all services have already departed → only 1 of 57 services visible at 15:00.
-- **NR comparison:** Scraped National Rail's live board via Puppeteer. NR shows services by **scheduled time** regardless of departure status (e.g. "17:02 Departed 17:38" still visible). Their API (`nreservices.nationalrail.co.uk/live-info`) returns services with `departureInfo.scheduled` as the primary time; `estimated`/`actual` are metadata, not used for filtering.
-- **Fix:** Split visibility filter into two modes:
-  - **Live mode** (no time param): keeps existing 5-condition filter (cancelled, at platform, recently departed, not-yet-departed, scheduled-only)
-  - **Time-selected mode** (time param set): uses simple scheduled-time window `[ref-30, ref+120]`, matching NR behaviour
-- **Sort order:** Time-selected mode sorts by scheduled time (timetable-style); live mode sorts by display time (real-time)
-- **Result:** EUS at 15:00 now shows 58 services (up from 1)
+### Train Loading Display — Option 1 + Option 2
+- **Option 2 — LoadingBar (CallingPoints):** Thin coloured loading bar below the time row on each calling point when `loadingPercentage` is available. Three tiers: 🟢 Green (0-30%, "Quiet"), 🟡 Amber (31-70%, "Moderate"), 🔴 Red (71-100%, "Busy"). Hidden when no data (null) — which is the common case since loading data is sparse.
+- **Option 1 — BusyIndicator (ServiceRow):** Small coloured dot + label ("Quiet" / "Moderate" / "Busy") next to the status badge on desktop, and in the mobile status row. Shows loading at the board station by finding the matching calling point via `getBoardStationLoading()`.
+- **Design tokens:** 6 new `--loading-*` tokens in both `:root` (light) and `.dark` modes — low/moderate/busy tiers each with `-bg` and `-bar` variants.
+- **Minimum bar width:** 5% via `Math.max(percentage, 5)` — prevents invisibility at very low percentages.
+- **Dynamic width:** Uses inline `style={{ width }}` since Tailwind utilities can't express dynamic percentage values.
+- **Consistent thresholds:** Same 3-tier logic (0-30/31-70/71-100) shared across `LoadingBar` and `BusyIndicator`.
+- **API surface:** Only `loadingPercentage` exposed in `HybridCallingPoint` — diagnostic fields (`loadingPercentageType`, `loadingPercentageSrc`) kept internal.
 
 ### Key Files This Session
-- `packages/api/src/routes/boards.ts` — split visibility filter + sort order
+- `packages/shared/src/types/board.ts` — added `loadingPercentage: number | null` to `HybridCallingPoint`
+- `packages/api/src/routes/boards.ts` — added `loadingPercentage` to Query 1, Query 3, and cpList mapping
+- `packages/api/src/routes/services.ts` — added `loadingPercentage` to Query 2 and response mapping
+- `packages/frontend/src/index.css` — added 6 `--loading-*` design tokens (theme + light/dark modes)
+- `packages/frontend/src/components/CallingPoints.tsx` — added `LoadingBar` component + `loadingPercentage` prop passthrough
+- `packages/frontend/src/components/ServiceRow.tsx` — added `BusyIndicator` component + `getBoardStationLoading` helper
 
 ### Previous Sessions
 - Session 12: Seed & Consumer Data Integrity Fixes (Phase 4 removal, isPassenger nullable, aliasing bug)
