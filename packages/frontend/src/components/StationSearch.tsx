@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { searchStations } from "../api/stations";
+import { normaliseStationName } from "@railly-app/shared";
 import type { StationSearchResult } from "@railly-app/shared";
 
 interface StationSearchProps {
@@ -90,7 +91,7 @@ export function StationSearch({
   }, [autoFocus]);
 
   function handleSelect(station: StationSearchResult) {
-    setQuery(station.name);
+    setQuery(normaliseStationName(station.name));
     setIsDropdownOpen(false);
     setSelectedIndex(-1);
     onSelect(station);
@@ -209,7 +210,7 @@ export function StationSearch({
               role="option"
               aria-selected={index === selectedIndex}
             >
-              <span className="font-medium">{station.name}</span>
+              <span className="font-medium">{normaliseStationName(station.name)}</span>
               <span
                 className={`text-xs font-mono px-2 py-0.5 rounded ml-2 ${
                   index === selectedIndex

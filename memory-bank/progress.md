@@ -1,5 +1,16 @@
 # Progress
 
+## Completed (2026-05-01) — Session 8
+
+### Station Name Normalisation — "London" Prefix Fix ✅
+- ✅ CORPUS data stores London terminals as "EUSTON LONDON" (suffix form), UK convention is "LONDON EUSTON" (prefix form)
+- ✅ `normaliseStationName()` in `shared/utils/stationName.ts` — added London reordering rule before title-casing
+- ✅ `StationSearch.tsx` — applied `normaliseStationName()` to dropdown items and input query text
+- ✅ `App.tsx` — applied `normaliseStationName()` to "Remove from favourites" aria-label
+- ✅ DB stores raw CORPUS names (no data mutation at seed time)
+- ✅ API returns `stationName: "EUSTON LONDON"` from `stations` table; `location_ref` (Darwin) already has correct "London Euston"
+- ✅ Frontend display-time fix covers all surfaces: board header, search dropdown, favourites, recents, service detail
+
 ## Completed (2026-04-30) — Session 7
 
 ### Bug Fixes (6 items) ✅

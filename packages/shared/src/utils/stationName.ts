@@ -4,6 +4,10 @@
  * Station names from Darwin and PPTimetable often arrive in ALL CAPS
  * (e.g. "MILTON KEYNES CENTRAL", "LONDON EUSTON").
  * This utility converts them to Title Case for consistent frontend display.
+ *
+ * CORPUS data stores some London stations in suffix form
+ * (e.g. "EUSTON LONDON" instead of "LONDON EUSTON").
+ * These are reordered to the UK convention prefix form before title-casing.
  */
 
 /** Words that should remain lowercase in station names (UK rail convention) */
@@ -47,7 +51,17 @@ export function normaliseStationName(name: string | null | undefined): string {
   if (!name) return "";
 
   // Trim and collapse multiple spaces
-  const trimmed = name.trim().replace(/\s+/g, " ");
+  let trimmed = name.trim().replace(/\s+/g, " ");
+
+  // CORPUS stores some London stations in suffix form
+  // (e.g. "EUSTON LONDON" instead of "LONDON EUSTON").
+  // Reorder to UK convention: move trailing "LONDON" to prefix position.
+  // Only reorder when "LONDON" is the last word and not already the first.
+  const upperTrimmed = trimmed.toUpperCase();
+  if (upperTrimmed.endsWith(" LONDON") && !upperTrimmed.startsWith("LONDON ")) {
+    const prefix = trimmed.slice(0, upperTrimmed.lastIndexOf(" LONDON"));
+    trimmed = "LONDON " + prefix;
+  }
 
   // If already title case (has both upper and lower), return as-is
   // This avoids re-normalising names that are already correct

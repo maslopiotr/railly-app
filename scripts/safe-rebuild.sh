@@ -4,8 +4,10 @@
 #
 # This script ensures the Kafka consumer drains gracefully before rebuilding:
 #   1. Stops the consumer (sends SIGTERM, waits up to 30s for graceful shutdown)
-#   2. Rebuilds all images with --no-cache
-#   3. Starts all services
+#   2. Builds all workspace packages (fail fast on TypeScript errors)
+#   3. Rebuilds Docker images with --no-cache (or --fast for cached)
+#   4. Starts all services
+#   5. Waits for health checks
 #
 # Data safety guarantees:
 #   - PostgreSQL data is in a named Docker volume — never touched by rebuilds
@@ -45,21 +47,27 @@ else
   echo "   ℹ️  Consumer not running — skipping"
 fi
 
-# Step 2: Rebuild images
+# Step 2: Build packages (fail fast on TypeScript errors)
 echo ""
-echo "2️⃣  Building images..."
+echo "2️⃣  Building packages..."
+npm run build --workspaces
+echo "   ✅ Packages built"
+
+# Step 3: Rebuild Docker images
+echo ""
+echo "3️⃣  Building Docker images..."
 docker compose build $NO_CACHE
 echo "   ✅ Images built"
 
-# Step 3: Start all services
+# Step 4: Start all services
 echo ""
-echo "3️⃣  Starting all services..."
+echo "4️⃣  Starting all services..."
 docker compose up -d
 echo "   ✅ Services started"
 
-# Step 4: Wait for health checks
+# Step 5: Wait for health checks
 echo ""
-echo "4️⃣  Waiting for services to be healthy..."
+echo "5️⃣  Waiting for services to be healthy..."
 sleep 5
 
 # Check postgres

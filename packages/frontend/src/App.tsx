@@ -467,7 +467,7 @@ function App() {
                             e.stopPropagation();
                             toggleFavourite(station);
                           }}
-                          aria-label={`Remove ${station.name} from favourites`}
+                          aria-label={`Remove ${normaliseStationName(station.name)} from favourites`}
                           title="Remove from favourites"
                         >
                           ✕
