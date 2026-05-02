@@ -1,5 +1,14 @@
 # Progress
 
+## Completed (2026-05-02) — Post-Session 15
+
+### Documentation & Memory Bank Review ✅
+- ✅ Added **Playwright MCP** testing docs to `techContext.md` (browser automation for frontend testing)
+- ✅ Updated `activeContext.md` — current focus shifted to BUG-018, stale heading fixed
+- ✅ Reviewed full memory bank for development readiness — aligns well with project structure
+  - Env vars self-documented in `docker-compose.yml`, API routes visible in `server.ts`, DB schema covered through patterns
+  - No missing critical context
+
 ## Completed (2026-05-01) — Session 15
 
 ### UX Fixes & Naming ✅

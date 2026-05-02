@@ -23,7 +23,7 @@ import { log } from "./log.js";
 export type ParseResult =
   | { kind: "success"; message: DarwinMessage }
   | { kind: "skip"; reason: string }
-  | { kind: "error"; code: string; message: string; rawPreview: string };
+  | { kind: "error"; code: string; message: string; rawPreview: string; rawFull: string };
 
 /**
  * Control messages that contain no train data and should be silently skipped.
@@ -49,6 +49,8 @@ export function parseDarwinMessage(raw: Buffer | string | null): ParseResult {
 
    const rawText = Buffer.isBuffer(raw) ? raw.toString("utf-8") : raw;
    const rawPreview = rawText.length > 300 ? rawText.slice(0, 300) + "…" : rawText;
+    // Store the full raw message for darwin_audit so we can debug parse failures
+    const rawFull = rawText;
 
    let envelope: unknown;
    try {
@@ -57,7 +59,7 @@ export function parseDarwinMessage(raw: Buffer | string | null): ParseResult {
      const errMsg = `Failed to parse outer STOMP envelope JSON`;
       log.error(`   ❌ ${errMsg}`);
       log.error(`      Raw preview: ${rawPreview}`);
-     return { kind: "error", code: "ENVELOPE_PARSE_ERROR", message: errMsg, rawPreview };
+     return { kind: "error", code: "ENVELOPE_PARSE_ERROR", message: errMsg, rawPreview, rawFull };
    }
 
   // The real Darwin payload is a JSON string inside envelope.bytes
@@ -75,7 +77,7 @@ export function parseDarwinMessage(raw: Buffer | string | null): ParseResult {
       : String(envelope);
     const errMsg = `Missing 'bytes' field in STOMP envelope (keys: [${envelopeKeys}])`;
     log.error(`   ❌ ${errMsg}`);
-    return { kind: "error", code: "MISSING_BYTES_FIELD", message: errMsg, rawPreview };
+    return { kind: "error", code: "MISSING_BYTES_FIELD", message: errMsg, rawPreview, rawFull };
   }
 
   let payload: unknown;
@@ -86,14 +88,14 @@ export function parseDarwinMessage(raw: Buffer | string | null): ParseResult {
     const errMsg = `Failed to parse Darwin payload JSON from bytes`;
     log.error(`   ❌ ${errMsg}`);
     log.error(`      Bytes preview: ${bytesPreview}`);
-    return { kind: "error", code: "PAYLOAD_PARSE_ERROR", message: errMsg, rawPreview: bytesPreview as string };
+    return { kind: "error", code: "PAYLOAD_PARSE_ERROR", message: errMsg, rawPreview: bytesPreview as string, rawFull };
   }
 
   if (typeof payload !== "object" || payload === null) {
     const payloadType = payload === null ? "null" : typeof payload;
     const errMsg = `Darwin payload is not an object (type: ${payloadType})`;
     log.error(`   ❌ ${errMsg}`);
-    return { kind: "error", code: "PAYLOAD_NOT_OBJECT", message: errMsg, rawPreview };
+    return { kind: "error", code: "PAYLOAD_NOT_OBJECT", message: errMsg, rawPreview, rawFull };
   }
 
   const p = payload as Record<string, unknown>;
@@ -119,7 +121,7 @@ export function parseDarwinMessage(raw: Buffer | string | null): ParseResult {
     const srType = p.sR !== undefined ? typeof p.sR : "undefined";
     const errMsg = `Missing uR or sR data block (keys: [${payloadKeys}], hasUR: ${hasUR}, hasSR: ${hasSR}, urType: ${urType}, srType: ${srType})`;
     log.error(`   ❌ ${errMsg}`);
-    return { kind: "error", code: "MISSING_DATA_BLOCK", message: errMsg, rawPreview };
+    return { kind: "error", code: "MISSING_DATA_BLOCK", message: errMsg, rawPreview, rawFull };
   }
 
   const d = dataBlock as Record<string, unknown>;
@@ -829,7 +831,7 @@ export function parseDarwinMessage(raw: Buffer | string | null): ParseResult {
     const dataBlockKeys = Object.keys(d).join(", ");
   const errMsg = `Darwin payload contains no recognised data types (keys: [${dataBlockKeys}], type: ${message.type}, ts: ${ts ?? "none"})`;
   log.error(`   ❌ ${errMsg}`);
-    return { kind: "error", code: "NO_DATA_TYPES", message: errMsg, rawPreview };
+    return { kind: "error", code: "NO_DATA_TYPES", message: errMsg, rawPreview, rawFull };
   }
 
   return { kind: "success", message };

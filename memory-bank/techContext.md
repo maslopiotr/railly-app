@@ -90,6 +90,12 @@ The consumer handles SIGTERM with a specific sequence to prevent data loss:
 
 **⚠️ NEVER use `docker compose down -v`** — the `-v` flag deletes all volumes including `postgres_data`.
 
+## Testing (Browser Automation)
+- **Playwright MCP** (`@playwright/mcp`) — Chromium-based browser automation via MCP tool calls
+- Available actions: `browser_navigate`, `browser_click`, `browser_type`, `browser_snapshot`, `browser_take_screenshot`, `browser_fill_form`, `browser_evaluate`, `browser_network_requests`, `browser_tabs`, `browser_drag`, `browser_drop`, `browser_file_upload`, `browser_console_messages`, `browser_press_key`, `browser_select_option`, `browser_hover`, `browser_wait_for`
+- Used for manual/automated testing of the frontend at `http://localhost:8080` (Docker) or `http://localhost:5173` (Vite dev server)
+- Each browser session: launch → interact (click/type/snapshot) → close
+
 ## Rebuild Procedures
 ```bash
 # Safe rebuild (stops consumer first, preserves all data)

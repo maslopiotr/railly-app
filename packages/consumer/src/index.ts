@@ -316,9 +316,11 @@ async function main(): Promise<void> {
         }
 
         if (result.kind === "error") {
-          // Parse error — persist to darwin_audit for investigation
+          // Parse error — persist to darwin_audit for investigation.
+          // Use rawFull (full raw message) so we can see the actual data,
+          // not just the 300-char preview which truncates debug info.
           try {
-            await logDarwinAudit("parse", "error", null, result.code, result.message, result.rawPreview);
+            await logDarwinAudit("parse", "error", null, result.code, result.message, result.rawFull);
           } catch { /* Don't let audit logging block processing */ }
           processedOffsets.set(offsetNum, true);
           return;

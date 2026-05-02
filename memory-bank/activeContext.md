@@ -1,8 +1,15 @@
 # Active Context
 
-## Current Focus: UX Fixes & Naming (Session 15)
+## Current Focus: BUG-018 & Backlog (Post-Session 15)
 
-### Latest Changes (Session 15)
+All Session 15 UX fixes and naming cleanup are complete. Next priority: BUG-018 "Approaching" timing.
+
+### Latest Changes
+
+**Documentation:**
+- Added **Playwright MCP** testing documentation to `techContext.md` — browser automation via MCP for frontend testing at `localhost:8080` (Docker) or `localhost:5173` (Vite)
+
+### Session 15 (Completed)
 
 **Three UX fixes applied:**
 - **Issue 1 — "From" station selectable + "To" box width parity**: Replaced static "From" display in `TrainsBoard.tsx` with `StationSearch` (compact size). Both From/To inputs now use identical `flex-1 sm:w-[200px] shrink-0` wrappers and `size="compact"`. Added `compact` variant to `StationSearch.tsx` (no `max-w-md`, smaller padding/icon). Wired `onStationChange` through `App.tsx`.
