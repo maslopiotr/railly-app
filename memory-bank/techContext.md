@@ -67,7 +67,7 @@ SELECT severity, message_type, error_code, count(*) FROM darwin_audit GROUP BY s
 - **Timetable seed**: `packages/api/src/db/seed-timetable.ts` — daily at 03:00, hash-based dedup
 - **Frontend board page**: `packages/frontend/src/pages/BoardPage.tsx` — thin presenter composing `useBoard` + sub-components
 - **Frontend board hook**: `packages/frontend/src/hooks/useBoard.ts` — all board state, fetch, polling, pull-to-refresh
-- **Frontend board components**: `packages/frontend/src/components/board/` — 7 building blocks + 1 grid utility (BoardHeader, BoardTabs, StationFilterBar, TimeNavigationBar, NrccMessages, BoardTableHeader, BoardServiceList, boardGrid.ts)
+- **Frontend board components**: `packages/frontend/src/components/board/` — 8 components + 1 grid utility (BoardHeader, BoardTabs, StationFilterBar, TimeNavigationBar, NrccMessages, BoardTableHeader, BoardServiceList, ServiceRow, boardGrid.ts)
 - **Frontend shared components**: `packages/frontend/src/components/shared/` — ErrorBoundary, PlatformBadge, StationSearch
 - **Frontend service detail**: `packages/frontend/src/pages/ServiceDetailPage.tsx` + `components/service-detail/`
 
@@ -103,7 +103,6 @@ The consumer handles SIGTERM with a specific sequence to prevent data loss:
 **⚠️ NEVER use `docker compose down -v`** — the `-v` flag deletes all volumes including `postgres_data`.
 
 ## MCP Servers
-
 
 ### Sequential Thinking MCP (`github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking`)
 - **Package**: `npx -y @modelcontextprotocol/server-sequential-thinking`
