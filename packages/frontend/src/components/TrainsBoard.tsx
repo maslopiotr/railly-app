@@ -49,7 +49,7 @@ function computeDurationMinutes(service: HybridBoardService): number | null {
   const [eh, em] = endTime.split(":").map(Number);
   if (isNaN(sh) || isNaN(sm) || isNaN(eh) || isNaN(em)) return null;
 
-  let startMins = sh * 60 + sm;
+  const startMins = sh * 60 + sm;
   let endMins = eh * 60 + em;
   if (endMins < startMins) endMins += 1440; // cross-midnight
   return endMins - startMins;
@@ -102,6 +102,17 @@ export function TrainsBoard({
   // Relative time string
   const [relativeTime, setRelativeTime] = useState<string>("");
 
+  // Display clock time (HH:MM) — auto-updates when live, static when time-shifted
+  const [displayTime, setDisplayTime] = useState(() => {
+    const now = new Date();
+    return new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Europe/London",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(now);
+  });
+
   // Time window navigation — offset from "now" in minutes (0 = live mode)
   const [timeWindowOffset, setTimeWindowOffset] = useState(0);
 
@@ -116,7 +127,7 @@ export function TrainsBoard({
   const abortRef = useRef<AbortController | null>(null);
   const PULL_THRESHOLD = 60;
 
-  // Update relative time every 10 seconds
+  // Update relative time and live clock display every 10 seconds
   useEffect(() => {
     const updateRelativeTime = () => {
       if (!lastRefreshed) {
@@ -130,10 +141,26 @@ export function TrainsBoard({
       else setRelativeTime(`${Math.floor(seconds / 60)}m ago`);
     };
 
+    const updateLiveClock = () => {
+      if (timeWindowOffset !== 0) return;
+      const now = new Date();
+      const time = new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Europe/London",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }).format(now);
+      setDisplayTime(time);
+    };
+
     updateRelativeTime();
-    const id = setInterval(updateRelativeTime, 10_000);
+    updateLiveClock();
+    const id = setInterval(() => {
+      updateRelativeTime();
+      updateLiveClock();
+    }, 10_000);
     return () => clearInterval(id);
-  }, [lastRefreshed]);
+  }, [lastRefreshed, timeWindowOffset]);
 
   const PAGE_SIZE = 15;
 
@@ -288,6 +315,14 @@ export function TrainsBoard({
     };
   }, [loadBoard]);
 
+  // Update displayTime when time window offset changes (non-live modes)
+  useEffect(() => {
+    if (timeWindowOffset !== 0) {
+      const { time } = computeRequestTime();
+      if (time) setDisplayTime(time);
+    }
+  }, [timeWindowOffset, computeRequestTime]);
+
   // ── Time navigation helpers (Earlier/Later by 60 minutes) ──
   const handleEarlier = useCallback(() => {
     setAllServices([]);
@@ -384,28 +419,6 @@ export function TrainsBoard({
             </button>
           )}
         </div>
-
-        {/* Right: Live status + refresh */}
-        <div className="flex items-center gap-2 shrink-0">
-          {lastRefreshed && (
-            <span className="flex items-center gap-1.5 text-xs select-none text-text-secondary">
-              <span
-                className="w-2 h-2 rounded-full shrink-0 bg-status-on-time animate-pulse-subtle"
-                style={{ boxShadow: "var(--glow-live)" }}
-              />
-              <span className="font-mono tabular-nums">{relativeTime}</span>
-            </span>
-          )}
-          <button
-            className={`text-base px-1.5 select-none transition-transform duration-300 text-text-muted hover:text-text-primary py-1 min-h-9 flex items-center focus-visible:ring-2 focus-visible:ring-blue-500 rounded ${isLoading ? "animate-spin" : ""}`}
-            onClick={() => loadBoard()}
-            disabled={isLoading}
-            aria-label="Refresh board"
-            title="Refresh"
-          >
-            ↻
-          </button>
-        </div>
       </div>
 
       {/* ─── Tab bar (Departures/Arrivals) ─── */}
@@ -496,47 +509,61 @@ export function TrainsBoard({
         </div>
       )}
 
-      {/* ─── Earlier / Live / Later navigation bar ─── */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-border-default bg-surface-page">
+      {/* ─── Time navigation bar: Earlier · clock · Later ─── */}
+      <div className="flex items-center justify-between px-2 py-4 border-b border-border-default bg-surface-page">
+        {/* Left: Earlier */}
         <button
           onClick={handleEarlier}
-          className="px-4 py-2 text-sm font-medium rounded-lg border border-border-default bg-surface-card text-text-secondary hover:bg-surface-hover hover:text-text-primary transition-colors focus-visible:ring-1 focus-visible:ring-blue-500"
+          className="px-6 py-2 text-sm font-medium rounded-lg border border-border-default bg-surface-card text-text-secondary hover:bg-surface-hover hover:text-text-primary transition-colors focus-visible:ring-1 focus-visible:ring-blue-500"
           aria-label="Show earlier trains"
         >
-          ← Earlier
+          Earlier
         </button>
-        <button
-          onClick={handleNow}
-          disabled={timeWindowOffset === 0}
-          className={`px-4 py-2 text-sm font-medium rounded-lg border transition-colors focus-visible:ring-1 focus-visible:ring-blue-500 ${
-            timeWindowOffset === 0
-              ? "border-blue-600 bg-blue-600 text-white cursor-default"
-              : "border-border-default bg-surface-card text-text-secondary hover:bg-surface-hover hover:text-text-primary"
-          }`}
-          aria-label="Return to live departures"
-        >
-          Live now
-        </button>
+
+        {/* Centre: clock time + live indicator + refresh (merged button) */}
+        <div className="flex items-center gap-0">
+          <button
+            onClick={() => {
+              if (timeWindowOffset !== 0) handleNow();
+            }}
+            disabled={timeWindowOffset === 0}
+            className={`text-xl font-mono font-semibold tabular-nums px-2 py-1 rounded select-none focus-visible:ring-1 focus-visible:ring-blue-500 flex items-center gap-1.5 ${
+              timeWindowOffset === 0
+                ? "text-text-primary cursor-default"
+                : "text-text-secondary hover:text-text-primary hover:bg-surface-hover cursor-pointer"
+            }`}
+            aria-label={timeWindowOffset === 0 ? "Live time" : "Return to live"}
+          >
+            {timeWindowOffset === 0 && (
+              <span
+                className="w-2 h-2 rounded-full shrink-0 bg-status-on-time animate-pulse-subtle"
+                style={{ boxShadow: "var(--glow-live)" }}
+              />
+            )}
+            {displayTime}
+          </button>
+          <button
+            onClick={() => loadBoard()}
+            disabled={isLoading}
+            className={`text-sm select-none transition-colors duration-300 text-text-muted hover:text-text-primary px-2
+               py-1 min-h-9 flex items-center gap-0 focus-visible:ring-2 focus-visible:ring-blue-500 rounded`}
+            aria-label="Refresh board"
+            title={timeWindowOffset === 0 && lastRefreshed ? `Refreshed ${relativeTime}` : "Refresh"}
+          >
+            {timeWindowOffset === 0 && lastRefreshed && (
+              <span className="text-xs text-text-muted font-mono tabular-nums">{relativeTime}</span>
+            )} <span className={`pl-1 ${isLoading ? "animate-spin" : ""}`}>↻</span>
+          </button>
+        </div>
+
+        {/* Right: Later */}
         <button
           onClick={handleLater}
-          className="px-4 py-2 text-sm font-medium rounded-lg border border-border-default bg-surface-card text-text-secondary hover:bg-surface-hover hover:text-text-primary transition-colors focus-visible:ring-1 focus-visible:ring-blue-500"
+          className="px-6 py-2 text-sm font-medium rounded-lg border border-border-default bg-surface-card text-text-secondary hover:bg-surface-hover hover:text-text-primary transition-colors focus-visible:ring-1 focus-visible:ring-blue-500"
           aria-label="Show later trains"
         >
-          Later →
+          Later
         </button>
-        <span className="text-xs text-text-muted ml-2">
-          {timeWindowOffset === 0
-            ? "Live"
-            : `${timeWindowOffset > 0 ? "+" : ""}${Math.floor(timeWindowOffset / 60)}h`}
-        </span>
-        {destinationFilter && onDestinationChange && (
-          <button
-            onClick={() => onDestinationChange(null)}
-            className="ml-auto px-4 py-2 text-sm font-medium rounded-lg border border-border-default bg-surface-card text-text-secondary hover:bg-surface-hover hover:text-text-primary transition-colors focus-visible:ring-1 focus-visible:ring-blue-500"
-          >
-            Clear filter
-          </button>
-        )}
       </div>
 
       {/* ─── NRCC Messages ─── */}

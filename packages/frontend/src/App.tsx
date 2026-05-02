@@ -364,7 +364,7 @@ function App() {
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col items-center px-4 sm:px-6 py-6 sm:py-8">
+      <main className="flex-1 flex flex-col items-center px-3 sm:px-2 py-6 sm:py-0">
         <ErrorBoundary>
           {selectedService && selectedStation ? (
             /* Level 3: Service Detail */
