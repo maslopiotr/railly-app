@@ -57,3 +57,10 @@ Keep project-specific debug paths in `memory-bank/techContext.md` → Debugging 
 
 ## 8. Bugs
 Identify the exact root cause before suggesting a fix. Verify fixes against actual SQL data. Log any newly discovered but unfixed bugs to bugsTracker.md.
+
+## 9. Verification Protocol (Post-Fix)
+- Code-only fixes are NOT complete. After every fix, verify end-to-end:
+  a. Check the DB schema/constraints support the change
+  b. If running in Docker, rebuild and redeploy the affected container — source changes don't auto-propagate
+  c. Query live data to confirm the fix produced the expected result (e.g. `SELECT ... FROM ... LIMIT 5`)
+  d. Check container logs to confirm the service restarted successfully and is processing

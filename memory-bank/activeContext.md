@@ -8,6 +8,10 @@ All Session 15 UX fixes and naming cleanup are complete. Next priority: BUG-018 
 
 **Documentation:**
 - Added **Playwright MCP** testing documentation to `techContext.md` — browser automation via MCP for frontend testing at `localhost:8080` (Docker) or `localhost:5173` (Vite)
+- Added **Verification Protocol** (Section 9) to `.clinerules` — codified the requirement to always verify fixes end-to-end (DB schema, Docker rebuild, live data query, container logs) rather than stopping at code-only changes
+
+### Lessons Learned (2026-05-02)
+- **`rawFull` truncation fix**: Code-only fixes are insufficient — the Docker container was still running the old image, the fix wasn't live. The preferred workflow: code change → verify DB schema → rebuild & redeploy Docker container → query live data → check container logs. Only then is the fix complete.
 
 ### Session 15 (Completed)
 
