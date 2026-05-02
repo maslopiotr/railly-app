@@ -1,5 +1,7 @@
 # Railly App — Project Brief
 
+> **Also known as "Rail Buddy"** (package.json description). The project directory is `railly-app`.
+
 ## Mission
 Self-hosted, real-time UK train companion for commuters — live tracking, departure boards, disruption alerts — powered by Darwin Push Port + PP Timetable.
 

@@ -1,5 +1,109 @@
 # Progress
 
+## Completed (2026-05-03) — Component Extraction & Reorganisation
+
+### TrainsBoard Decomposition ✅
+- ✅ `TrainsBoard.tsx` (703 lines) deleted — replaced by `pages/BoardPage.tsx` (139 lines)
+- ✅ New `hooks/useBoard.ts` — owns all board state, fetch, polling, visibility-change, pull-to-refresh, time navigation
+- ✅ 7 new `components/board/` sub-components:
+  - `BoardHeader.tsx` — station name, CRS badge, back button (no favourite star — moved to inline bar in BoardPage)
+  - `BoardTabs.tsx` — Departures | Arrivals tab bar
+  - `StationFilterBar.tsx` — From/To station selectors
+  - `TimeNavigationBar.tsx` — Earlier · clock · Later + refresh
+  - `NrccMessages.tsx` — NRCC disruption alert banners
+  - `BoardTableHeader.tsx` — grid column header row
+  - `BoardServiceList.tsx` — service rows, skeletons, empty state, pull-to-refresh, load more
+
+### Directory Restructure ✅
+- ✅ Components moved into feature-based subdirectories: `shared/`, `board/`, `service-detail/`
+- ✅ New top-level directories: `pages/`, `utils/`, `constants/`
+- ✅ Utility functions extracted: `utils/navigation.ts`, `utils/service.ts`
+- ✅ `constants/stations.ts` holds `POPULAR_STATIONS`
+- ✅ All import paths updated across 17 files
+
+### App.tsx Slimmed ✅
+- ✅ 542 → 283 lines — thin orchestrator with 3-way page router (LandingPage / BoardPage / ServiceDetailPage)
+
+### Docker Build Verified ✅
+- ✅ Fixed `NrccMessage` → `NRCCMessage` type casing (caught by `tsc -b`, missed by `tsc --noEmit`)
+- ✅ Removed unused `HybridCallingPoint` import in `utils/service.ts`
+- ✅ `docker compose build --no-cache frontend` — built successfully
+
+### Files Modified This Session
+| File | Change |
+|---|---|
+| `packages/frontend/src/App.tsx` | Rewrite — thin orchestrator (283 lines, was 542) |
+| `packages/frontend/src/pages/BoardPage.tsx` | New — thin presenter (139 lines) |
+| `packages/frontend/src/hooks/useBoard.ts` | New — all board state + logic |
+| `packages/frontend/src/components/board/BoardHeader.tsx` | New — extracted from TrainsBoard |
+| `packages/frontend/src/components/board/BoardTabs.tsx` | New — extracted |
+| `packages/frontend/src/components/board/StationFilterBar.tsx` | New — extracted |
+| `packages/frontend/src/components/board/TimeNavigationBar.tsx` | New — extracted |
+| `packages/frontend/src/components/board/NrccMessages.tsx` | New — extracted |
+| `packages/frontend/src/components/board/BoardTableHeader.tsx` | New — extracted |
+| `packages/frontend/src/components/board/BoardServiceList.tsx` | New — extracted |
+| `packages/frontend/src/pages/LandingPage.tsx` | New — extracted from App.tsx |
+| `packages/frontend/src/pages/ServiceDetailPage.tsx` | Moved from `components/ServiceDetail.tsx` |
+| `packages/frontend/src/utils/navigation.ts` | New — buildUrl, parseUrl |
+| `packages/frontend/src/utils/service.ts` | New — computeDurationMinutes, countStops, formatDuration |
+| `packages/frontend/src/constants/stations.ts` | New — POPULAR_STATIONS |
+| 10 moved files | Import paths updated for new locations |
+| `components/TrainsBoard.tsx` | **Deleted** |
+
+---
+
+## Completed (2026-05-03) — Frontend UX Overhaul
+
+### StationFilterBar Equal Widths ✅
+- ✅ `w-10` labels for "From" and "To" — equal width on mobile
+- ✅ `sm:w-[300px]` desktop fields (was `sm:w-[200px]`)
+
+### App.tsx Refactor ✅
+- ✅ DRY: `restoreFromUrl()` extracted — shared by initial mount + popstate
+- ✅ Single `fetchBoard` call on URL restore (cut redundant second call)
+- ✅ Fixed AbortController race: create new controller before aborting old
+- ✅ `activeTab` removed from App state — `BoardPage` owns via local `useState`
+- ✅ `ServiceDetail` derives `isArrival` from service object via `isArrivalService()`
+- ✅ `navigateTo` has stable `[]` dependency (removed default `destinationStation` param)
+- ✅ `isRestoring` loading spinner during URL restoration
+- ✅ `error` state with "Unable to load station" + "Return to home" button
+- ✅ SVG sun/moon icons replace emoji theme toggle (added to `icons.svg`)
+
+### Journey Favourites System ✅
+- ✅ New `FavouriteJourney` type: `{ from: StationSearchResult, to: StationSearchResult | null }`
+- ✅ localStorage migration: old `railly-favourite-stations` → new `railly-favourite-journeys`
+- ✅ `toggleFavourite(fromStation, toStation)` — composite key `(fromCrs, toCrs ?? null)`
+- ✅ `isFavourite(fromCrs, toCrs)` — matches journey pair
+- ✅ `App.tsx`: updated favourite calls to pass `destinationStation`
+- ✅ `handleStationSelect` now accepts optional `dest` parameter
+
+### Landing Page Revamp ✅
+- ✅ Dual search: "From" + "To" fields with equal width labels and spacer divs
+- ✅ Placeholders: `"Enter a station name…"` / `"Filter by destination (optional)"`
+- ✅ Compact favourite cards: inline `From → To` on one line + departure info below
+- ✅ Platform badge via `PlatformBadge` component in favourite cards
+- ✅ Text uplift: From `text-base font-semibold`, To `text-sm font-medium`
+- ✅ Mobile limit: 3 favourites + `+N more` toggle
+- ✅ Card grid: `grid-cols-1 sm:grid-cols-2` (2 columns prevents truncation)
+- ✅ Quick Access: Recent + Popular merged, recent chips tinted blue
+- ✅ Layout: `w-full sm:max-w-xl` with `px-2 sm:px-0` — aligned with search box
+
+### Board Favourite Bar ✅
+- ✅ Star removed from `BoardHeader` (reverted to station name + back button only)
+- ✅ Star removed from `StationFilterBar` (reverted to original props)
+- ✅ New dedicated `FavouriteBar` in `BoardPage` between `StationFilterBar` and `TimeNavigationBar`
+- ✅ Shows `"☆ Save Euston → Manchester to favourites"` or `"★ Journey saved · tap to remove"`
+
+### Favourite Card Data Precision ✅
+- ✅ Fetch `limit: 3` departures per favourite (was `limit: 1`)
+- ✅ Skip departed trains: `.find(s => s.trainStatus !== "departed")`
+- ✅ Fallback to `services[0]` if all departed
+- ✅ No polling — fetch once on mount
+
+### Documentation ✅
+- ✅ Updated `activeContext.md` — current focus + all changes
+- ✅ Updated `progress.md` — completed sections
+
 ## Completed (2026-05-02) — Post-Session 15
 
 ### Documentation & Memory Bank Review ✅
@@ -82,13 +186,13 @@
 
 | Bug | Severity | Status |
 |-----|----------|--------|
-| BUG-018: "Approaching" too early | Medium | ✅ Fixed (2026-05-02) — 2-min proximity gate in determineCurrentLocation() |
-| BUG-022: VSTP duplicate PP | Low | Wontfix |
-| BUG-025b: Stale CP timestamps | Low | Wontfix |
-| BUG-013: Deleted services | Medium | Backlog |
+| Destination filter (dest=EUS) not filtering correctly | Medium | Investigating |
 | BUG-015: CP filter by station | Low | Backlog |
 | BUG-016: No tests | Medium | Backlog |
+| BUG-022: VSTP duplicate PP | Low | Wontfix |
+| BUG-025b: Stale CP timestamps | Low | Wontfix |
 
 ## Next Steps
-- Priority: BUG-013 — refined deactivated/deleted services handling in consumer
-- Backlog: BUG-013 (deleted services), BUG-015 (CP filtering), BUG-016 (tests)
+- Investigate: destination filter bug — MKC?dest=EUS shows non-EUS trains
+- BUG-015: Calling points filter by current station
+- BUG-016: Add tests to codebase

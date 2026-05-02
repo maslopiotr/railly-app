@@ -1,11 +1,11 @@
 # Technical Context
 
 ## Stack
-- **Runtime**: Node.js 24.x, TypeScript 5.8+/6.x, ESM modules
+- **Runtime**: Node.js 22.x (Docker `node:22-slim`), TypeScript 5.8 (api/consumer) / 6.x (frontend), ESM modules
 - **Backend**: Express 4.21, Helmet, CORS, Drizzle ORM, postgres.js, tsx (dev)
 - **Frontend**: Vite 8.x, React 19.x, Tailwind CSS 4.x (`@tailwindcss/vite`), History API routing
 - **Frontend CSS**: Semantic design token system — `:root`/`.dark` CSS custom properties → `@theme` block → Tailwind utility classes. No raw colour classes in components.
-- **Infrastructure**: Docker Compose (PostgreSQL 17, Kafka, Zookeeper, API, Consumer, nginx+frontend)
+- **Infrastructure**: Docker Compose (PostgreSQL 17, API, Consumer, Seed, nginx+frontend). Kafka/Zookeeper hosted externally.
 - **Shared**: Pure TypeScript types + utilities, no runtime deps
 
 ## Build & Run
@@ -35,8 +35,8 @@ npm run docker:rebuild   # rebuild Docker after changes
 |---------|------|-------------|
 | `schedule` | `handlers/schedule.ts` | Upserts journeys + CPs. TIPLOC matching, no DELETE. Timetable preserves pushport; VSTP preserves timetable. |
 | `TS` | `handlers/trainStatus.ts` | Updates CPs by natural key `(rid, tpl, day_offset, sort_time, stop_type)`, creates Darwin stubs for unknown RIDs |
-| `deactivated` | `handlers/index.ts` | Sets `is_cancelled = true` only if no movement data |
-| `OW`, `association`, `scheduleFormations`, `serviceLoading`, `formationLoading`, `trainAlert`, `trainOrder`, `trackingID`, `alarm` | `handlers/index.ts` | Stub handlers — logged only |
+| `deactivated` | `handlers/index.ts` | Sets `deactivated_at` timestamp via `handleDeactivated`. `handleSchedule` handles `schedule.deleted` flag for `is_deleted`. |
+| `OW`, `association`, `scheduleFormations`, `serviceLoading`, `formationLoading`, `trainAlert`, `trainOrder`, `trackingID`, `alarm` | `handlers/index.ts` | Stub handlers — logged only (except `serviceLoading` which is implemented) |
 
 ## PostgreSQL Performance
 - **Autovacuum**: `darwin_events` + `calling_points` scale_factor 0.05/0.02 (triggers sooner on high-churn tables)
@@ -65,6 +65,18 @@ SELECT severity, message_type, error_code, count(*) FROM darwin_audit GROUP BY s
 - **Board query**: `packages/api/src/routes/boards.ts` — unified single-query board API
 - **Consumer entry**: `packages/consumer/src/index.ts` — Kafka listener, batch processing
 - **Timetable seed**: `packages/api/src/db/seed-timetable.ts` — daily at 03:00, hash-based dedup
+- **Frontend board page**: `packages/frontend/src/pages/BoardPage.tsx` — thin presenter composing `useBoard` + sub-components
+- **Frontend board hook**: `packages/frontend/src/hooks/useBoard.ts` — all board state, fetch, polling, pull-to-refresh
+- **Frontend board components**: `packages/frontend/src/components/board/` — 7 building blocks + 1 grid utility (BoardHeader, BoardTabs, StationFilterBar, TimeNavigationBar, NrccMessages, BoardTableHeader, BoardServiceList, boardGrid.ts)
+- **Frontend shared components**: `packages/frontend/src/components/shared/` — ErrorBoundary, PlatformBadge, StationSearch
+- **Frontend service detail**: `packages/frontend/src/pages/ServiceDetailPage.tsx` + `components/service-detail/`
+
+### TypeScript Build Differences
+- **Local `tsc --noEmit`** (Vite dev server): runs on `.tsx`/`.ts` files only, relaxed checking
+- **Docker `tsc -b`** (production build): runs in project reference mode, stricter — catches:
+  - Unused imports (`error TS6196`)
+  - Misspelled type names (`error TS2724`)
+- Always test with `docker compose build --no-cache frontend` after structural changes, not just local `tsc --noEmit`
 
 ## Darwin Data Quirks
 - **Origin stops**: Darwin never sends `atd` for on-time origin departures — only `etd = std` with `confirmed: true`. Board API infers departure from subsequent CPs' actual times (BUG-017b).
@@ -92,12 +104,6 @@ The consumer handles SIGTERM with a specific sequence to prevent data loss:
 
 ## MCP Servers
 
-### Playwright MCP (`github.com/microsoft/playwright-mcp`)
-- **Package**: `npx -y @playwright/mcp@latest --browser chromium`
-- **Purpose**: Chromium-based browser automation for frontend testing
-- **Used for**: Manual/automated testing of the frontend at `http://localhost:8080` (Docker) or `http://localhost:5173` (Vite dev server)
-- **Session pattern**: launch → interact (click/type/snapshot) → close
-- **Available tools**: `browser_close`, `browser_resize`, `browser_console_messages`, `browser_handle_dialog`, `browser_evaluate`, `browser_file_upload`, `browser_drop`, `browser_fill_form`, `browser_press_key`, `browser_type`, `browser_navigate`, `browser_navigate_back`, `browser_network_requests`, `browser_network_request`, `browser_run_code_unsafe`, `browser_take_screenshot`, `browser_snapshot`, `browser_click`, `browser_drag`, `browser_hover`, `browser_select_option`, `browser_tabs`, `browser_wait_for`
 
 ### Sequential Thinking MCP (`github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking`)
 - **Package**: `npx -y @modelcontextprotocol/server-sequential-thinking`
@@ -122,4 +128,3 @@ npm run docker:rebuild:consumer
 
 # ⚠️ Dangerous — never use -v unless you want to destroy all data
 docker compose down -v  # DESTROYS ALL DATA
-```

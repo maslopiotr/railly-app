@@ -79,16 +79,96 @@ if (delay > 720) delay -= 1440;
 ```
 
 ## Frontend Patterns
+
+### State & Routing
 - **State**: React hooks + context (no Redux)
 - **Routing**: History API (pushState/popstate), NOT React Router
 - **Board**: manual refresh (pull-to-refresh mobile, button desktop)
 - **Accessibility**: focus-visible rings, aria-labels, keyboard navigation
 - **Stagger animation**: CSS `--stagger-index` custom property
 - **Tailwind v4 trap**: Never put `display` in `@apply` — specificity equals utility classes
-- **Sibling input parity**: When two `StationSearch` inputs sit side-by-side (e.g. From/To), use identical wrapper constraints (`flex-1 sm:w-[200px] shrink-0`) and identical `size` props. Never give one custom styling that the other lacks.
-- **Time navigation requires date**: Any time-offset navigation (Earlier/Later) must compute and pass an explicit `YYYY-MM-DD` date alongside `HH:MM`. The API uses this as the wall-clock reference date. Never pass bare HH:MM — it breaks cross-midnight queries.
-- **Board type branching**: Any visibility condition using `pushport` columns (`atdPushport`, `ataPushport, `etdPushport`, `etaPushport`) in SQL must branch on `boardType`. Never hardcode departure-only columns — arrivals need `ataPushport`/`etaPushport` equivalents.
-- **Wall-clock time gating**: Any status that implies temporal proximity (e.g. "approaching") must validate against wall-clock time — not just event ordering. Use the same wall-clock formula as SQL queries: `(SSD + dayOffset - todayStr) * 1440 + HH:MM`. Event ordering alone (e.g. "previous stop has atd, therefore approaching") produces false positives on long-distance services where the next stop may be hours away.
+
+### Frontend Directory Architecture
+```
+src/
+├── pages/          # Page-level composites — thin presenters, one per route
+│   ├── LandingPage.tsx
+│   ├── BoardPage.tsx        # Composes useBoard hook + board/ sub-components
+│   └── ServiceDetailPage.tsx
+├── components/
+│   ├── shared/              # Cross-feature reusable primitives
+│   ├── board/               # Board-page-specific building blocks
+│   └── service-detail/      # Service-detail-page-specific building blocks
+├── hooks/                   # Custom hooks (useBoard, useFavourites, etc.)
+├── utils/                   # Pure utility functions (no React imports)
+├── constants/               # Static data arrays
+└── api/                     # API client functions
+```
+
+**Rule**: Pages are thin presenters — they compose hooks + sub-components but contain no data-fetching or complex state logic. All logic lives in hooks. Sub-components live in feature directories under `components/`, not co-located with pages.
+
+### Orchestrator Hook Pattern (`useBoard`)
+- **Single hook** owns all state for a feature: data, loading/error flags, derived values
+- Exposes action functions (`loadBoard`, `loadMore`, `handleEarlier`, etc.) as stable callbacks
+- Manages side effects internally: polling (`setInterval`), visibility-change listeners, AbortController lifecycle
+- Returns a clean interface object — the page component just destructures and passes to sub-components
+- Touch handlers for pull-to-refresh also belong in the hook (not in the UI component)
+
+### Journey Favourites System
+- **Type**: `FavouriteJourney = { from: StationSearchResult, to: StationSearchResult | null }`
+- **Storage**: `railly-favourite-journeys` key in localStorage (migrated from `railly-favourite-stations`)
+- **Composite key**: `(from.crsCode, to?.crsCode ?? null)` — a journey to "anywhere" and a journey to a specific destination are distinct favourites
+- **Toggle**: `toggleFavourite(fromStation, toStation)` — add if not exists, remove if exists
+- **Check**: `isFavourite(fromCrs, toCrs)` — matches composite key
+- **Cap**: 12 max, in localStorage
+- **Migration**: On load, if old `railly-favourite-stations` key exists with `StationSearchResult[]`, convert each to `{ from: s, to: null }`, write to new key, delete old key
+
+### Landing Page Layout Pattern
+- **Search**: Full-width container (`w-full sm:max-w-xl`), stacked "From" + "To" rows with `w-10` labels and matching `w-7` spacer divs for true equal width
+- **Placeholders**: Descriptive — `"Enter a station name…"` / `"Filter by destination (optional)"`
+- **Favourites**: Compact inline cards (`From → To` on one line, departure info below). Grid: `grid-cols-1 sm:grid-cols-2`. Container: `w-full sm:max-w-xl px-2 sm:px-0` — aligned with search box
+- **Mobile limit**: 3 favourites shown, `+N more` toggle button (dashed border, sm:hidden)
+- **Quick Access**: Recent chips tinted blue (`bg-blue-50 border-blue-200`), Popular chips default grey. Both under single "Quick Access" heading
+- **Clock**: Monospace, auto-updating every second, unchanged styling
+
+### Board Favourite Bar Pattern
+- **Location**: Inline in `BoardPage.tsx`, between `StationFilterBar` and `TimeNavigationBar`. There is NO separate `FavouriteBar` component file.
+- **Visual**: Full-width bar with `border-b`, `bg-surface-card`, thin padding (`py-2 px-4`)
+- **Content**: Star icon + text sentence
+  - Unfavourited: `"☆ Save Euston → Manchester to favourites"`
+  - Favourited: `"★ Journey saved · tap to remove"` (in `text-favourite` colour)
+- **No destination**: Shows `"Save Euston to favourites"` 
+- **Props**: `isFavourite?: boolean`, `onToggleFavourite?: () => void` — rendered via conditional `{onToggleFavourite && (<div>...</div>)}`
+- **Rationale**: Star should be near the journey it's saving, not next to the station name. A dedicated bar makes the action explicit — it's clear you're favouriting a journey, not a station.
+
+### Favourite Card Data Fetching Pattern
+- **Fetch**: `fetchBoard(fromCrs, { type: "departures", destination: toCrs, limit: 3 })`
+- **Filter**: Skip departed trains — `.find(s => s.trainStatus !== "departed") ?? data.services[0]`
+- **Fallback**: If all 3 are departed, use `services[0]` (graceful degradation)
+- **Polling**: None — fetch once on mount. Data refreshes naturally when user navigates away and returns
+- **Error**: Show card without departure info (station name only)
+- **Loading**: Skeleton pulse (`animate-pulse`) while fetching
+
+### Sibling Input Parity
+When two `StationSearch` inputs sit side-by-side (e.g. From/To), use identical wrapper constraints (`flex-1 sm:w-[300px] shrink-0`) and identical `size` props. Never give one custom styling that the other lacks. For rows where one field has a clear/action button the other doesn't, add matching spacer divs to maintain alignment.
+
+### Time Navigation Pattern
+Any time-offset navigation (Earlier/Later) must compute and pass an explicit `YYYY-MM-DD` date alongside `HH:MM`. The API uses this as the wall-clock reference date. Never pass bare HH:MM — it breaks cross-midnight queries.
+
+### Board Type Branching
+Any visibility condition using `pushport` columns (`atdPushport`, `ataPushport, `etdPushport`, `etaPushport`) in SQL must branch on `boardType`. Never hardcode departure-only columns — arrivals need `ataPushport`/`etaPushport` equivalents.
+
+### Wall-Clock Time Gating
+Any status that implies temporal proximity (e.g. "approaching") must validate against wall-clock time — not just event ordering. Use the same wall-clock formula as SQL queries: `(SSD + dayOffset - todayStr) * 1440 + HH:MM`. Event ordering alone (e.g. "previous stop has atd, therefore approaching") produces false positives on long-distance services where the next stop may be hours away.
+
+### App Root Pattern
+- `restoreFromUrl()` is the single source of truth for URL → state restoration
+- Called on initial mount AND every `popstate` event — never duplicate the logic
+- Fetches board once to get station name + optional service
+- AbortController creation must precede old controller abort to avoid races
+- `navigateTo` should have stable `[]` dependencies — pass destination explicitly, not via default parameter
+- `activeTab` belongs in `BoardPage` (UI state), not `App` (navigation state)
+- `ServiceDetail.isArrival` derived from `service.sta !== null && service.std === null` — never from board tab state
 
 ### Design Token System
 - **Architecture**: `:root`/`.dark` CSS custom properties → `@theme` block → Tailwind utility classes
@@ -118,3 +198,9 @@ if (delay > 720) delay -= 1440;
 | No DELETE on CPs | Never delete calling points | Preserves data for historical analysis |
 | Delay threshold | >5 min = "delayed" | National Rail convention |
 | Pushport-only eta/etd | Never fall back to timetable | When pushport confirms schedule, etd === std |
+| Favourites storage | `FavouriteJourney[]` in localStorage | Persists across sessions, no server needed |
+| Favourite card data | Fetch-once on mount, no polling | Shows departure snapshot without server load |
+| Favourite star placement | Dedicated bar between filters and time nav | Explicit about favouriting a journey, not a station |
+| Frontend directory structure | Feature-based subdirectories under components/ | Scales better than flat, clear ownership per feature |
+| Page/component separation | Pages as thin presenters, hooks for logic | No data fetching in presentational code |
+| Board state management | Single `useBoard` hook owns all board logic | Avoids prop drilling, single source of truth |
