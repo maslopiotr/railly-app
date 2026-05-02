@@ -90,11 +90,21 @@ The consumer handles SIGTERM with a specific sequence to prevent data loss:
 
 **⚠️ NEVER use `docker compose down -v`** — the `-v` flag deletes all volumes including `postgres_data`.
 
-## Testing (Browser Automation)
-- **Playwright MCP** (`@playwright/mcp`) — Chromium-based browser automation via MCP tool calls
-- Available actions: `browser_navigate`, `browser_click`, `browser_type`, `browser_snapshot`, `browser_take_screenshot`, `browser_fill_form`, `browser_evaluate`, `browser_network_requests`, `browser_tabs`, `browser_drag`, `browser_drop`, `browser_file_upload`, `browser_console_messages`, `browser_press_key`, `browser_select_option`, `browser_hover`, `browser_wait_for`
-- Used for manual/automated testing of the frontend at `http://localhost:8080` (Docker) or `http://localhost:5173` (Vite dev server)
-- Each browser session: launch → interact (click/type/snapshot) → close
+## MCP Servers
+
+### Playwright MCP (`github.com/microsoft/playwright-mcp`)
+- **Package**: `npx -y @playwright/mcp@latest --browser chromium`
+- **Purpose**: Chromium-based browser automation for frontend testing
+- **Used for**: Manual/automated testing of the frontend at `http://localhost:8080` (Docker) or `http://localhost:5173` (Vite dev server)
+- **Session pattern**: launch → interact (click/type/snapshot) → close
+- **Available tools**: `browser_close`, `browser_resize`, `browser_console_messages`, `browser_handle_dialog`, `browser_evaluate`, `browser_file_upload`, `browser_drop`, `browser_fill_form`, `browser_press_key`, `browser_type`, `browser_navigate`, `browser_navigate_back`, `browser_network_requests`, `browser_network_request`, `browser_run_code_unsafe`, `browser_take_screenshot`, `browser_snapshot`, `browser_click`, `browser_drag`, `browser_hover`, `browser_select_option`, `browser_tabs`, `browser_wait_for`
+
+### Sequential Thinking MCP (`github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking`)
+- **Package**: `npx -y @modelcontextprotocol/server-sequential-thinking`
+- **Purpose**: Dynamic and reflective problem-solving through structured thought chains
+- **Used for**: Breaking down complex problems, planning with revision, multi-step analysis
+- **Available tools**: `sequentialthinking` — supports branching, revision, hypothesis generation and verification
+- **Key features**: Adjustable thought count, branching paths, revision of previous thoughts, hypothesis-based verification
 
 ## Rebuild Procedures
 ```bash
