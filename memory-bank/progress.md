@@ -82,7 +82,7 @@
 
 | Bug | Severity | Status |
 |-----|----------|--------|
-| BUG-018: "Approaching" too early | Medium | Partially fixed — colour resolved, timing still open |
+| BUG-018: "Approaching" too early | Medium | ✅ Fixed (2026-05-02) — 2-min proximity gate in determineCurrentLocation() |
 | BUG-022: VSTP duplicate PP | Low | Wontfix |
 | BUG-025b: Stale CP timestamps | Low | Wontfix |
 | BUG-013: Deleted services | Medium | Backlog |
@@ -90,5 +90,5 @@
 | BUG-016: No tests | Medium | Backlog |
 
 ## Next Steps
-- Priority: BUG-018 "Approaching" timing — only mark approaching when within ~5 min of actual arrival
+- Priority: BUG-013 — refined deactivated/deleted services handling in consumer
 - Backlog: BUG-013 (deleted services), BUG-015 (CP filtering), BUG-016 (tests)

@@ -77,6 +77,32 @@ function parseTimeToMinutes(time: string | null): number | null {
 }
 
 /**
+ * Compute a calling point's wall-clock minutes relative to todayStr.
+ * Uses the same formula as the SQL query: (ssd + dayOffset - todayStr) * 1440 + time.
+ * Returns null if any input is missing or malformed.
+ */
+function computeStopWallMinutes(
+  cpSsd: string | null,
+  dayOffset: number,
+  timeStr: string,
+  todayStr: string,
+): number | null {
+  if (!cpSsd) return null;
+  const mins = parseTimeToMinutes(timeStr);
+  if (mins === null) return null;
+  const dayDelta =
+    Math.round(
+      (Date.parse(cpSsd + "T12:00:00Z") -
+        Date.parse(todayStr + "T12:00:00Z")) /
+        86400000,
+    ) + dayOffset;
+  return dayDelta * 1440 + mins;
+}
+
+/** Maximum minutes ahead a stop can be to qualify as "approaching" */
+const APPROACHING_PROXIMITY_MINUTES = 2;
+
+/**
  * Compute delay in minutes between scheduled and estimated/actual time.
  * Handles midnight crossings correctly (e.g. 23:50 → 00:05 = +15 min).
  */
@@ -144,9 +170,17 @@ function determineTrainStatus(
 
 /**
  * Find where the train is right now by scanning calling points.
+ *
+ * Requires callingPattern (raw DB rows with SSD data), referenceMinutes
+ * (wall-clock minutes for "now"), and todayStr (YYYY-MM-DD) to gate
+ * "approaching" status on proximity.  Stops more than
+ * APPROACHING_PROXIMITY_MINUTES ahead return "future" instead.
  */
 function determineCurrentLocation(
   callingPoints: HybridCallingPoint[],
+  callingPattern: Array<{ cpSsd: string | null; dayOffset: number | null }>,
+  referenceMinutes: number,
+  todayStr: string,
 ): CurrentLocation | null {
   let lastDepartedIndex = -1;
   for (let i = 0; i < callingPoints.length; i++) {
@@ -159,6 +193,27 @@ function determineCurrentLocation(
     const nextCp = callingPoints[lastDepartedIndex + 1];
     // If the next stop is a DT (destination) and has arrived, it's arrived not at platform
     const isArrivedDestination = nextCp.stopType === "DT" && nextCp.ataPushport;
+
+    // Proximity gate — only mark "approaching" if this stop is genuinely close.
+    // Prefer Darwin estimate over timetable schedule when available.
+    if (!isArrivedDestination && !nextCp.ataPushport) {
+      const estimatedTime = nextCp.etaPushport || nextCp.etdPushport
+        || nextCp.ptaTimetable || nextCp.ptdTimetable;
+      if (estimatedTime) {
+        const nextSsd = callingPattern[lastDepartedIndex + 1]?.cpSsd ?? null;
+        const nextDayOffset = nextCp.dayOffset ?? 0;
+        const stopMinutes = computeStopWallMinutes(nextSsd, nextDayOffset, estimatedTime, todayStr);
+        if (stopMinutes !== null && stopMinutes > referenceMinutes + APPROACHING_PROXIMITY_MINUTES) {
+          return {
+            tpl: nextCp.tpl,
+            crs: nextCp.crs,
+            name: nextCp.name,
+            status: "future",
+          };
+        }
+      }
+    }
+
     return {
       tpl: nextCp.tpl,
       crs: nextCp.crs,
@@ -405,9 +460,13 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
          AND ${wallSchedSql} BETWEEN ${cancelledEarliest} AND ${displayLatest})
 
         -- 2. At platform: train has arrived but not yet departed,
-        --    and the arrival was within the last 120 minutes
+        --    and the arrival was within the last 120 minutes.
+        --    Also gate on display time — if the COALESCE(atd,etd,ptd) is
+        --    more than 5 min in the past, Darwin likely missed the atd
+        --    and the train has already departed.
         OR (${callingPoints.ataPushport} IS NOT NULL AND ${callingPoints.atdPushport} IS NULL
-            AND ${wallAtaSql} BETWEEN ${atPlatformEarliest} AND ${referenceMinutes})
+            AND ${wallAtaSql} BETWEEN ${atPlatformEarliest} AND ${referenceMinutes}
+            AND ${wallDisplaySql} >= ${displayEarliest})
 
         -- 3. Recently departed/arrived: actual within last 5 min
         --    Departure boards: check atdPushport. Arrival boards: check ataPushport.
@@ -758,7 +817,7 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
           loadingPercentage: cp.loadingPercentage ?? null,
         }));
 
-      const currentLocation = determineCurrentLocation(cpList);
+      const currentLocation = determineCurrentLocation(cpList, callingPattern, referenceMinutes, todayStr);
 
       // BUG-017: Darwin often doesn't send atd for origin stops that depart
       // on time. Detect departure by checking if ANY subsequent calling point

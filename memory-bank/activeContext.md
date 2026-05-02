@@ -1,44 +1,31 @@
 # Active Context
 
-## Current Focus: BUG-018 & Backlog (Post-Session 15)
+## Current Focus: BUG-013 (Deactivated Handling) & Backlog
 
-All Session 15 UX fixes and naming cleanup are complete. Next priority: BUG-018 "Approaching" timing.
+BUG-018 "Approaching" timing is now fixed. Next priority: BUG-013 — refined deactivated/deleted services handling in the consumer.
 
-### Latest Changes
+### Latest Changes (2026-05-02 — BUG-018 Fix + Stale Train Fix)
 
-**Documentation:**
-- Added **Playwright MCP** testing documentation to `techContext.md` — browser automation via MCP for frontend testing at `localhost:8080` (Docker) or `localhost:5173` (Vite)
-- Added **Verification Protocol** (Section 9) to `.clinerules` — codified the requirement to always verify fixes end-to-end (DB schema, Docker rebuild, live data query, container logs) rather than stopping at code-only changes
+**BUG-018 fixed — "Approaching" proximity check:**
+- `boards.ts`: Added `computeStopWallMinutes()` helper that computes wall-clock minutes using SSD + dayOffset (matching SQL formula)
+- `APPROACHING_PROXIMITY_MINUTES = 2` — stops more than 2 min ahead return `"future"` instead of `"approaching"`
+- `determineCurrentLocation()` now accepts `callingPattern`, `referenceMinutes`, `todayStr` params
+- Verified at MAN board: services correctly show `"future"` for distant stops
 
-### Lessons Learned (2026-05-02)
-- **`rawFull` truncation fix**: Code-only fixes are insufficient — the Docker container was still running the old image, the fix wasn't live. The preferred workflow: code change → verify DB schema → rebuild & redeploy Docker container → query live data → check container logs. Only then is the fix complete.
+**Stale "at platform" trains fixed:**
+- Condition 2 in `liveVisibilityFilter` now also gates on `wallDisplaySql >= displayEarliest` 
+- Prevents Darwin-missed-atd trains (e.g. 07:58 departure at MAN) from showing at 09:20
+- Root cause: Darwin sends `ata` but no `atd` at some origin stops; condition 2 matched them unconditionally within 120-min window
+- MAN board verified: 07:58 train no longer shows at 09:20, earliest departed service is 09:18
 
-### Session 15 (Completed)
-
-**Three UX fixes applied:**
-- **Issue 1 — "From" station selectable + "To" box width parity**: Replaced static "From" display in `TrainsBoard.tsx` with `StationSearch` (compact size). Both From/To inputs now use identical `flex-1 sm:w-[200px] shrink-0` wrappers and `size="compact"`. Added `compact` variant to `StationSearch.tsx` (no `max-w-md`, smaller padding/icon). Wired `onStationChange` through `App.tsx`.
-- **Issue 2 — Arrivals board broken**: Conditions 3 and 4 in `liveVisibilityFilter` (`boards.ts`) now branch on `boardType`. Arrivals check `ataPushport` instead of the hardcoded `atdPushport`. Departures unchanged.
-- **Issue 3 — Cross-midnight time navigation**: `computeRequestTime()` now returns `{ time, date }` with UK-local target date. `fetchBoard` client and API both accept/use optional `date` parameter as `todayStr` for wall-clock computations.
-
-**Naming cleanup:**
-- `DepartureBoard.tsx` → `TrainsBoard.tsx` (component handles both departures + arrivals)
-- `DepartureBoard` component → `TrainsBoard`, `DepartureBoardProps` → `TrainsBoardProps`
-
-**Design patterns codified in `systemPatterns.md`:**
-1. Sibling input parity — identical constraints and props for side-by-side inputs
-2. Time navigation requires date — always pass YYYY-MM-DD along with HH:MM
-3. Board type branching — visibility conditions must branch on `boardType`
-
-### Remaining Open Bug
-- **BUG-018**: "Approaching" shows too early — `determineCurrentLocation()` triggers as soon as previous stop marks `atd`. Needs ~5 min proximity check.
+**Design patterns added to `systemPatterns.md`:**
+4. Wall-clock time gating — any status implying temporal proximity must validate against wall-clock time
 
 ### Key Files
-- `packages/api/src/routes/boards.ts` — visibility filter (arrivals fix), `date` param
+- `packages/api/src/routes/boards.ts` — BUG-018 fix (computeStopWallMinutes, proximity gate)
 - `packages/frontend/src/components/TrainsBoard.tsx` — renamed from DepartureBoard, selectable From
 - `packages/frontend/src/components/StationSearch.tsx` — compact size variant
-- `packages/frontend/src/api/boards.ts` — date param
-- `packages/frontend/src/App.tsx` — updated import, passes onStationChange
-- `memory-bank/systemPatterns.md` — 3 new design patterns
+- `memory-bank/systemPatterns.md` — 4 design patterns
 
 ### Backlog
 - BUG-013: Deleted services handling strategy

@@ -58,9 +58,10 @@ Circular trips (same TIPLOC visited twice) exist but are rare — mainly BRKNHDN
 ### BUG-018: Journeys show "Approaching" too early
 - **Severity:** Medium
 - **Type:** UX
-- **Status:** Partially fixed (2026-05-01) — colour collision resolved; approaching timing still open
-- **Colour fix:** Light mode `--status-at-platform` changed from `#059669` (same as On time) to `#2563eb` (blue), matching National Rail convention. File: `packages/frontend/src/index.css`.
-- **Remaining:** "Approaching" triggers as soon as the previous calling point marks `atd` — even if the train is still 2 hours away. Need smarter timing (e.g., only mark approaching within ~5 min of actual arrival at the station, taking delays into account).
+- **Status:** ✅ Fixed (2026-05-02)
+- **Fix:** `determineCurrentLocation()` now gates "approaching" on a 2-minute wall-clock proximity check. Stops more than 2 minutes ahead return `status: "future"` instead. Uses `computeStopWallMinutes()` helper with SSD + dayOffset for correct cross-midnight handling. The `"future"` status does not trigger the `trainStatus = "approaching"` override in the board route.
+- **Colour fix (2026-05-01):** Light mode `--status-at-platform` changed from `#059669` (same as On time) to `#2563eb` (blue), matching National Rail convention. File: `packages/frontend/src/index.css`.
+- **Files changed:** `packages/api/src/routes/boards.ts`
 
 ### BUG-022: VSTP duplicate PP entries for circular routes
 - **Severity:** Low

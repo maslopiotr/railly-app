@@ -88,6 +88,7 @@ if (delay > 720) delay -= 1440;
 - **Sibling input parity**: When two `StationSearch` inputs sit side-by-side (e.g. From/To), use identical wrapper constraints (`flex-1 sm:w-[200px] shrink-0`) and identical `size` props. Never give one custom styling that the other lacks.
 - **Time navigation requires date**: Any time-offset navigation (Earlier/Later) must compute and pass an explicit `YYYY-MM-DD` date alongside `HH:MM`. The API uses this as the wall-clock reference date. Never pass bare HH:MM — it breaks cross-midnight queries.
 - **Board type branching**: Any visibility condition using `pushport` columns (`atdPushport`, `ataPushport, `etdPushport`, `etaPushport`) in SQL must branch on `boardType`. Never hardcode departure-only columns — arrivals need `ataPushport`/`etaPushport` equivalents.
+- **Wall-clock time gating**: Any status that implies temporal proximity (e.g. "approaching") must validate against wall-clock time — not just event ordering. Use the same wall-clock formula as SQL queries: `(SSD + dayOffset - todayStr) * 1440 + HH:MM`. Event ordering alone (e.g. "previous stop has atd, therefore approaching") produces false positives on long-distance services where the next stop may be hours away.
 
 ### Design Token System
 - **Architecture**: `:root`/`.dark` CSS custom properties → `@theme` block → Tailwind utility classes
