@@ -156,9 +156,9 @@ html {
   --status-departed: #475569;
   --status-departed-bg: #f1f5f9;
   --status-departed-border: #e2e8f0;
-  --status-at-platform: #059669;
-  --status-at-platform-bg: #ecfdf5;
-  --status-at-platform-border: #a7f3d0;
+  --status-at-platform: #2563eb;
+  --status-at-platform-bg: #eff6ff;
+  --status-at-platform-border: #bfdbfe;
   --status-approaching: #b45309;
   --status-approaching-bg: #fffbeb;
   --status-approaching-border: #fde68a;

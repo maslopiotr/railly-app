@@ -53,19 +53,14 @@ CMDNSTH | IP | 18:58 |                      | wtp=18:58:30  ← PHANTOM (from TS
 #### Circular Trip Data
 Circular trips (same TIPLOC visited twice) exist but are rare — mainly BRKNHDN (4 visits with different pta/ptd times). Time-based matching handles these correctly since each visit has different pta/ptd.
 
-#### Proposed Fix
-1. **`matchLocationsToCps()`**: Remove stop-type pool routing. Match ALL rows for a TIPLOC by time-field-aware proximity (use Darwin's time field type to select the correct DB time field for comparison).
-2. **`deriveStopType()`**: Default to PP when no pta/ptd (only used for genuinely new CPs from VSTP stubs).
-3. **Board API**: Safety net filter — hide CPs with no public times (`pta`/`ptd`).
-4. **Data migration**: Delete phantom duplicate rows where same (rid, tpl, day_offset) has both a row with pta/ptd and a row without.
-5. **At-platform time bound**: Prevent stale "at platform" trains showing forever.
-
-#### Files to Change
-- `packages/consumer/src/handlers/trainStatus.ts` — matcher + deriveStopType
-- `packages/api/src/routes/boards.ts` — board filter + at-platform bound
-- Data migration SQL
-
 ---
+
+### BUG-018: Journeys show "Approaching" too early
+- **Severity:** Medium
+- **Type:** UX
+- **Status:** Partially fixed (2026-05-01) — colour collision resolved; approaching timing still open
+- **Colour fix:** Light mode `--status-at-platform` changed from `#059669` (same as On time) to `#2563eb` (blue), matching National Rail convention. File: `packages/frontend/src/index.css`.
+- **Remaining:** "Approaching" triggers as soon as the previous calling point marks `atd` — even if the train is still 2 hours away. Need smarter timing (e.g., only mark approaching within ~5 min of actual arrival at the station, taking delays into account).
 
 ### BUG-022: VSTP duplicate PP entries for circular routes
 - **Severity:** Low
@@ -78,22 +73,20 @@ Circular trips (same TIPLOC visited twice) exist but are rare — mainly BRKNHDN
 - **Type:** Bug
 - **Status:** Fixed (2026-04-30)
 - **Context:** Train 202604307187689 (circular route) visits Manor Road twice (14:50 and 16:50). Board showed 16:50 departure as "departed" because BUG-017 inference code used `findIndex(cp => cp.tpl === entry.tpl)` which always matched the first visit. Same bug in `cpList.find(cp => cp.tpl === entry.tpl)` for patching atd.
-- **Fix:** Match by `tpl + sortTime` instead of just `tpl` in both places. This ensures the correct occurrence is found for circular routes.
+- **Fix:** Match by `tpl + sortTime` instead of just `tpl` in both places.
 - **Files changed:** `packages/api/src/routes/boards.ts`
-- **Note:** Also exists as stale-timestamp issue (Wontfix) — that's a separate concern.
 
 ### BUG-025b: CP-level dedup leaves stale timestamps on unchanged CPs
 - **Severity:** Low
 - **Type:** Bug
 - **Status:** Wontfix (expected behaviour)
-- **Context:** 2.4M CPs have `ts_generated_at` behind their service's timestamp (1.2M with NULL). Each TS message only updates CPs that changed, so unmentioned CPs keep older timestamps. No data loss — just slightly stale metadata. No user-facing impact.
-- **Decision:** Accept as expected behaviour. Could update all CPs per service, but unnecessary overhead.
+- **Context:** 2.4M CPs have `ts_generated_at` behind their service's timestamp. Each TS message only updates CPs that changed. No data loss.
 
 ### BUG-007-revised: Unprocessed message audit trail
 - **Severity:** Medium
 - **Type:** Bug
 - **Status:** Wontfix (acceptable rate)
-- **Context:** Only 4 deadlocks in 24h, all auto-retried. `darwin_audit` already captures errors. No additional audit table needed at current error rates.
+- **Context:** Only 4 deadlocks in 24h, all auto-retried.
 
 ---
 
@@ -113,16 +106,8 @@ Circular trips (same TIPLOC visited twice) exist but are rare — mainly BRKNHDN
 ### BUG-016: No tests anywhere in the codebase
 - **Context:** Zero test scripts or test files.
 
-### BUG-017
-2026/04/30 14:46:37 [warn] 21#21: *1 an upstream response is buffered to a temporary file /var/cache/nginx/proxy_temp/2/00/0000000002 while reading upstream, client: 192.168.107.1, server: _, request: "GET /api/v1/stations/EUS/board?timeWindow=120&pastWindow=10&time=16%3A00&_t=1777560397457 HTTP/1.1", upstream: "http://192.168.107.2:3000/api/v1/stations/EUS/board?timeWindow=120&pastWindow=10&time=16%3A00&_t=1777560397457", host: "localhost:8080", referrer: "http://localhost:8080/stations/EUS?name=London%2520Euston&time=16%3A00"
-2026/04/30 14:45:13 [warn] 23#23: *2 an upstream response is buffered to a temporary file /var/cache/nginx/proxy_temp/1/00/0000000001 while reading upstream, client: 192.168.107.1, server: _, request: "GET /api/v1/stations/EUS/board?timeWindow=120&pastWindow=10&type=departures&time=17%3A00&_t=1777560313337 HTTP/1.1", upstream: "http://192.168.107.2:3000/api/v1/stations/EUS/board?timeWindow=120&pastWindow=10&type=departures&time=17%3A00&_t=1777560313337", host: "localhost:8080", referrer: "http://localhost:8080/stations/EUS?name=London%2520Euston&time=17%3A00"
-2026/04/30 14:52:27 [warn] 22#22: *20 an upstream response is buffered to a temporary file /var/cache/nginx/proxy_temp/3/00/0000000003 while reading upstream, client: 192.168.107.1, server: _, request: "GET /api/v1/stations/EUS/board?timeWindow=120&pastWindow=10&type=departures&time=15%3A00&_t=1777560747013 HTTP/1.1", upstream: "http://192.168.107.2:3000/api/v1/stations/EUS/board?timeWindow=120&pastWindow=10&type=departures&time=15%3A00&_t=1777560747013", host: "localhost:8080", referrer: "http://localhost:8080/stations/EUS?name=EUSTON%2520LONDON&time=15%3A00"
-
-### BUG-018
-Journeys are showing as Approaching too soon - review the logic so its closer to actual arrival time at the station - even if delayed. Second thing - On time and At platform are in the same color on the board, which is confusing.
-
-### BUG-019
-Journey viewed at 17:00 202604306714507 when departure is set to 17:00 and already has some delay data from real time darwin as 17:04 not showing as delayed. Is this because of the 5 minutes rule? its confusing, I think it should show as delayed faster, as soon as we know how much its delayed, even if 1 or 2 minutes, it should show +1 min etc.
+### BUG-017 (nginx buffer warnings)
+- **Context:** nginx `proxy_temp` warnings for large board responses. Known issue with EUS terminus boards; no user impact.
 
 ---
 
@@ -135,45 +120,27 @@ Journey viewed at 17:00 202604306714507 when departure is set to 17:00 and alrea
 ### Bug A19: Train at platform at destination should show "arrived"
 - **Status:** Fixed (BUG-020) — `stopType === 'DT'` with `ata` returns "arrived"
 
-### Bug A21: Station name case normalisation
-- **Status:** Backlog
-- **Context:** `normaliseStationName()` exists in shared utils but needs consistent application across all display components.
-
-### Bug A23: Non-passenger services showing on boards
-- **Status:** Needs investigation
-- **Context:** 31,676 non-passenger journeys in DB. Board query should filter by `is_passenger = true`. Need to verify no leakage.
-
-### Bug A24: PPTimetable filters out isPassengerSvc="false"
-- **Context:** Design decision — we don't show non-passenger services (ECS moves, light loco, etc.)
-
 ### Bug A26: "Next" flag showing on wrong stop for delayed trains
 - **Status:** Fixed (2026-04-30)
-- **Root cause:** Two issues:
-  1. `determineStopState` skipped stations where train had arrived (ata) but not departed (atd) — these should be "current" (at platform), not "past"
-  2. `normaliseCallingPointTimes` used `etdPushport || etaPushport` for ordering, which breaks when pushport estimates are out of sequence (e.g. PSW etd=12:05 > ATH ptd=12:04). Fix: use `sortTime` from DB (derived from `COALESCE(wtd, ptd, wtp, wta, pta)`) which is always monotonically increasing.
-- **Files changed:** `CallingPoints.tsx` (frontend), `boards.ts` and `services.ts` (API), `board.ts` (shared types)
+- **Root cause:** `sortTime` monotonic ordering resolved the out-of-sequence pushport times issue.
 
 ### Bug A27: Service showing as "unknown"
-- **Status:** Needs investigation
+- **Status:** Closed (2026-05-01) — not reproducible. `TrainStatus` type has 8 concrete values, no "unknown" variant exists. `StatusBadge` covers all cases. Likely an old bug fixed in Session 10 board visibility rewrite.
 
 ### BUG-017b: Origin stops not showing "departed" when train has left
 - **Severity:** High
 - **Type:** Bug
 - **Status:** Fixed (2026-04-30)
-- **Root cause:** Darwin Push Port does not send `atd` (actual time of departure) for origin stops that depart on time. It only sends `etd = std` with `confirmed: true`. The board's `determineTrainStatus()` relied solely on `atd` to mark a service as "departed", so on-time origin departures showed as "on_time" even after the train had long since left.
-- **Fix:** In `boards.ts`, when `atd` is null for the board station, scan ALL subsequent calling points (including PP/passing points which have track circuit data) for any `atd` or `ata`. If found, infer the train has departed and set `trainStatus = "departed"`. For `actualDeparture`, fall back to `etd` when inferred departed (safe because `confirmed: true` from Darwin means this is the actual time).
-- **Safety:** If the train is still at the platform (delayed), no subsequent stops have actual times, so inference doesn't fire. Only track circuit-confirmed data triggers the departed override.
-- **Files changed:** `packages/api/src/routes/boards.ts`
+
+### BUG-019: Delay threshold — should show "+1 min" faster
+- **Status:** Closed (2026-05-01) — already fixed since Session 7. Threshold changed from `> 5` to `>= 2` minutes. `boards.ts:140`: `delay >= 2` returns "delayed".
+
+### Bug A23: Non-passenger services leaking onto boards
+- **Status:** Closed (2026-05-01) — already fixed since Session 12. Board query uses `IS NOT FALSE` on `isPassenger` (line 489) and excludes PP/OPOR/OPIP/OPDT stop types (line 492).
 
 ### Bug A35: Cancelled services showing as scheduled
 - **Status:** Closed (not reproducible with current data)
-- **Context:** Service 202604288702699 (April 28) reported as scheduled but cancelled on National Rail.
-- **Investigation (2026-04-30):** Verified April 30 data:
-  - 0 instances of `etd_pushport='Cancelled'` with `is_cancelled=false`
-  - Both CP-level and service_rt-level cancellation flags are consistent
-  - 1,268 timetable-only services without service_rt — normal (no Darwin messages for those)
-  - Original report was from April 28, old data may have been incomplete at the time
-  - Cancellation flow works correctly end-to-end
+- **Context:** Cancellation flow works correctly end-to-end.
 
 ---
 
@@ -189,6 +156,7 @@ Journey viewed at 17:00 202604306714507 when departure is set to 17:00 and alrea
 | BUG-011 | PostgreSQL `max_wal_size` increased to 4GB | 2026-04-26 |
 | BUG-012 | `.limit(1)` already present; led to BUG-023 | 2026-04-26 |
 | BUG-017 | React ErrorBoundary wrapping main content | 2026-04-29 |
+| BUG-019 | Delay threshold — changed from >5 to >=2 min | 2026-04-30 (S7) |
 | BUG-020 | DT stop with `ata` shows "arrived" not "at platform" | 2026-04-26 |
 | BUG-021 | Mobile UI CSS specificity fix for Tailwind v4 | 2026-04-28 |
 | BUG-023 | CRS gap + seed infinite loop; Phase 3 split into terminating sub-phases | 2026-04-30 |
@@ -200,9 +168,13 @@ Journey viewed at 17:00 202604306714507 when departure is set to 17:00 and alrea
 | BUG-034 | Seed re-processing: hash-based dedup via `seed_log` | 2026-04-30 |
 | BUG-036 | 23505 violation: natural key matching + stop_type derivation | 2026-04-29 |
 | BUG-025 | Circular trains: match by tpl+sortTime instead of tpl only | 2026-04-30 |
-| BUG-037 | Phantom IP rows: TS handler uses `pass` sub-object for PP detection (+ 37K additional cleanup 2026-04-30) — **partially fixed, underlying matching issue persists (see BUG-038)** | 2026-04-30 |
- | BUG-039 | Seed Phase 4 stale-marking corrupted `source_timetable` flag, causing consumer to overwrite timetable data via VSTP path | 2026-05-01 |
- | BUG-040 | Time-selected board filter excluded departed services (atd IS NULL at terminus) — now uses scheduled-time window matching NR behaviour | 2026-05-01 |
+| BUG-037 | Phantom IP rows: TS handler uses `pass` sub-object for PP detection | 2026-04-30 |
+| BUG-038 | Phantom duplicate CP rows: stop-type routing fix + migration 0005 | 2026-05-01 |
+| BUG-039 | Seed Phase 4 stale-marking corruption | 2026-05-01 |
+| BUG-040 | Time-selected board filter — now uses scheduled-time window | 2026-05-01 |
+| BUG-018a | "On time" and "At platform" colour collision (light mode) | 2026-05-01 |
+| Bug A23 | Non-passenger services board leakage — `IS NOT FALSE` + stop type filter | 2026-05-01 (S12) |
+| Bug A27 | "unknown" status — not reproducible, type safety verified | 2026-05-01 |
 
 ---
 

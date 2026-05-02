@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { StationSearch } from "./components/StationSearch";
-import { DepartureBoard } from "./components/DepartureBoard";
+import { TrainsBoard } from "./components/TrainsBoard";
 import { ServiceDetail } from "./components/ServiceDetail";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { useRecentStations } from "./hooks/useRecentStations";
@@ -380,11 +380,12 @@ function App() {
             </div>
           ) : selectedStation ? (
             /* Level 2: Departure Board */
-            <DepartureBoard
+            <TrainsBoard
               station={selectedStation}
               isFavourite={isFavourite(selectedStation.crsCode)}
               onToggleFavourite={() => toggleFavourite(selectedStation)}
               onBack={handleBackFromBoard}
+              onStationChange={handleStationSelect}
               onSelectService={handleSelectService}
               activeTab={activeTab}
               onTabChange={setActiveTab}

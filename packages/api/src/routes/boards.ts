@@ -256,26 +256,32 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
 
     // ── Allow filtering by a specific time (like RTT) ────────────────────
     const timeParam = req.query.time as string | undefined;
+    const dateParam = req.query.date as string | undefined;
     let referenceMinutes: number;
     let todayStr: string;
 
     if (timeParam && /^(\d{2}):(\d{2})$/.test(timeParam)) {
       const [h, m] = timeParam.split(":").map(Number);
       referenceMinutes = h * 60 + m;
-      // Use today as the date, but reference time from the parameter
-      const now = new Date();
-      const ukTime = new Intl.DateTimeFormat("en-GB", {
-        timeZone: "Europe/London",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: false,
-      }).format(now);
-      const dateParts = ukTime.split(", ")[0].split("/");
-      todayStr = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`;
+
+      // Use explicit date if provided, otherwise default to today
+      if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+        todayStr = dateParam;
+      } else {
+        const now = new Date();
+        const ukTime = new Intl.DateTimeFormat("en-GB", {
+          timeZone: "Europe/London",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+        }).format(now);
+        const dateParts = ukTime.split(", ")[0].split("/");
+        todayStr = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`;
+      }
     } else {
       const ukNow = getUkNow();
       referenceMinutes = ukNow.nowMinutes;
@@ -299,8 +305,11 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
     const displayEarliest = referenceMinutes - DISPLAY_LOOKBACK;
     const displayLatest = referenceMinutes + FUTURE_WINDOW;
     const scheduledEarliest = referenceMinutes - SCHEDULED_LOOKBACK;
-    // At-platform time bound: prevent stale "at platform" trains from yesterday
-    const AT_PLATFORM_BOUND = 120;
+    // At-platform time bound: prevent stale "at platform" trains.
+    // Departures: up to 120 min (train may board early at platform).
+    // Arrivals: only 5 min (at terminus, trains show as "arrived" permanently
+    //   since atd is never set; a 120-min window shows trains from hours ago).
+    const AT_PLATFORM_BOUND = boardType === "arrivals" ? DEPARTED_LOOKBACK : 120;
     const atPlatformEarliest = referenceMinutes - AT_PLATFORM_BOUND;
 
     // ── Determine SSD dates to query ─────────────────────────────────────
@@ -396,19 +405,28 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
          AND ${wallSchedSql} BETWEEN ${cancelledEarliest} AND ${displayLatest})
 
         -- 2. At platform: train has arrived but not yet departed,
-        --    and the arrival was within the last ${AT_PLATFORM_BOUND} minutes
+        --    and the arrival was within the last 120 minutes
         OR (${callingPoints.ataPushport} IS NOT NULL AND ${callingPoints.atdPushport} IS NULL
             AND ${wallAtaSql} BETWEEN ${atPlatformEarliest} AND ${referenceMinutes})
 
-        -- 3. Recently departed: actual departure within last 5 min
-        OR (${callingPoints.atdPushport} IS NOT NULL
-            AND ${wallActualSql} BETWEEN ${departedEarliest} AND ${referenceMinutes})
+        -- 3. Recently departed/arrived: actual within last 5 min
+        --    Departure boards: check atdPushport. Arrival boards: check ataPushport.
+        OR (
+          ${boardType === "arrivals"
+            ? sql`${callingPoints.ataPushport} IS NOT NULL`
+            : sql`${callingPoints.atdPushport} IS NOT NULL`}
+          AND ${wallActualSql} BETWEEN ${departedEarliest} AND ${referenceMinutes}
+        )
 
-        -- 4. Not yet departed AND display time in window
+        -- 4. Not yet departed/arrived AND display time in window
         --    Display time = etd (preferred, reflects delay) > ptd (fallback)
-        --    atd IS NULL means train hasn't departed this station yet
-        OR (${callingPoints.atdPushport} IS NULL
-            AND ${wallDisplaySql} BETWEEN ${displayEarliest} AND ${displayLatest})
+        --    atd/ata IS NULL means train hasn't departed/arrived this station yet
+        OR (
+          ${boardType === "arrivals"
+            ? sql`${callingPoints.ataPushport} IS NULL`
+            : sql`${callingPoints.atdPushport} IS NULL`}
+          AND ${wallDisplaySql} BETWEEN ${displayEarliest} AND ${displayLatest}
+        )
 
         -- 5. Scheduled-only services (no realtime data at all)
         OR (${serviceRt.rid} IS NULL

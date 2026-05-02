@@ -1,5 +1,5 @@
 /**
- * DepartureBoard — NR-style live departures/arrivals board with real-time overlay
+ * TrainsBoard — NR-style live departures/arrivals board with real-time overlay
  *
  * Features:
  * - Live departures/arrivals for any UK station
@@ -17,11 +17,12 @@ import { ServiceRow } from "./ServiceRow";
 import { StationSearch } from "./StationSearch";
 import { BOARD_GRID_COLS, BOARD_GRID_GAP, BOARD_GRID_PAD } from "./boardGrid";
 
-interface DepartureBoardProps {
+interface TrainsBoardProps {
   station: StationSearchResult;
   isFavourite?: boolean;
   onToggleFavourite?: () => void;
   onBack?: () => void;
+  onStationChange?: (station: StationSearchResult) => void;
   onSelectService?: (service: HybridBoardService) => void;
   /** Controlled active tab — lifted to App.tsx for persistence across navigation */
   activeTab: "departures" | "arrivals";
@@ -75,17 +76,18 @@ function formatDuration(minutes: number | null): string | null {
   return `${m}m`;
 }
 
-export function DepartureBoard({
+export function TrainsBoard({
   station,
   isFavourite,
   onToggleFavourite,
   onBack,
+  onStationChange,
   onSelectService,
   activeTab,
   onTabChange,
   destinationStation,
   onDestinationChange,
-}: DepartureBoardProps) {
+}: TrainsBoardProps) {
   const [board, setBoard] = useState<HybridBoardResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -102,6 +104,9 @@ export function DepartureBoard({
 
   // Time window navigation — offset from "now" in minutes (0 = live mode)
   const [timeWindowOffset, setTimeWindowOffset] = useState(0);
+
+  // Whether the "From" station chip has been dismissed to reveal the search input
+  const [isFromStationEditing, setIsFromStationEditing] = useState(false);
 
   // Pull-to-refresh state
   const [pullDistance, setPullDistance] = useState(0);
@@ -132,15 +137,44 @@ export function DepartureBoard({
 
   const PAGE_SIZE = 15;
 
-  // Compute the HH:MM time string for the current offset, or null for live mode
-  const computeRequestTime = useCallback((): string | null => {
-    if (timeWindowOffset === 0) return null; // live mode
+  // Compute the HH:MM time string and YYYY-MM-DD date for the current offset, or nulls for live mode
+  const computeRequestTime = useCallback((): { time: string | null; date: string | null } => {
+    if (timeWindowOffset === 0) return { time: null, date: null }; // live mode
+
     const now = new Date();
-    const targetMinutes = now.getHours() * 60 + now.getMinutes() + timeWindowOffset;
+    // Use UK-local date/time to calculate the target correctly
+    const ukTime = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Europe/London",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).format(now);
+
+    const dateParts = ukTime.split(", ")[0].split("/");
+    const timePart = ukTime.split(", ")[1];
+    const currentDate = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`;
+    const currentMinutes = parseInt(timePart.split(":")[0]) * 60 + parseInt(timePart.split(":")[1]);
+
+    const targetMinutes = currentMinutes + timeWindowOffset;
     const adjustedMinutes = ((targetMinutes % 1440) + 1440) % 1440; // wrap around midnight
+    const dayOffset = Math.floor((currentMinutes + timeWindowOffset) / 1440);
+
     const h = Math.floor(adjustedMinutes / 60);
     const m = adjustedMinutes % 60;
-    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+
+    // Compute the actual UK-local target date
+    const targetDateObj = new Date(currentDate + "T12:00:00Z");
+    targetDateObj.setUTCDate(targetDateObj.getUTCDate() + dayOffset);
+    const targetDate = targetDateObj.toISOString().split("T")[0];
+
+    return {
+      time: `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`,
+      date: targetDate,
+    };
   }, [timeWindowOffset]);
 
   const loadBoard = useCallback(
@@ -154,12 +188,13 @@ export function DepartureBoard({
           setBoard(null);
           setIsLoading(true);
         }
-        const requestTime = computeRequestTime();
+        const { time: reqTime, date: reqDate } = computeRequestTime();
         const data = await fetchBoard(station.crsCode, {
           limit: PAGE_SIZE,
           type: activeTab,
           destination: destinationFilter || undefined,
-          time: requestTime ?? undefined,
+          time: reqTime ?? undefined,
+          date: reqDate ?? undefined,
           signal: controller.signal,
         });
         if (!controller.signal.aborted) {
@@ -187,13 +222,14 @@ export function DepartureBoard({
     if (isLoadingMore || !hasMore) return;
     setIsLoadingMore(true);
     try {
-      const requestTime = computeRequestTime();
+      const { time: reqTime, date: reqDate } = computeRequestTime();
       const data = await fetchBoard(station.crsCode, {
         limit: PAGE_SIZE,
         offset: allServices.length,
         type: activeTab,
         destination: destinationFilter || undefined,
-        time: requestTime ?? undefined,
+        time: reqTime ?? undefined,
+        date: reqDate ?? undefined,
       });
       setAllServices((prev) => [...prev, ...data.services]);
       setHasMore(data.hasMore);
@@ -395,14 +431,39 @@ export function DepartureBoard({
           {/* From */}
           <div className="flex items-center gap-2 w-full sm:w-auto">
             <span className="text-xs font-medium text-text-muted uppercase tracking-wide shrink-0">From</span>
-            <div className="flex items-center gap-1 min-w-0 bg-surface-hover rounded px-2 py-1.5 flex-1 sm:w-[200px]">
-              <span className="text-sm font-semibold text-text-primary truncate">
-                {normaliseStationName(board?.stationName || station.name)}
-              </span>
-              <span className="text-[10px] font-mono text-text-muted shrink-0">{station.crsCode}</span>
-            </div>
+            {isFromStationEditing ? (
+              <div className="flex-1 sm:w-[200px] shrink-0">
+                <StationSearch
+                  onSelect={(s) => {
+                    setIsFromStationEditing(false);
+                    onStationChange?.(s);
+                  }}
+                  placeholder="Search for a station..."
+                  size="compact"
+                  autoFocus
+                />
+              </div>
+            ) : (
+              <div className="flex items-center gap-1 min-w-0 bg-surface-hover rounded px-2 py-1.5 flex-1 sm:w-[200px]">
+                <span className="text-sm font-semibold text-text-primary truncate">
+                  {normaliseStationName(board?.stationName || station.name)}
+                </span>
+                <span className="text-[10px] font-mono text-text-muted shrink-0">
+                  {station.crsCode}
+                </span>
+                {onStationChange && (
+                  <button
+                    onClick={() => setIsFromStationEditing(true)}
+                    className="text-text-muted hover:text-status-cancelled text-xs px-1 shrink-0 focus-visible:ring-1 focus-visible:ring-blue-500 rounded"
+                    aria-label={`Change station from ${normaliseStationName(station.name)}`}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            )}
           </div>
-          
+
           {/* To / Going to */}
           <div className="flex items-center gap-2 w-full sm:w-auto flex-1 sm:flex-none">
             <span className="text-xs font-medium text-text-muted uppercase tracking-wide shrink-0">To</span>
@@ -415,7 +476,7 @@ export function DepartureBoard({
                   {destinationStation.crsCode}
                 </span>
                 <button
-                  onClick={() => onDestinationChange(null)}
+                  onClick={() => onDestinationChange?.(null)}
                   className="text-text-muted hover:text-status-cancelled text-xs px-1 shrink-0 focus-visible:ring-1 focus-visible:ring-blue-500 rounded"
                   aria-label="Clear destination"
                 >
@@ -425,9 +486,9 @@ export function DepartureBoard({
             ) : (
               <div className="flex-1 sm:w-[200px] shrink-0">
                 <StationSearch
-                  onSelect={(s) => onDestinationChange(s)}
+                  onSelect={(s) => onDestinationChange?.(s)}
                   placeholder="Any station…"
-                  size="default"
+                  size="compact"
                 />
               </div>
             )}

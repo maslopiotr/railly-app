@@ -7,7 +7,7 @@ interface StationSearchProps {
   onSelect: (station: StationSearchResult) => void;
   placeholder?: string;
   autoFocus?: boolean;
-  size?: "default" | "large";
+  size?: "default" | "large" | "compact";
 }
 
 export function StationSearch({
@@ -126,17 +126,20 @@ export function StationSearch({
   }
 
   const isLarge = size === "large";
+  const isCompact = size === "compact";
 
   // Input classes using semantic tokens
   const inputClasses = isLarge
     ? "px-5 py-4 pl-12 text-lg rounded-xl"
-    : "px-4 py-3 pl-10";
+    : isCompact
+      ? "px-2 py-1.5 pl-8 text-sm rounded-md"
+      : "px-4 py-3 pl-10";
 
-  const searchIconPosition = isLarge ? "pl-4" : "pl-3";
-  const searchIconSize = isLarge ? "w-5 h-5" : "w-4 h-4";
+  const searchIconPosition = isLarge ? "pl-4" : isCompact ? "pl-2" : "pl-3";
+  const searchIconSize = isLarge ? "w-5 h-5" : isCompact ? "w-3 h-3" : "w-4 h-4";
 
   return (
-    <div ref={containerRef} className="relative w-full max-w-md">
+    <div ref={containerRef} className={`relative w-full ${isCompact ? "" : "max-w-md"}`}>
       <div className="relative">
         <input
           ref={inputRef}
