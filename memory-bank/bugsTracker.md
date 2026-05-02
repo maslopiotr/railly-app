@@ -96,7 +96,17 @@ Circular trips (same TIPLOC visited twice) exist but are rare — mainly BRKNHDN
 ---
 
 ### BUG-013: No handling strategy for deleted services
-- **Context:** The `deactivated` handler marks services as cancelled only if no movement data. No explicit "deleted" state.
+- **Context:** The `deactivated` handler previously inferred cancellation from movement data, rather than recording what Darwin actually sends.
+- **Status:** ✅ Fixed (2026-05-02)
+- **Fix:** 
+  - Added `is_deleted boolean NOT NULL DEFAULT false` to `service_rt` and `calling_points`
+  - Added `deactivated_at timestamptz` to `service_rt`
+  - `handleSchedule` now reads `schedule.deleted` flag, writes `is_deleted` to both tables
+  - `handleDeactivated` simplified to a pure event recorder: `SET deactivated_at = NOW()`
+  - `boards.ts` WHERE clause excludes `is_deleted IS TRUE`
+  - No inference, no assumptions — purely factual Darwin data recording
+- **Design principle:** Store what Darwin sends. Exclude what Darwin explicitly marks as deleted. Let time windows handle everything else.
+- **Files changed:** `schema.ts`, `schedule.ts`, `index.ts`, `boards.ts`, migration `0006_deleted_and_deactivated.sql`
 
 ### BUG-014: Daily PP Timetable seed needs production verification
 - **Context:** New `seed` container runs immediate seed on start + daily cron at 03:00. Needs verification in production.
@@ -142,6 +152,8 @@ Circular trips (same TIPLOC visited twice) exist but are rare — mainly BRKNHDN
 ### Bug A35: Cancelled services showing as scheduled
 - **Status:** Closed (not reproducible with current data)
 - **Context:** Cancellation flow works correctly end-to-end.
+
+### Bug A36 Service showns as departed, but departure time has not passed yet - when viewed at 16:06. 202605026772494
 
 ---
 

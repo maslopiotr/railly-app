@@ -570,6 +570,8 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
           boardType === "arrivals"
             ? sql`(${callingPoints.ptaTimetable} IS NOT NULL OR ${callingPoints.etaPushport} IS NOT NULL)`
             : sql`(${callingPoints.ptdTimetable} IS NOT NULL OR ${callingPoints.etdPushport} IS NOT NULL)`,
+          // Exclude services explicitly deleted from the Darwin schedule
+          sql`${serviceRt.isDeleted} IS NOT TRUE`,
           visibilityFilter,
         ),
       )

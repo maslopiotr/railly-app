@@ -43,6 +43,13 @@
       "when": 1777568000000,
       "tag": "0005_cleanup_phantom_duplicates",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1777788000000,
+      "tag": "0006_deleted_and_deactivated",
+      "breakpoints": true
     }
   ]
 }

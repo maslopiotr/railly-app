@@ -134,6 +134,7 @@ export async function handleSchedule(
   const isPassengerSvc = schedule.isPassengerSvc === true ? true : schedule.isPassengerSvc === false ? false : null;
   const isCancelled = schedule.can === true;
   const cancelReason = schedule.cancelReason?.reasontext || null;
+  const isDeleted = schedule.deleted === true || false;
 
   // Darwin sometimes sends a single location as an object instead of an array
   const rawLocations = toArray(schedule.locations);
@@ -241,15 +242,17 @@ export async function handleSchedule(
           source_darwin = true
       `;
 
-      // ── Upsert service_rt — set source_darwin = true ──
+      // ── Upsert service_rt — set source_darwin = true, record is_deleted ──
       await tx`
         INSERT INTO service_rt (
           rid, uid, ssd, train_id, toc,
           is_cancelled, cancel_reason,
+          is_deleted,
           generated_at, source_darwin, last_updated
         ) VALUES (
           ${rid}, ${uid}, ${ssd}, ${trainId}, ${toc},
           ${isCancelled}, ${cancelReason},
+          ${isDeleted},
           ${generatedAt}::timestamp with time zone, true, NOW()
         )
         ON CONFLICT (rid) DO UPDATE SET
@@ -259,6 +262,7 @@ export async function handleSchedule(
           toc = EXCLUDED.toc,
           is_cancelled = EXCLUDED.is_cancelled,
           cancel_reason = EXCLUDED.cancel_reason,
+          is_deleted = EXCLUDED.is_deleted,
           generated_at = EXCLUDED.generated_at,
           source_darwin = true,
           last_updated = NOW()
@@ -481,6 +485,15 @@ export async function handleSchedule(
         }
         // Note: unmatched existing CPs are left as-is — their data is preserved
         // for historical analysis. No source_darwin=false marking needed.
+      }
+
+      // ── If this schedule marks the service as deleted, propagate to all CPs ──
+      if (isDeleted) {
+        await tx`
+          UPDATE calling_points
+          SET is_deleted = true
+          WHERE journey_rid = ${rid}
+        `;
       }
 
       // ── If this schedule marks the service as cancelled, propagate to all CPs ──

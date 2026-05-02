@@ -117,6 +117,7 @@ export const callingPoints = pgTable(
     suppr: boolean("suppr").default(false).notNull(), // Stop suppressed from public display entirely
     lengthPushport: varchar("length_pushport", { length: 10 }), // Train length in coaches
     detachFront: boolean("detach_front").default(false).notNull(), // Front coaches detach at this stop
+    isDeleted: boolean("is_deleted").default(false).notNull(), // Belongs to a deleted service
     // -- Loading columns (Darwin serviceLoading messages) --
     loadingPercentage: integer("loading_percentage"), // 0-100 from serviceLoading
     loadingPercentageType: varchar("loading_percentage_type", { length: 10 }), // "Typical" | "Expected"
@@ -178,6 +179,8 @@ export const serviceRt = pgTable(
     generatedAt: timestamp("generated_at", { withTimezone: true }), // Schedule message timestamp (for schedule dedup)
     tsGeneratedAt: timestamp("ts_generated_at", { withTimezone: true }), // TS message timestamp (for TS dedup)
     lastUpdated: timestamp("last_updated", { withTimezone: true }).defaultNow(),
+    isDeleted: boolean("is_deleted").default(false).notNull(), // Service explicitly deleted from Darwin schedule
+    deactivatedAt: timestamp("deactivated_at", { withTimezone: true }), // When Darwin removed this from active set
   },
   (table) => [
     index("idx_service_rt_rid").on(table.rid),
