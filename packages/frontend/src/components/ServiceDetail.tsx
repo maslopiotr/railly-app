@@ -171,7 +171,9 @@ export function ServiceDetail({
                 ? "Approaching"
                 : service.currentLocation.status === "arrived"
                   ? "Arrived"
-                  : "Departed"}{" "}
+                  : service.currentLocation.status === "future"
+                    ? "En route to"
+                    : "Departed"}{" "}
             {normaliseStationName(service.currentLocation.name) ||
               service.currentLocation.crs ||
               service.currentLocation.tpl}

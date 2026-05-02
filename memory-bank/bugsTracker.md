@@ -153,8 +153,15 @@ Circular trips (same TIPLOC visited twice) exist but are rare — mainly BRKNHDN
 - **Status:** Closed (not reproducible with current data)
 - **Context:** Cancellation flow works correctly end-to-end.
 
-### Bug A36 Service showns as departed, but departure time has not passed yet - when viewed at 16:06. 202605026772494
-
+### Bug A36: Service showing "Departed" for future stops in calling points view
+- **Severity:** Medium
+- **Type:** UX
+- **Status:** ✅ Fixed (2026-05-02)
+- **Discovered:** 2026-05-02
+- **Impact:** Service 202605026772494 showed "Departed Birmingham International" when the train had not yet arrived there. The `DetermineCurrentLocation()` function (back-end) correctly returned `status: "future"` for stops more than 2 minutes ahead, but the front-end's `ServiceDetail.tsx` current-location indicator didn't handle the `"future"` status — it fell through to the default `else` branch, which rendered "Departed".
+- **Root cause:** `BUG-018` introduced the `"future"` status on `CurrentLocation` to gate "approaching" on a 2-minute proximity check, but the front-end wasn't updated to handle this new status value.
+- **Fix:** Added explicit `"future"` case to the ternary chain in `ServiceDetail.tsx` (line 168-174), rendering **"En route to"** instead of "Departed" when `currentLocation.status === "future"`.
+- **Files changed:** `packages/frontend/src/components/ServiceDetail.tsx`
 ---
 
 ## Fixed Bugs (Compact Summary)
@@ -188,6 +195,7 @@ Circular trips (same TIPLOC visited twice) exist but are rare — mainly BRKNHDN
 | BUG-018a | "On time" and "At platform" colour collision (light mode) | 2026-05-01 |
 | Bug A23 | Non-passenger services board leakage — `IS NOT FALSE` + stop type filter | 2026-05-01 (S12) |
 | Bug A27 | "unknown" status — not reproducible, type safety verified | 2026-05-01 |
+| Bug A36 | "Departed" shown for future stops — added "En route to" for `future` status | 2026-05-02 |
 
 ---
 
