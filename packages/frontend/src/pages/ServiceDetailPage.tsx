@@ -8,9 +8,9 @@
 
 import type { HybridBoardService } from "@railly-app/shared";
 import { normaliseStationName, formatDisplayTime, computeDelay } from "@railly-app/shared";
-import { CallingPoints } from "./CallingPoints";
-import { LoadingIndicator } from "./LoadingIndicator";
-import { PlatformBadge } from "./PlatformBadge";
+import { CallingPoints } from "../components/service-detail/CallingPoints";
+import { LoadingIndicator } from "../components/service-detail/LoadingIndicator";
+import { PlatformBadge } from "../components/shared/PlatformBadge";
 
 interface ServiceDetailProps {
   service: HybridBoardService;

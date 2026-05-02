@@ -11,7 +11,7 @@
 
 import type { HybridBoardService, HybridCallingPoint } from "@railly-app/shared";
 import { normaliseStationName, formatDisplayTime } from "@railly-app/shared";
-import { PlatformBadge } from "./PlatformBadge";
+import { PlatformBadge } from "../shared/PlatformBadge";
 import { BOARD_GRID_COLS, BOARD_GRID_GAP, BOARD_GRID_PAD } from "./boardGrid";
 
 interface ServiceRowProps {

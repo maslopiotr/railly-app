@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { searchStations } from "../api/stations";
+import { searchStations } from "../../api/stations";
 import { normaliseStationName } from "@railly-app/shared";
 import type { StationSearchResult } from "@railly-app/shared";
 

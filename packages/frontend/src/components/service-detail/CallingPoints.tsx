@@ -12,7 +12,7 @@
 
 import type { HybridCallingPoint } from "@railly-app/shared";
 import { normaliseStationName, formatDisplayTime, computeDelay } from "@railly-app/shared";
-import { PlatformBadge } from "./PlatformBadge";
+import { PlatformBadge } from "../shared/PlatformBadge";
 
 interface CallingPointsProps {
   points: HybridCallingPoint[];
