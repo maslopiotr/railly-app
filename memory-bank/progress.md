@@ -1,6 +1,44 @@
 # Progress
 
-## Latest (2026-05-03, Session 2) — Destination Filter Leak Investigation
+## Latest (2026-05-03, Session 3) — Monolithic File Refactoring
+
+### Board Route Refactoring ✅
+- ✅ `boards.ts` (600+ lines) split into 4 service modules + thin handler (216 lines)
+  - `board-time.ts` (139 lines) — Pure time utilities, constants
+  - `board-status.ts` (158 lines) — Train status, current location, platform source
+  - `board-queries.ts` (492 lines) — SQL expression builders + DB queries
+  - `board-builder.ts` (372 lines) — Row→response mapping, dedup, filtering
+  - `routes/boards.ts` (216 lines) — Thin Express handler
+- ✅ Docker build + runtime verification: all endpoints return correct data
+- ✅ Import path preserved: `server.ts` imports `boardsRouter` unchanged
+
+### Consumer TS Handler Refactoring ✅
+- ✅ `trainStatus.ts` (927 lines) split into 4 sub-modules + thin re-export (13 lines)
+  - `ts/utils.ts` (139 lines) — Pure helpers (toArray, parseTs, deriveSsdFromRid, computeDelayMinutes, deriveStopType, parseTimeToMinutes, CpUpdate type)
+  - `ts/matching.ts` (129 lines) — Location-to-CP matching (matchLocationsToCps, ExistingCpRow type)
+  - `ts/stub.ts` (186 lines) — Darwin stub creation for unknown services (createDarwinStub)
+  - `ts/handler.ts` (510 lines) — Main orchestration (handleTrainStatus, skippedLocationsTotal)
+  - `trainStatus.ts` (13 lines) — Thin re-export preserving import path
+- ✅ Docker build verified: consumer processing messages (309 processed, 0 errors)
+- ✅ API endpoint verified: `/api/v1/stations/KGX/board` returns correct data
+
+### File Size Comparison
+| Original | Lines | Refactored | Lines |
+|----------|-------|------------|-------|
+| `routes/boards.ts` | 627 | `board-time.ts` | 139 |
+| | | `board-status.ts` | 158 |
+| | | `board-queries.ts` | 492 |
+| | | `board-builder.ts` | 372 |
+| | | `routes/boards.ts` | 216 |
+| `handlers/trainStatus.ts` | 927 | `ts/utils.ts` | 139 |
+| | | `ts/matching.ts` | 129 |
+| | | `ts/stub.ts` | 186 |
+| | | `ts/handler.ts` | 510 |
+| | | `trainStatus.ts` | 13 |
+
+---
+
+## Completed (2026-05-03, Session 2) — Destination Filter Leak Investigation
 
 ### Investigation ✅
 - ✅ Root cause identified: positional awareness missing in JS post-filter (`boards.ts:715`)

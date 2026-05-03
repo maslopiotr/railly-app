@@ -79,6 +79,19 @@ Key rules:
 - **VSTP**: Same pattern — schedule IS the timetable, writes `_timetable` cols, preserves pushport
 - **Never deletes CPs** — Darwin announces cancellations
 
+### TS Handler Module Architecture
+The TS handler was refactored from a single 927-line file into four focused sub-modules + a thin re-export:
+```
+src/handlers/
+├── trainStatus.ts     — Thin re-export (preserves import path for index.ts)
+└── ts/
+    ├── utils.ts       — Pure helpers (toArray, parseTs, deriveSsdFromRid, computeDelayMinutes, deriveStopType, parseTimeToMinutes, CpUpdate type)
+    ├── matching.ts    — Location-to-CP matching (matchLocationsToCps, ExistingCpRow type)
+    ├── stub.ts        — Darwin stub creation for unknown services (createDarwinStub)
+    └── handler.ts     — Main orchestration (handleTrainStatus, skippedLocationsTotal)
+```
+Dependency graph: `utils ← matching ← handler`; `utils ← stub ← handler`; `handler ← db, log, index (logDarwinSkip)`. No circular deps.
+
 ### TS Handler
 - Match by `(TIPLOC, time)` using `matchLocationsToCps()`
 - PP locations use `pass` sub-object for detection (`deriveStopType`)
