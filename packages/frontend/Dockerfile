@@ -34,8 +34,9 @@ COPY packages/frontend/nginx.conf /etc/nginx/conf.d/default.conf
 # Copy built frontend assets
 COPY --from=builder /app/packages/frontend/dist /usr/share/nginx/html
 
-# Ensure nginx user owns the files and runs as non-root
-RUN chown -R nginx:nginx /usr/share/nginx/html && \
+# Create proxy cache directory and ensure nginx user owns everything
+RUN mkdir -p /var/cache/nginx/api && \
+    chown -R nginx:nginx /usr/share/nginx/html && \
     chown -R nginx:nginx /var/cache/nginx && \
     chown -R nginx:nginx /var/log/nginx && \
     touch /var/run/nginx.pid && \

@@ -20,8 +20,11 @@ if (!connectionString) {
 }
 
 // Query client for regular queries
+// Pool sizing: 20 connections to handle concurrent board requests.
+// Each board request makes up to 3 parallel queries, so 20 supports
+// ~6-7 concurrent board requests without queueing.
 const queryClient = postgres(connectionString, {
-  max: 10,
+  max: 20,
   idle_timeout: 20,
   connect_timeout: 10,
 });

@@ -208,6 +208,42 @@ Any status that implies temporal proximity (e.g. "approaching") must validate ag
 - **ServiceRow**: Single CSS Grid layout — no `sm:hidden`/`hidden sm:flex` dual DOM trees. Grid: `Time | Plat | Dest | [Calling at] | Chevron` — no separate Status column (time column IS the status indicator via delay colours). Journey info visible on all screen sizes via `journeyText` prop. No trainId/BusyIndicator on board rows (service detail only). `computeDurationMinutes` and `countStops` are segment-aware: board station → destination, with real-time time priority (atd > etd > ptd).
 - **Loading bars**: 6 `--loading-*` tokens — low/moderate/busy tiers × `-bg` (track background) + `-bar` (filled portion). Consistent 3-tier thresholds (0-30/31-70/71-100) used in `LoadingBar` (calling points detail view). Minimum 5% bar width prevents invisibility. Dynamic width via inline `style={{ width }}` (Tailwind can't express dynamic percentages). BusyIndicator removed from board rows — loading shown in service detail only.
 
+## Caching Architecture (3-Layer)
+
+### Layer 1: API In-Memory Cache (`packages/api/src/services/cache.ts`)
+- **Board cache**: TTLCache with 10s TTL, 100MB max — caches full board responses by `(crs, type, time, date, destination, offset, limit)`
+- **Station cache**: ReferenceCache with 1h TTL — `fetchStationName()` hits DB once per CRS, then cached
+- **TOC cache**: ReferenceCache with 1h TTL — TOC name lookups cached (available for future use)
+- **Cache key format**: `board:KGX:departures:live:today:all:0:15`
+- **Headers**: API sets `X-Cache: HIT/MISS` and `Cache-Control: public, max-age=10, stale-while-revalidate=15`
+- **Health check**: `/api/v1/health/detail` exposes cache stats (entries, size, hit rate)
+
+### Layer 2: Nginx Proxy Cache (`packages/frontend/nginx.conf`)
+- **Zone**: `api_cache` with 10MB keys, 64MB max, 30s inactive purge
+- **Board responses**: 10s cache for 200 status, 5s for 404, 1s for errors
+- **Stale serving**: `proxy_cache_use_stale error timeout updating` — serves stale content during errors
+- **Stampede prevention**: `proxy_cache_lock on` — only one request populates the cache at a time
+- **Debugging**: `X-Cache-Status` header shows `HIT/MISS/STALE/UPDATING`
+
+### Layer 3: Frontend (no browser cache)
+- **`fetchBoard`**: Uses `cache: "no-store"` + `_t=Date.now()` cache-busting — ensures fresh data
+- **Polling**: 60s interval when tab visible, stops when hidden
+- **AbortController**: Cancels in-flight requests on navigation or parameter change
+
+### Query Optimisation
+- **Parallel queries**: Queries 3 & 4 (`fetchEndpoints` + `fetchCallingPatterns`) now run via `Promise.all`
+- **Station name**: Fetched via `stationCache.getOrFetch()` — DB hit only on first request per CRS
+- **Statement timeout**: 5s PostgreSQL `statement_timeout` — kills runaway queries
+- **Connection pool**: 20 connections (up from 10) — supports ~6-7 concurrent board requests
+- **Client disconnect detection**: `req.on("close")` listener sets flag checked between query phases — skips remaining queries if client has gone, preventing wasted DB resources
+
+### Frontend Error Resilience
+- **Retry with exponential backoff**: `useBoard.loadBoard()` retries up to 3 times on transient errors (network failures, 5xx)
+- **Backoff**: 1s → 2s → 4s between retries
+- **No retry on**: AbortError (navigation), 4xx client errors
+- **AbortController integration**: Backoff timers cancelled if user navigates away during retry wait
+- **`isTransientError()`**: Classifies errors — network failures and 5xx are transient, 4xx and aborts are not
+
 ## Key Decisions
 
 | Decision | Choice | Why |
@@ -219,6 +255,7 @@ Any status that implies temporal proximity (e.g. "approaching") must validate ag
 | Master timetable | PP Timetable → PostgreSQL | Complete daily schedule |
 | Real-time overlay | PostgreSQL (was Redis) | Single source of truth, JOINs for free |
 | Storage | PostgreSQL only | Simpler ops, ACID, no cache invalidation |
+| Caching | 3-layer: API memory → nginx proxy → browser none | Board data is near-real-time (10s TTL), reference data is immutable (1h TTL) |
 | Dedup | `generated_at`/`ts_generated_at` + `FOR UPDATE` | Prevents race conditions |
 | Source separation | `_timetable`/`_pushport` column suffixes | Seed and consumer write to different cols |
 | No DELETE on CPs | Never delete calling points | Preserves data for historical analysis |

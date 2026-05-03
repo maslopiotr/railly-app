@@ -1,11 +1,44 @@
 /**
  * useBoard — Hook for board data fetching, polling, pull-to-refresh,
  * time navigation, and all derived state.
+ *
+ * Includes automatic retry with exponential backoff for transient errors:
+ * - Retries on network failures and 5xx server errors (up to 3 attempts)
+ * - Does NOT retry on 4xx client errors or aborted requests
+ * - Backoff: 1s → 2s → 4s between retries
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { HybridBoardService, HybridBoardResponse } from "@railly-app/shared";
 import { fetchBoard } from "../api/boards";
+
+/** Maximum fetch attempts (1 initial + 2 retries) */
+const MAX_FETCH_ATTEMPTS = 3;
+/** Base delay in ms for exponential backoff: 1s, 2s, 4s */
+const RETRY_BASE_DELAY = 1000;
+
+/**
+ * Determines if an error is transient and worth retrying.
+ * - Network errors (TypeError: Failed to fetch) → retry
+ * - 5xx server errors → retry
+ * - 4xx client errors → do NOT retry
+ * - AbortError → do NOT retry
+ */
+function isTransientError(err: unknown): boolean {
+  if (err instanceof DOMException && err.name === "AbortError") return false;
+  if (err instanceof TypeError && err.message.includes("Failed to fetch")) return true;
+  if (err instanceof Error) {
+    // Retry on 5xx status codes embedded in error messages from fetchBoard
+    const match = err.message.match(/Board fetch failed:\s*(\d{3})/);
+    if (match) {
+      const status = parseInt(match[1], 10);
+      return status >= 500 && status < 600;
+    }
+    // Network-level errors (no response at all)
+    if (err.message === "Network request failed" || err.message === "Failed to fetch") return true;
+  }
+  return false;
+}
 
 interface UseBoardOptions {
   crsCode: string;
@@ -131,20 +164,49 @@ export function useBoard({
           setIsLoading(true);
         }
         const { time: reqTime, date: reqDate } = computeRequestTime();
-        const data = await fetchBoard(crsCode, {
-          limit: pageSize,
-          type: boardType,
-          destination: destinationFilter || undefined,
-          time: reqTime ?? undefined,
-          date: reqDate ?? undefined,
-          signal: controller.signal,
-        });
+
+        // Retry with exponential backoff for transient errors (network, 5xx)
+        let lastError: unknown;
+        for (let attempt = 0; attempt < MAX_FETCH_ATTEMPTS; attempt++) {
+          if (controller.signal.aborted) return;
+          try {
+            const data = await fetchBoard(crsCode, {
+              limit: pageSize,
+              type: boardType,
+              destination: destinationFilter || undefined,
+              time: reqTime ?? undefined,
+              date: reqDate ?? undefined,
+              signal: controller.signal,
+            });
+            if (!controller.signal.aborted) {
+              setBoard(data);
+              setAllServices(data.services);
+              setHasMore(data.hasMore);
+              setError(null);
+              setLastRefreshed(new Date());
+            }
+            return; // Success — exit retry loop
+          } catch (err: unknown) {
+            // Don't retry on abort or non-transient errors
+            if (err instanceof DOMException && err.name === "AbortError") return;
+            if (!isTransientError(err)) throw err;
+            lastError = err;
+            // Wait with exponential backoff before retrying (unless last attempt or aborted)
+            if (attempt < MAX_FETCH_ATTEMPTS - 1 && !controller.signal.aborted) {
+              const delay = RETRY_BASE_DELAY * Math.pow(2, attempt);
+              await new Promise<void>((resolve) => {
+                const timer = setTimeout(resolve, delay);
+                controller.signal.addEventListener("abort", () => {
+                  clearTimeout(timer);
+                  resolve();
+                }, { once: true });
+              });
+            }
+          }
+        }
+        // All retries exhausted — show error
         if (!controller.signal.aborted) {
-          setBoard(data);
-          setAllServices(data.services);
-          setHasMore(data.hasMore);
-          setError(null);
-          setLastRefreshed(new Date());
+          setError(lastError instanceof Error ? lastError.message : "Failed to load board after retries");
         }
       } catch (err: unknown) {
         if (err instanceof DOMException && err.name === "AbortError") return;

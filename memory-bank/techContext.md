@@ -44,6 +44,10 @@ npm run docker:rebuild   # rebuild Docker after changes
 - **`darwin_events`**: ~3.2 GB, ~90K inserts/hr; full JSON in `raw_json` column
 - **`calling_points`**: ~2 GB, 4M+ rows; natural key index ~427 MB
 - **Docker resources**: PostgreSQL ~565 MB, Consumer ~75 MB, API ~66 MB, Frontend ~4 MB
+- **Statement timeout**: 5s (`statement_timeout=5000` in PostgreSQL config) — prevents runaway queries under load
+- **Connection pool**: 20 connections (up from 10) to support ~6-7 concurrent board requests
+- **Client disconnect detection**: `req.on("close")` in boards route — skips remaining DB queries if client has gone, preventing wasted resources
+- **Frontend retry**: `useBoard.loadBoard()` retries up to 3 times on transient errors with exponential backoff (1s → 2s → 4s), no retry on AbortError or 4xx
 
 ## Debugging
 Always verify with SQL queries first. Inspect `darwin_events` and `raw_json` before debugging handler logic.

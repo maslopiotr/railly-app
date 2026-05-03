@@ -45,6 +45,7 @@ import {
   fetchCallingPatterns,
 } from "../services/board-queries.js";
 import { buildServices } from "../services/board-builder.js";
+import { boardCache, stationCache, buildBoardCacheKey } from "../services/cache.js";
 
 const router = Router();
 
@@ -56,7 +57,17 @@ const router = Router();
  *
  * Pagination via limit/offset; hasMore flag in response.
  */
+/** Board cache TTL in milliseconds — data is near-real-time so keep it short */
+const BOARD_CACHE_TTL = 10_000;
+
 router.get("/:crs/board", async (req, res, next: NextFunction) => {
+  // ── Track client disconnection ──────────────────────────────────────────
+  // If the client closes the connection (navigation away, AbortController),
+  // we skip remaining DB queries to avoid wasting connection pool resources.
+  let clientDisconnected = false;
+  const onClientClose = () => { clientDisconnected = true; };
+  req.on("close", onClientClose);
+
   try {
     // ── Validate CRS code ─────────────────────────────────────────────────
     const rawCrs = req.params.crs?.toUpperCase().trim();
@@ -117,6 +128,27 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       todayStr = ukNow.dateStr;
     }
 
+    // ── Check board cache ──────────────────────────────────────────────────
+    // Board data is near-real-time, so a short TTL (10s) avoids stale data
+    // while dramatically reducing DB load for repeated identical requests.
+    const cacheKey = buildBoardCacheKey({
+      crs,
+      boardType,
+      timeParam,
+      dateParam,
+      destinationCrs,
+      offset,
+      limit,
+    });
+
+    const cached = boardCache.get(cacheKey);
+    if (cached) {
+      // Cache hit — set cache headers and return immediately
+      res.set("X-Cache", "HIT");
+      res.set("Cache-Control", "public, max-age=10, stale-while-revalidate=15");
+      return res.json(cached);
+    }
+
     // ── Determine SSD dates to query ─────────────────────────────────────
     // With day_offset, wall-clock date = ssd + day_offset days.
     // We need SSDs that could produce services visible today:
@@ -146,8 +178,14 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       timeParam,
     });
 
-    // ── Query 1: Station name ─────────────────────────────────────────────
-    const stationName = await fetchStationName(crs);
+    // ── Query 1: Station name (cached for 1 hour — immutable reference data) ─
+    const stationName = await stationCache.getOrFetch(
+      `station:${crs}`,
+      () => fetchStationName(crs),
+    );
+
+    // Abort early if client disconnected during cache lookup
+    if (clientDisconnected) return;
 
     // ── Query 2: All passenger services at this CRS ────────────────────────
     const scheduledResults = await fetchBoardServices({
@@ -159,8 +197,12 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       destinationCrs,
     });
 
+    // Abort early if client disconnected during query 2
+    if (clientDisconnected) return;
+
+    // Early return for empty results (no need for further queries)
     if (scheduledResults.length === 0) {
-      return res.json({
+      const emptyResponse = {
         crs,
         stationName: stationName || null,
         date: todayStr,
@@ -168,7 +210,11 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         nrccMessages: [],
         services: [],
         hasMore: false,
-      });
+      };
+      boardCache.set(cacheKey, emptyResponse, BOARD_CACHE_TTL);
+      res.set("X-Cache", "MISS");
+      res.set("Cache-Control", "public, max-age=10, stale-while-revalidate=15");
+      return res.json(emptyResponse);
     }
 
     // ── Deduplicate by RID to get unique service IDs ───────────────────────
@@ -181,11 +227,19 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       }
     }
 
-    // ── Query 3: Origin and destination for each journey ───────────────────
-    const { map: endpointMap } = await fetchEndpoints(uniqueRids);
+    // ── Queries 3 & 4 in parallel (endpoints + calling patterns) ──────────
+    // Abort early if client disconnected before heavy queries
+    if (clientDisconnected) return;
 
-    // ── Query 4: Full calling pattern for each journey ─────────────────────
-    const callingPatternMap = await fetchCallingPatterns(uniqueRids);
+    // These are independent queries — running them concurrently cuts latency
+    const [endpointResult, callingPatternMap] = await Promise.all([
+      fetchEndpoints(uniqueRids),
+      fetchCallingPatterns(uniqueRids),
+    ]);
+    const { map: endpointMap } = endpointResult;
+
+    // Abort early if client disconnected during queries 3 & 4
+    if (clientDisconnected) return;
 
     // ── Build HybridBoardService[] response ────────────────────────────────
     const { services, hasMore } = buildServices({
@@ -199,7 +253,7 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       limit,
     });
 
-    return res.json({
+    const response = {
       crs,
       stationName: stationName || null,
       date: todayStr,
@@ -207,7 +261,14 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       nrccMessages: [],
       services,
       hasMore,
-    });
+    };
+
+    // ── Cache the response ────────────────────────────────────────────────
+    boardCache.set(cacheKey, response, BOARD_CACHE_TTL);
+
+    res.set("X-Cache", "MISS");
+    res.set("Cache-Control", "public, max-age=10, stale-while-revalidate=15");
+    return res.json(response);
   } catch (err) {
     next(err);
   }

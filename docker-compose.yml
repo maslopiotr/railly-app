@@ -13,6 +13,7 @@ services:
       -c max_wal_size=4GB
       -c min_wal_size=1GB
       -c checkpoint_completion_target=0.9
+      -c statement_timeout=5000
     # Bind to localhost only — not exposed to the internet
     # Remove these ports in production or use a firewall
     ports:

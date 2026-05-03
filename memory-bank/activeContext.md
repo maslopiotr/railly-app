@@ -1,28 +1,38 @@
 # Active Context
 
-## Current Focus: BUG-042 Fixed — Journey-aware route hero
+## Current Focus: Performance Improvements PERF-1 & PERF-3 — Completed ✅
 
-### Changes Made This Session
+### What Was Done
+Implemented two remaining performance improvements from the caching audit backlog:
 
-**BUG-042: ServiceDetailPage route hero missing journey context — Fixed**
+1. **PERF-1: Client Disconnect Detection** (`packages/api/src/routes/boards.ts`)
+   - Added `req.on("close")` listener to detect when client disconnects
+   - Checks `clientDisconnected` flag between each DB query phase
+   - If client has gone away, the handler returns early — skipping remaining DB queries
+   - Prevents wasted connection pool resources on abandoned requests
 
-When viewing a service from an intermediate station (not the origin or destination), the route hero now reframes from the user's perspective:
+2. **PERF-3: Frontend Retry with Exponential Backoff** (`packages/frontend/src/hooks/useBoard.ts`)
+   - `loadBoard()` now retries on transient errors (network failures, 5xx server errors)
+   - Max 3 attempts: 1 initial + 2 retries
+   - Backoff: 1s → 2s → 4s between retries
+   - Does NOT retry on: AbortError (navigation away), 4xx client errors
+   - Backoff timer is cancelled if AbortController fires (user navigates away during retry wait)
+   - `isTransientError()` helper classifies errors for retry eligibility
 
-- **Primary heading**: Shows `[Your Station] → [Destination]` instead of `[Origin] → [Destination]`
-- **Subtitle**: Adds "On service from [Origin]" in muted text when the user's station differs from both origin and destination
-- **Edge cases**: At origin/destination stations, the normal "Origin → Destination" heading is shown (no subtitle needed)
+### Previously Completed (Caching Audit)
+- 3-layer caching (API memory → nginx proxy → browser no-store)
+- PostgreSQL `statement_timeout=5000` and connection pool 20
+- `Promise.all` for parallel queries 3 & 4
+- Station name reference cache (1h TTL)
+- Health check with cache stats
+- Client disconnect detection (PERF-1)
 
-Example: Viewing BHM→EUS service from MKC:
-- Before: "Birmingham New Street → London Euston" (confusing — no mention of MKC)
-- After: "Milton Keynes Central → London Euston" / "On service from Birmingham New Street" (clear — your journey first)
-
-**Implementation**: New variables `isIntermediateStation`, `displayOriginName`, `displayDestName`, `serviceFromName` derived from `stationCrs` matched against `service.callingPoints`. Only 3 new lines of JSX (conditional subtitle).
-
-### Key Files
-- `packages/frontend/src/pages/ServiceDetailPage.tsx` — Journey-aware route hero logic + subtitle
+### Remaining Backlog (F-07)
+| ID | Item | Priority | Effort |
+|----|------|----------|--------|
+| PERF-2 | Pre-computed wall-clock columns | P1 | M |
+| PERF-4 | Prometheus/monitoring metrics | P2 | M |
 
 ### Next Steps
-- BUG-043: Incorrect next upcoming stop (needs Darwin data investigation)
-- BUG-044: Partial cancellations not displayed (needs Darwin data investigation)
-- BUG-015: Calling points filter by current station
-- BUG-016: Add tests to codebase
+- Implement Phase 1 (OW/Station Messages) from `docs/darwin-outstanding-handlers-plan.md`
+- Monitor cache hit rates via `/api/v1/health/detail` in production

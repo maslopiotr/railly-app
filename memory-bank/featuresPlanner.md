@@ -13,37 +13,68 @@ This document tracks feature development for Railly, prioritised using the MoSCo
 
 ## Active & Detailed Features
 
-### F-05: Explore TimescaleDB Integration
-**Status:*- Backlog
-**Objective:*- Validate TimescaleDB as the storage engine for high-volume Darwin rail feed data to ensure efficient time-series handling.
+### F-06: Darwin Outstanding Message Handlers
+**Status:** 📋 Planned — architecture doc at `docs/darwin-outstanding-handlers-plan.md`
+**Objective:** Implement the 7 stubbed Darwin message handlers to unlock station disruption alerts, service associations, coach formations, and train alerts.
 
-- **User Story:*- As a developer, I want to evaluate if TimescaleDB handles our ingestion load better than standard PostgreSQL, so I can ensure the database doesn't become a performance bottleneck.
+**Phases:**
+| Phase | Handler | Impact | Effort | Dependency |
+|-------|---------|--------|--------|------------|
+| 1 | OW (Station Messages) | High | S (2-3h) | None — existing frontend component |
+| 2 | Association | Medium-High | M (4-6h) | Needed for BUG-044 |
+| 3 | Schedule Formations + Formation Loading | Medium | M (4-6h) | Phase 2 schema patterns |
+| 4 | Train Alerts | Medium | S (2-3h) | Phase 1 schema patterns |
+| 5 | Train Order, Tracking ID, Alarm | Low | XS (1-2h) | Minimal user impact |
 
-**Acceptance Criteria (AC):**
-- Provision a development instance of TimescaleDB.
-- Create a `hypertable` schema for the incoming Darwin feed data.
-- Benchmark a batch of mock data ingestion (comparing standard Postgres vs. TimescaleDB).
-- Document query performance, index overhead, and storage compression results.
+**Phase 1 Details (OW/Station Messages):**
+- New tables: `station_messages`, `station_message_stations`
+- New handler: `handlers/stationMessage.ts` — UPSERT on `message_id`
+- API: Populate `nrccMessages` in board response (currently always `[]`)
+- Frontend: Update `NrccMessages.tsx` to use richer `StationMessage` type with severity colours
+- Replay: Add OW routing to `replay.ts`
+- Retention: 7-day cleanup in `index.ts`
 
-**Technical Notes:**
-- Verify compatibility with existing ORM/migration tools.
-- Test automated retention policies (e.g., auto-dropping older partitions).
-- Define migration path if TimescaleDB is selected.
+**Phase 2 Details (Association):**
+- New table: `associations` with natural key `(category, main_rid, assoc_rid, tiploc)`
+- New handler: `handlers/association.ts`
+- API: New endpoint or embed in service detail
+- Frontend: Show "This service divides at X" / "joins with Y" on calling points
+- Critical for BUG-044 (partial cancellations)
 
 ---
 
-## Darwin Consumer: P2/P3 Handler Stubs
+### F-07: Performance Improvements (Remaining)
+**Status:** 📋 Backlog
+**Objective:** Further performance optimisations identified during caching audit.
 
-The following Darwin message handlers are currently stubs that only log at `debug` level. They need full DB implementation in future phases.
+| ID | Item | Priority | Effort | Notes |
+|----|------|----------|--------|-------|
+| PERF-1 | Request query timeout (abort DB query if client disconnects) | P0 | S | ✅ Implemented — `req.on('close')` in boards route, skips DB queries on disconnect |
+| PERF-2 | Pre-computed wall-clock columns (materialised/generated columns) | P1 | M | Add `wall_display`, `wall_sched` as generated columns or materialised view to avoid per-row EXTRACT computations |
+| PERF-3 | Frontend retry logic with exponential backoff | P2 | S | ✅ Implemented — `useBoard.ts` retry on 5xx/network errors with 1s→2s→4s backoff (max 3 attempts) |
+| PERF-4 | Prometheus/monitoring metrics | P2 | M | Query latency histograms, cache hit rates, connection pool usage, request counts |
 
-| Priority | Handler | Current State | Data Description |
+---
+
+### F-05: Explore TimescaleDB Integration
+**Status:** Backlog
+**Objective:** Validate TimescaleDB as the storage engine for high-volume Darwin rail feed data.
+
+---
+
+## Darwin Consumer: Handler Status
+
+| Priority | Handler | Status | Data Description |
 | :--- | :--- | :--- | :--- |
-| P1 | `handleStationMessage` (OW) | Log only | Station messages (disruption info) |
-| P2 | `handleAssociation` | Log only | Service joins/splits |
-| P2 | `handleScheduleFormations` | Log only | Coach formation data |
-| P2 | `handleServiceLoading` | ✅ Implemented (Session 13) | Per-service loading data — writes `loading_percentage` to calling_points, consumed by LoadingBar (CallingPoints) + BusyIndicator (ServiceRow) |
-| P2 | `handleFormationLoading` | Log only | Per-coach loading data |
-| P3 | `handleTrainAlert` | Log only | Train-specific alerts |
-| P3 | `handleTrainOrder` | Log only | Platform departure order |
-| P3 | `handleTrackingID` | Log only | Headcode corrections |
-| P3 | `handleAlarm` | Log only | System alarms |
+| P0 | `schedule` | ✅ Implemented | Full journey + CP upsert |
+| P0 | `TS` | ✅ Implemented | Real-time CP updates, Darwin stubs |
+| P0 | `deactivated` | ✅ Implemented | Sets `deactivated_at` on `service_rt` |
+| P1 | `OW` (Station Messages) | 📋 Planned — Phase 1 | Station disruption alerts |
+| P2 | `association` | 📋 Planned — Phase 2 | Service joins/splits |
+| P2 | `scheduleFormations` | 📋 Planned — Phase 3 | Coach formation data |
+| P2 | `serviceLoading` | ✅ Implemented | Per-service loading % on calling_points |
+| P2 | `formationLoading` | 📋 Planned — Phase 3 | Per-coach loading data |
+| P3 | `trainAlert` | 📋 Planned — Phase 4 | Per-service disruption text |
+| P3 | `trainOrder` | 📋 Planned — Phase 5 | Platform departure order (rare) |
+| P3 | `trackingID` | 📋 Planned — Phase 5 | Headcode corrections (rare) |
+| P3 | `alarm` | 📋 Planned — Phase 5 | System alarms (operational) |
