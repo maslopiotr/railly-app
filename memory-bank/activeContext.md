@@ -1,42 +1,28 @@
 # Active Context
 
-## Current Focus: ServiceRow v2 Redesign (2026-05-03, Session 5)
+## Current Focus: BUG-042 Fixed — Journey-aware route hero
 
-### Latest Changes — ServiceRow v2 Two-Row Card + Visual Delay Indicators
+### Changes Made This Session
 
-**Design:** Two-row card on ALL screen sizes (consistent height):
-- Row 1 (grid): `Time | Platform | Destination | Chevron`
-- Row 2 (flex): `Status · Journey info · Operator · Coaches`
+**BUG-042: ServiceDetailPage route hero missing journey context — Fixed**
 
-**Visual delay indicators in time column:**
-- On time: scheduled time only (primary colour)
-- Delayed: scheduled time struck-through (muted) + "Exp HH:MM" below in amber
-- Departed/Arrived: scheduled time + actual time below (green/amber/red by delay severity)
-- Cancelled: scheduled time struck-through (red) + card at 60% opacity
+When viewing a service from an intermediate station (not the origin or destination), the route hero now reframes from the user's perspective:
 
-**Status words in semantic colours (row 2):**
-- On time (green), Delayed +Nm (amber), Cancelled (red), Departed (green), At platform (blue), Approaching (blue), Scheduled (muted)
+- **Primary heading**: Shows `[Your Station] → [Destination]` instead of `[Origin] → [Destination]`
+- **Subtitle**: Adds "On service from [Origin]" in muted text when the user's station differs from both origin and destination
+- **Edge cases**: At origin/destination stations, the normal "Origin → Destination" heading is shown (no subtitle needed)
 
-**Other refinements:**
-- Board container `max-w-4xl` on laptop (leaves space for sidebar/ads)
-- `text-xs` for row 2, `font-semibold` for status, `text-text-muted` for coaches
-- BoardTableHeader: "Platform" (not "Plat"), visible on all breakpoints, alignment matches data rows
-- Removed "Calling at" column from laptop (detail view only)
-- Removed `stationCrs` prop from ServiceRow (no longer needed)
+Example: Viewing BHM→EUS service from MKC:
+- Before: "Birmingham New Street → London Euston" (confusing — no mention of MKC)
+- After: "Milton Keynes Central → London Euston" / "On service from Birmingham New Street" (clear — your journey first)
 
-**Data fixes (from Session 4, unchanged):**
-- `computeDurationMinutes(service, stationCrs, isArrival, destinationCrs?)` — segment-aware: board station → destination/last stop
-- `countStops(service, stationCrs, isArrival, destinationCrs?)` — same segment logic
-- Both use real-time times (atd > etd > ptd priority chain), cross-midnight handling
+**Implementation**: New variables `isIntermediateStation`, `displayOriginName`, `displayDestName`, `serviceFromName` derived from `stationCrs` matched against `service.callingPoints`. Only 3 new lines of JSX (conditional subtitle).
 
 ### Key Files
-- `packages/frontend/src/utils/service.ts` — Segment-aware duration/stops computation
-- `packages/frontend/src/components/board/ServiceRow.tsx` — Two-row card with visual delay indicators
-- `packages/frontend/src/components/board/boardGrid.ts` — 4-column grid config (no xl breakpoint)
-- `packages/frontend/src/components/board/BoardTableHeader.tsx` — Header visible on all breakpoints
-- `packages/frontend/src/components/board/BoardServiceList.tsx` — Computes `journeyText` and passes to ServiceRow
-- `packages/frontend/src/pages/BoardPage.tsx` — `max-w-4xl` board container
+- `packages/frontend/src/pages/ServiceDetailPage.tsx` — Journey-aware route hero logic + subtitle
 
 ### Next Steps
+- BUG-043: Incorrect next upcoming stop (needs Darwin data investigation)
+- BUG-044: Partial cancellations not displayed (needs Darwin data investigation)
 - BUG-015: Calling points filter by current station
 - BUG-016: Add tests to codebase

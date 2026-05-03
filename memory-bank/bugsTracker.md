@@ -138,6 +138,62 @@ Circular trips (same TIPLOC visited twice) exist but are rare — mainly BRKNHDN
 ### BUG-016: No tests anywhere in the codebase
 - **Context:** Zero test scripts or test files.
 
+### BUG-041: Alerts missing station name context
+- **Severity:** Medium
+- **Type:** UX
+- **Status:** ✅ Fixed (2026-05-05)
+- **Discovered:** 2026-05-03
+- **Impact:** When viewing a service from another station, alerts like "At platform" and "Approaching" are ambiguous — which station?
+- **Root cause:** `ServiceDetailPage.tsx` `locationText` logic only includes station names for "departed" and "future" statuses. "at_platform", "approaching", and "arrived" omit the station name.
+- **Fix:** Added station name to all `currentLocation` status messages using the same `normaliseStationName()` fallback chain (`name || crs || tpl`):
+  - `"At platform"` → `"At platform — Milton Keynes Central"`
+  - `"Approaching"` → `"Approaching Milton Keynes Central"`
+  - `"Arrived"` → `"Arrived at Milton Keynes Central"`
+- **Verification:** Backend `determineCurrentLocation()` always populates `tpl`, `crs`, and `name` for all statuses including `at_platform`, `approaching`, and `arrived`. For these statuses the train is always at a passenger stop, so `name`/`crs` is always populated.
+- **Files:** `packages/frontend/src/pages/ServiceDetailPage.tsx`
+
+### BUG-042: ServiceDetailPage route hero missing journey context
+- **Severity:** Medium
+- **Type:** UX
+- **Status:** ✅ Fixed (2026-05-05)
+- **Discovered:** 2026-05-03
+- **Impact:** When viewing a service from an intermediate station, the header only showed "Origin → Destination" without indicating the user's journey perspective. E.g., viewing a BHM→EUS service from MKC showed "Birmingham New Street → London Euston" with no mention of Milton Keynes Central.
+- **Fix:** Journey-aware route hero that reframes the display from the user's perspective:
+  - When at an intermediate station: shows "[Your Station] → [Destination]" as the primary heading, with "On service from [Origin]" as a muted subtitle
+  - When at the origin or destination: shows the normal "Origin → Destination" heading (no subtitle needed)
+  - Uses `stationCrs` matched against `callingPoints` to find the station name
+  - Only shows the subtitle when `stationCrs` differs from both `origin.crs` and `destination.crs`
+- **Files:** `packages/frontend/src/pages/ServiceDetailPage.tsx`
+
+### BUG-043: Train 202605038706867 shows incorrect next upcoming stop
+- **Severity:** Medium
+- **Type:** UX / Data
+- **Status:** 🔲 Needs investigation with Darwin data
+- **Discovered:** 2026-05-03
+- **Impact:** The calling points component may show an incorrect "next upcoming" stop for this service. Train 202605038706867 (MKC→EUS) has atd data for MKC, BLY, LBZ, CED but the component may skip stations before the next stop.
+- **Root cause:** TBD — needs verification with live Darwin data to check if `firstUpcomingIndex` logic in `CallingPoints.tsx` is correctly identifying the next upcoming stop.
+- **Verification needed:** Query API response for this RID and check which stop is marked as "current" / first upcoming. Compare with actual Darwin data.
+- **Files:** `packages/frontend/src/components/service-detail/CallingPoints.tsx`
+
+### BUG-044: Partial cancellations not displayed in calling points
+- **Severity:** High
+- **Type:** Data / UX
+- **Status:** 🔲 Needs investigation with Darwin data
+- **Discovered:** 2026-05-03
+- **Impact:** Train 202605038708410 (BHM→EUS) was partially cancelled BHM→LBK but shows all stops as if they're served. Stops before Northampton have no pushport data but appear as normal future stops, confusing users.
+- **Root cause:** Darwin sends per-stop cancellation messages for partial cancellations, but our system may not be processing them correctly. DB shows `is_cancelled = false` for ALL stops of this service, including BHM through LBK. The `service_rt.is_cancelled` is also `false`. Either: (a) the cancellation messages aren't being processed, or (b) the per-stop `is_cancelled` flag isn't being set correctly from Darwin TS location-level `cancelled` data.
+- **Potential fixes:**
+  1. **Backend:** Verify that the TS handler correctly processes per-location `cancelled` flags from Darwin messages and sets `is_cancelled` on calling_points
+  2. **Backend:** Check if Darwin cancellation messages (separate from TS) update per-stop cancellation status
+  3. **Frontend (CallingPoints):** Detect "not served" stops — stops before the first one with pushport data that have no atd/ata/eta/etd and whose scheduled time is in the past. Display them with cancelled-like styling + "Not served" label
+  4. **Frontend (CallingPoints):** Add "Service starts from [Station]" visual separator before the first served stop
+- **Verification needed:** MUST verify with raw Darwin data first:
+  - Check `darwin_events` for this RID to see if cancellation messages were received
+  - Check raw TS messages for per-location `cancelled` flags
+  - Check if separate cancellation messages (not TS) exist for this service
+- **DB evidence:** Train 202605038708410 has 40 calling points. BHM through LBK have zero pushport data (no atd/ata/eta/etd). NMPTN onward has pushport data. All `is_cancelled = false`. Duplicate NMPTN entry: one as OR (no CRS), one as IP (CRS=NMP).
+- **Files:** `packages/consumer/src/handlers/ts/handler.ts`, `packages/frontend/src/components/service-detail/CallingPoints.tsx`
+
 ### BUG-017 (nginx buffer warnings)
 - **Context:** nginx `proxy_temp` warnings for large board responses. Known issue with EUS terminus boards; no user impact.
 

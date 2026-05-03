@@ -1,15 +1,22 @@
 /**
- * CallingPoints — Displays the calling pattern for a hybrid service
+ * CallingPoints — Calling pattern for a hybrid service
  *
- * Timeline format with both planned times and real-time estimates.
- * Uses semantic design tokens for dots, connector lines, and text.
- * Delegates platform display to the shared PlatformBadge component.
+ * Two-column layout: TIME | DOT + STATION + PLATFORM + CRS
  *
- * Filters to passenger stops only (IP, OR, DT). Non-passenger stops
- * (PP, OPOR, OPIP, OPDT, RM) and phantom stops with no CRS and no
- * public times are hidden.
+ * Stop states & colours:
+ * - Past (on time ≤1 min): ✓ green dot, green time
+ * - Past (delayed 2–14): ✓ green dot, amber time + delay pill
+ * - Past (delayed 15+): ✓ green dot, red time + delay pill
+ * - Current station: ◉ amber dot with pulse, row highlight, delay pill
+ * - Future: ○ hollow grey dot, secondary time
+ * - Future delayed 2–14: ○ hollow grey dot, amber time + delay pill
+ * - Future delayed 15+: ○ hollow grey dot, red time + delay pill
+ * - Cancelled: ✕ red dot, strikethrough name, cancel reason
+ *
+ * Uses semantic design tokens only — no raw Tailwind colour classes.
  */
 
+import type { ReactNode } from "react";
 import type { HybridCallingPoint } from "@railly-app/shared";
 import { normaliseStationName, formatDisplayTime, computeDelay } from "@railly-app/shared";
 import { PlatformBadge } from "../shared/PlatformBadge";
@@ -95,34 +102,24 @@ function determineStopState(
   normalisedTime: number,
   isFirstUpcoming: boolean,
   nowMinutes: number,
+  isBoardStationNotDeparted: boolean,
 ): StopState {
   if (atdPushport) return "past";
   if (ataPushport && !isFirstUpcoming) return "past";
+  // Board station that hasn't departed is always current, even if scheduled time has passed
+  if (isFirstUpcoming && isBoardStationNotDeparted) return "current";
   if (normalisedTime <= nowMinutes) return "past";
   if (isFirstUpcoming) return "current";
   return "future";
 }
 
 /**
- * Delay badge showing delay per calling point.
- * Coloured pill: green for on-time (≤1 min), amber for 2–14 min delay, red for ≥15 min.
+ * Delay pill for any stop row.
+ * Coloured pill: amber for 2–14 min delay, red for ≥15 min.
  */
-function DelayBadge({ delay }: { delay: number | null }) {
-  if (delay === null) return null;
-
+function DelayPill({ delay }: { delay: number | null }) {
+  if (delay === null || delay <= 1) return null;
   const absDelay = Math.abs(delay);
-  const isLate = delay > 0;
-
-  if (!isLate || absDelay <= 1) {
-    // On time or early — green
-    return (
-      <span className="text-[10px] font-mono font-medium bg-status-on-time-bg text-status-on-time border border-status-on-time-border px-1.5 py-0 rounded">
-        {absDelay <= 1 ? "On time" : `${delay} min`}
-      </span>
-    );
-  }
-
-  // Delayed — severity-based colour: amber 2–14 min, red ≥15 min
   const severityClass =
     absDelay >= 15
       ? "bg-status-cancelled-bg text-status-cancelled border-status-cancelled-border"
@@ -137,18 +134,11 @@ function DelayBadge({ delay }: { delay: number | null }) {
   );
 }
 
-/** Loading tier: 0-30% = low, 31-70% = moderate, 71-100% = busy */
-type LoadingTier = "low" | "moderate" | "busy";
-
-function getLoadingTier(percentage: number): LoadingTier {
-  return percentage <= 30 ? "low" : percentage <= 70 ? "moderate" : "busy";
-}
-
 /** Thin loading bar showing train occupancy at this stop */
 function LoadingBar({ percentage }: { percentage: number | null }) {
   if (percentage === null) return null;
 
-  const tier = getLoadingTier(percentage);
+  const tier = percentage <= 30 ? "low" : percentage <= 70 ? "moderate" : "busy";
   const barClass = tier === "low"
     ? "bg-loading-low-bar"
     : tier === "moderate"
@@ -170,16 +160,34 @@ function LoadingBar({ percentage }: { percentage: number | null }) {
   );
 }
 
-/** Checkmark icon for visited stops */
+/** Checkmark icon for past stops */
 function CheckIcon() {
   return (
-    <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
     </svg>
   );
 }
 
-/** Individual calling point row */
+/** X icon for cancelled stops */
+function XIcon() {
+  return (
+    <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
+    </svg>
+  );
+}
+
+/** Get delay severity colour class for time text */
+function getDelayTimeClass(delay: number | null, isCurrent: boolean): string {
+  if (delay === null) return "text-text-secondary";
+  const abs = Math.abs(delay);
+  if (abs >= 15) return "text-status-cancelled";
+  if (abs >= 2) return "text-status-delayed";
+  return isCurrent ? "text-status-on-time" : "text-status-on-time";
+}
+
+/** Individual calling point row — two-column layout */
 function CallingPointRow({
   name,
   crs,
@@ -194,9 +202,9 @@ function CallingPointRow({
   platSource,
   isCancelled,
   cancelReason,
+  delayReason,
   stopType,
   stopState,
-  isLast,
   loadingPercentage,
 }: {
   name: string | null;
@@ -212,13 +220,12 @@ function CallingPointRow({
   platSource: string | null;
   isCancelled: boolean;
   cancelReason: string | null;
+  delayReason: string | null;
   stopType: string;
   stopState: StopState;
-  isLast: boolean;
   loadingPercentage: number | null;
 }) {
   const displayName = normaliseStationName(name) || crs || "Unknown";
-  const displayCrs = crs || "";
 
   const isCurrent = stopState === "current";
   const isPast = stopState === "past";
@@ -237,7 +244,7 @@ function CallingPointRow({
     actual,
   );
 
-  // Dot styling using semantic tokens
+  // ── Dot styling ──
   const dotClass = isCancelled
     ? "border-status-cancelled-border bg-status-cancelled-bg"
     : visited
@@ -248,136 +255,132 @@ function CallingPointRow({
           ? "border-call-current-dot-border bg-call-current-dot-bg"
           : "border-call-future-dot-border bg-call-future-dot-bg";
 
-  // Connector line styling
-  const lineClass = isPast ? "bg-timeline-past" : "bg-timeline-future";
+  // ── Time text content and colour ──
+  let timeContent: ReactNode = null;
+  let timeClass = "text-text-secondary font-mono text-sm";
 
-  // Station name styling — delay-aware colours for past/current stops
-  const absDelay = delay !== null ? Math.abs(delay) : 0;
-  const isLateByDelay = delay !== null && delay >= 2;
+  if (isCancelled) {
+    timeContent = null;
+    timeClass = "";
+  } else if (actual) {
+    timeClass = `font-mono text-sm font-semibold ${getDelayTimeClass(delay, isCurrent)}`;
+    timeContent = actual;
+  } else if (estimated) {
+    if (estimated === "On time") {
+      if (isCurrent) {
+        timeClass = "text-sm font-semibold text-status-on-time";
+        timeContent = "On time";
+      } else {
+        timeClass = "text-sm font-mono text-status-on-time";
+        timeContent = scheduled;
+      }
+    } else if (scheduled && estimated !== scheduled) {
+      timeClass = `font-mono text-sm ${isCurrent ? "font-semibold" : ""} ${getDelayTimeClass(delay, isCurrent)}`;
+      timeContent = estimated;
+    } else {
+      timeClass = `font-mono text-sm ${isCurrent ? "font-semibold" : ""} text-text-secondary`;
+      timeContent = estimated;
+    }
+  } else if (scheduled) {
+    timeClass = "font-mono text-sm text-text-secondary";
+    timeContent = scheduled;
+  }
+
+  // ── Station name styling ──
   const nameClass = isCancelled
     ? "line-through text-status-cancelled"
     : isCurrent
-      ? isLateByDelay
-        ? absDelay >= 15
-          ? "text-status-cancelled"
-          : "text-status-delayed"
-        : "text-status-approaching"
+      ? "text-text-primary font-medium"
       : isPast
-        ? visited && isLateByDelay
-          ? absDelay >= 15
-            ? "text-status-cancelled"
-            : "text-status-delayed"
-          : visited
-            ? "text-status-arrived"
-            : "text-text-secondary"
+        ? "text-text-secondary"
         : "text-text-primary";
 
+  // ── Per-stop delay pill: show for any stop with delay ≥ 2 ──
+  const showDelayPill = !isCancelled && delay !== null && delay >= 2;
+
   return (
-    <div className={`flex items-start gap-3 group ${isCurrent ? "relative" : ""}`}>
-      {/* Timeline column */}
-      <div className="flex flex-col items-center">
-        <div
-          className={`w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center mt-1.5 shrink-0 ${dotClass}`}
-        >
-          {visited && !isCancelled && <CheckIcon />}
-        </div>
-        {!isLast && <div className={`w-0.5 flex-1 min-h-6 ${lineClass}`} />}
+    <div
+      className={`flex items-center ${isCurrent ? "border-l-2 border-call-current-dot-border bg-call-current-dot-bg/10 -mx-0.5 pl-0.5 rounded-r" : ""}`}
+    >
+      {/* Column 1: Time */}
+      <div className="w-18 shrink-0 text-right pr-2 py-1.5">
+        {timeContent !== null && (
+          <span className={timeClass}>{timeContent}</span>
+        )}
+        {/* Delay pill */}
+        {showDelayPill && (
+          <div className="mt-0.5">
+            <DelayPill delay={delay} />
+          </div>
+        )}
       </div>
 
-      {/* Stop info */}
-      <div className="flex-1 min-w-0 pb-3">
-        <div className="flex items-center justify-between gap-2">
-          <span className={`text-sm font-medium truncate ${nameClass}`}>
-            {displayName}
-            {isCurrent && (
-              <span className="ml-2 text-xs font-medium text-status-approaching uppercase tracking-wider">
-                Next
-              </span>
-            )}
-          </span>
-          <div className="flex items-center gap-2 shrink-0">
-            {(platTimetable || platPushport) && (
-              <PlatformBadge
-                platformTimetable={platTimetable}
-                platformLive={platPushport}
-                platformSource={
-                  platSource === "confirmed" ||
-                  platSource === "altered" ||
-                  platSource === "suppressed" ||
-                  platSource === "expected" ||
-                  platSource === "scheduled"
-                    ? platSource
-                    : platPushport
-                      ? "expected"
-                      : "scheduled"
-                }
-                size="compact"
-              />
-            )}
-            <span className="text-[11px] font-mono text-text-muted">{displayCrs}</span>
-          </div>
+      {/* Column 2: Dot + Station + Platform + CRS */}
+      <div className="flex items-center gap-2 flex-1 min-w-0 py-1.5">
+        {/* Dot */}
+        <div
+          className={`w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center shrink-0 ${dotClass} ${isCurrent && !isCancelled ? "animate-pulse-subtle" : ""}`}
+        >
+          {isCancelled && <XIcon />}
+          {visited && !isCancelled && <CheckIcon />}
+          {isCurrent && !isCancelled && !visited && (
+            <div className="w-1.5 h-1.5 rounded-full bg-call-current-dot-border" />
+          )}
         </div>
 
-        {/* Time row with delay indication */}
-        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-          {isCancelled && (
-            <span className="text-xs text-status-cancelled font-medium">
-              Cancelled{cancelReason ? `: ${cancelReason}` : ""}
+        {/* Station details */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-2">
+            <span className={`text-sm truncate ${nameClass}`}>
+              {displayName}
             </span>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {(platTimetable || platPushport) && !isCancelled && (
+                <PlatformBadge
+                  platformTimetable={platTimetable}
+                  platformLive={platPushport}
+                  platformSource={
+                    platSource === "confirmed" ||
+                    platSource === "altered" ||
+                    platSource === "suppressed" ||
+                    platSource === "expected" ||
+                    platSource === "scheduled"
+                      ? platSource
+                      : platPushport
+                        ? "expected"
+                        : "scheduled"
+                  }
+                  size="compact"
+                />
+              )}
+              {crs && (
+                <span className="text-[11px] font-mono text-text-muted">{crs}</span>
+              )}
+            </div>
+          </div>
+
+          {/* Cancelled reason text */}
+          {isCancelled && (
+            <div className="mt-0.5">
+              <span className="text-xs font-medium text-status-cancelled">Cancelled</span>
+              {cancelReason && (
+                <span className="text-xs text-text-muted ml-1">— {cancelReason}</span>
+              )}
+            </div>
           )}
 
-          {!isCancelled && (
-            <>
-              {actual && (
-                <span className="text-xs font-mono font-medium text-status-arrived">
-                  {actual}
-                </span>
-              )}
+          {/* Per-stop delay reason */}
+          {!isCancelled && delayReason && delay !== null && delay >= 2 && (
+            <div className="mt-0.5 text-xs text-text-muted">
+              {delayReason}
+            </div>
+          )}
 
-              {scheduled && (
-                <span
-                  className={`text-xs font-mono ${
-                    actual
-                      ? "text-text-muted line-through"
-                      : estimated &&
-                          estimated !== "On time" &&
-                          scheduled !== estimated
-                        ? "text-text-muted line-through"
-                        : "text-text-secondary"
-                  }`}
-                >
-                  {scheduled}
-                </span>
-              )}
-
-              {estimated &&
-                !actual &&
-                (estimated === "On time" ? (
-                  <span className="text-xs font-mono text-status-on-time">On time</span>
-                ) : scheduled && estimated !== scheduled ? (
-                  <span className="text-xs font-mono font-semibold text-status-delayed">
-                    Exp {estimated}
-                  </span>
-                ) : (
-                  <span className="text-xs font-mono text-status-delayed">
-                    {estimated}
-                  </span>
-                ))}
-
-              {/* Delay badge — visual delay indication per stop */}
-              <DelayBadge delay={delay} />
-
-              {actual && (
-                <span className="text-[10px] text-status-arrived/80">
-                  {atdPushport ? "Departed" : "Arrived"}
-                </span>
-              )}
-            </>
+          {/* Loading bar — train occupancy at this stop */}
+          {!isCancelled && loadingPercentage !== null && (
+            <LoadingBar percentage={loadingPercentage} />
           )}
         </div>
-
-        {/* Loading indicator — train occupancy bar */}
-        <LoadingBar percentage={loadingPercentage} />
       </div>
     </div>
   );
@@ -385,9 +388,6 @@ function CallingPointRow({
 
 export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
   // Only passenger stop types: IP (intermediate), OR (origin), DT (terminus).
-  // Exclude all non-passenger: PP (passing point), OPOR (operational origin),
-  // OPIP (operational intermediate), OPDT (operational destination), RM (reversing movement),
-  // and any phantom stops with no CRS AND no public times.
   const NON_PASSENGER_STOP_TYPES = new Set([
     "PP",
     "OPOR",
@@ -397,9 +397,7 @@ export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
   ]);
 
   const displayPoints = points.filter((cp) => {
-    // Exclude non-passenger stop types
     if (NON_PASSENGER_STOP_TYPES.has(cp.stopType)) return false;
-    // Exclude phantom stops: no CRS and no public timetable times
     if (!cp.crs && !cp.ptaTimetable && !cp.ptdTimetable) return false;
     return true;
   });
@@ -417,26 +415,32 @@ export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
   const rawNowMinutes = getUkNowMinutes();
   const nowMinutes = normaliseNowMinutes(rawNowMinutes, normalisedTimes[0]);
 
+  const currentStationIndex = currentCrs
+    ? displayPoints.findIndex((cp) => cp.crs === currentCrs)
+    : -1;
+
+  // If the board station hasn't departed yet, it's the current stop regardless
+  // of whether its scheduled time has passed.
+  const boardStationNotDeparted =
+    currentStationIndex >= 0 && !displayPoints[currentStationIndex].atdPushport;
+
   let firstUpcomingIndex = -1;
   for (let i = 0; i < displayPoints.length; i++) {
     const cp = displayPoints[i];
     if (cp.atdPushport) continue;
     if (cp.ataPushport && cp.stopType === "DT") continue;
-    if (cp.ataPushport || normalisedTimes[i] > nowMinutes) {
+    if (
+      cp.ataPushport ||
+      normalisedTimes[i] > nowMinutes ||
+      (boardStationNotDeparted && i === currentStationIndex)
+    ) {
       firstUpcomingIndex = i;
       break;
     }
   }
 
-  const currentStationIndex = currentCrs
-    ? displayPoints.findIndex((cp) => cp.crs === currentCrs)
-    : -1;
-
   return (
     <div className="py-2 px-1">
-      <div className="text-[10px] uppercase tracking-wider text-text-muted mb-2 font-semibold">
-        Calling Points
-      </div>
       {displayPoints.map((cp, i) => {
         const isFirstUpcoming = i === firstUpcomingIndex;
 
@@ -446,32 +450,33 @@ export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
           normalisedTimes[i],
           isFirstUpcoming,
           nowMinutes,
+          boardStationNotDeparted && i === currentStationIndex,
         );
 
-        const finalState: StopState =
-          i === currentStationIndex && stopState === "future" ? "current" : stopState;
+        const finalState: StopState = stopState;
 
         return (
-          <CallingPointRow
-            key={`${cp.tpl}-${i}`}
-            name={cp.name}
-            crs={cp.crs}
-            ptaTimetable={cp.ptaTimetable}
-            ptdTimetable={cp.ptdTimetable}
-            etaPushport={cp.etaPushport}
-            etdPushport={cp.etdPushport}
-            ataPushport={cp.ataPushport}
-            atdPushport={cp.atdPushport}
-            platTimetable={cp.platTimetable}
-            platPushport={cp.platPushport}
-            platSource={cp.platSource}
-            isCancelled={cp.isCancelled}
-            cancelReason={cp.cancelReason ?? null}
-            stopType={cp.stopType}
-            stopState={finalState}
-            isLast={i === displayPoints.length - 1}
-            loadingPercentage={cp.loadingPercentage ?? null}
-          />
+          <div key={`${cp.tpl}-${i}`}>
+            <CallingPointRow
+              name={cp.name}
+              crs={cp.crs}
+              ptaTimetable={cp.ptaTimetable}
+              ptdTimetable={cp.ptdTimetable}
+              etaPushport={cp.etaPushport}
+              etdPushport={cp.etdPushport}
+              ataPushport={cp.ataPushport}
+              atdPushport={cp.atdPushport}
+              platTimetable={cp.platTimetable}
+              platPushport={cp.platPushport}
+              platSource={cp.platSource}
+              isCancelled={cp.isCancelled}
+              cancelReason={cp.cancelReason ?? null}
+              delayReason={cp.delayReason ?? null}
+              stopType={cp.stopType}
+              stopState={finalState}
+              loadingPercentage={cp.loadingPercentage ?? null}
+            />
+          </div>
         );
       })}
     </div>

@@ -204,12 +204,12 @@ export function countStops(
   return count;
 }
 
-/** Format duration as "1h 23m" or "23m" */
+/** Format duration as "1h 23min" or "23 min" */
 export function formatDuration(minutes: number | null): string | null {
   if (minutes === null || minutes < 0) return null;
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
-  if (h > 0 && m > 0) return `${h}h ${m}m`;
+  if (h > 0 && m > 0) return `${h}h ${m}min`;
   if (h > 0) return `${h}h`;
-  return `${m}m`;
+  return `${m} min`;
 }

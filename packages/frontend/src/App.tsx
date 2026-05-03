@@ -253,6 +253,7 @@ function App() {
                 service={selectedService}
                 isArrival={isArrivalService(selectedService)}
                 stationCrs={selectedStation.crsCode}
+                destinationCrs={destinationStation?.crsCode}
                 onBack={handleBackFromService}
                 onRefresh={handleRefreshService}
                 isRefreshing={isServiceRefreshing}

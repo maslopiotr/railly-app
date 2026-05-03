@@ -1,6 +1,44 @@
 # Progress
 
-## Latest (2026-05-03, Session 5) — ServiceRow v2 Redesign
+## Latest (2026-05-03, Session 6) — ServiceDetailPage + CallingPoints Redesign
+
+### ServiceDetailPage v2 — Full Redesign ✅
+- ✅ Complete page restructure: Header → Route hero → Alerts → Time table → Formation → Timeline → Footer
+- ✅ Route hero with per-status text (on_time, delayed, approaching, at_platform, arrived, departed, cancelled, scheduled)
+- ✅ Delay pill badges (amber 2–14 min, red 15+ min) in route hero
+- ✅ Duration display with TOC name ("47 min · Thameslink")
+- ✅ Current location alert card restored (at_platform/approaching/arrived/en route)
+- ✅ Time comparison table RESTORED (Scheduled vs Real-time vs Delay for this station)
+- ✅ Formation section above timeline with LoadingIndicator + coach count
+- ✅ Footer with RID · UID (mono, 10px)
+- ✅ `destinationCrs` prop passed from App.tsx for journey duration
+
+### CallingPoints Timeline — Full Redesign ✅
+- ✅ Three-column layout: Time (w-14) | Dots+Line (w-6) | Station+Platform
+- ✅ Connector lines now fill row height (`self-stretch` on dot column)
+- ✅ Per-state colour coding: past (green), current (amber+pulse), future (grey), cancelled (red)
+- ✅ CheckIcon (✓) for visited stops, XIcon (✕) for cancelled stops
+- ✅ "Your station" pill with coloured dot on current station
+- ✅ Delay pills for current stop row (amber 2–14, red 15+)
+- ✅ Cancelled stops: red X dot, strikethrough name, "Cancelled — reason" text
+- ✅ Live position entry (5a): dashed line, pulsing dot, status text
+- ✅ CRS codes restored next to station names (hidden for "Your station" row)
+- ✅ `currentLocation` prop passed from ServiceDetailPage to CallingPoints
+
+### Duration Format Fix ✅
+- ✅ `formatDuration` now outputs "47 min" / "1h 23min" instead of "47m" / "1h 23m"
+
+### Files Modified (Session 6)
+| File | Change |
+|---|---|
+| `packages/frontend/src/pages/ServiceDetailPage.tsx` | Full restructure — route hero, alerts, time table, formation, timeline, footer |
+| `packages/frontend/src/components/service-detail/CallingPoints.tsx` | Full rewrite — three-column timeline, per-state colours, connector fix, CRS codes, live position |
+| `packages/frontend/src/App.tsx` | Added `destinationCrs` prop to ServiceDetail |
+| `packages/frontend/src/utils/service.ts` | Fixed `formatDuration` output format |
+
+---
+
+## Completed (2026-05-03, Session 5) — ServiceRow v2 Redesign
 
 ### ServiceRow v2 UI Redesign ✅
 - ✅ Two-row card layout on ALL screen sizes (consistent height)
