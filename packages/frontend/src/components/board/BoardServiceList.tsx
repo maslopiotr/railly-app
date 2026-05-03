@@ -117,18 +117,19 @@ export function BoardServiceList({
         )}
         <div className="animate-stagger flex flex-col gap-2">
           {displayServices.map((service) => {
-            const duration = computeDurationMinutes(service);
-            const stops = countStops(service);
+            const isArrival = activeTab === "arrivals";
+            const duration = computeDurationMinutes(service, station.crsCode, isArrival, destinationFilter);
+            const stops = countStops(service, station.crsCode, isArrival, destinationFilter);
             const durationStr = formatDuration(duration);
+            const journeyText = `${stops === 0 ? "Direct" : `${stops} stop${stops !== 1 ? "s" : ""}`}${durationStr ? ` · ${durationStr}` : ""}`;
 
             return (
               <ServiceRow
                 key={service.rid}
                 service={service}
-                isArrival={activeTab === "arrivals"}
-                stationCrs={station.crsCode}
+                isArrival={isArrival}
                 onSelect={onSelectService}
-                subtitle={`${stops === 0 ? "Direct" : `${stops} stop${stops !== 1 ? "s" : ""}`}${durationStr ? ` · ${durationStr}` : ""}`}
+                journeyText={journeyText}
               />
             );
           })}

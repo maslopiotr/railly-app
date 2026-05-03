@@ -321,6 +321,33 @@ export async function fetchStationName(crs: string): Promise<string | null> {
 }
 
 /**
+ * Build SQL destination filter using positional EXISTS subquery.
+ *
+ * Ensures the destination CRS appears AFTER the board station in the
+ * calling pattern (by day_offset then sort_time). This prevents
+ * "backwards matches" where the destination is actually the origin.
+ *
+ * When no destination filter is specified, returns TRUE (no-op).
+ */
+export function buildDestinationFilterSql(destinationCrs: string | null) {
+  if (!destinationCrs) return sql`TRUE`;
+
+  return sql`
+    EXISTS (
+      SELECT 1 FROM ${callingPoints} AS dest
+      WHERE dest.journey_rid = ${callingPoints.journeyRid}
+        AND dest.crs = ${destinationCrs}
+        AND dest.stop_type NOT IN ('PP', 'OPOR', 'OPIP', 'OPDT')
+        AND (
+          dest.day_offset > ${callingPoints.dayOffset}
+          OR (dest.day_offset = ${callingPoints.dayOffset}
+              AND dest.sort_time > ${callingPoints.sortTime})
+        )
+    )
+  `;
+}
+
+/**
  * Fetch all passenger services at a CRS for the board.
  * Returns raw rows for the builder to transform.
  */
@@ -330,8 +357,9 @@ export async function fetchBoardServices(params: {
   boardType: "departures" | "arrivals";
   visibilityFilter: ReturnType<typeof buildVisibilityFilter>["filter"];
   sortExpr: ReturnType<typeof buildVisibilityFilter>["sortExpr"];
+  destinationCrs: string | null;
 }): Promise<BoardServiceRow[]> {
-  const { crs, ssds, boardType, visibilityFilter, sortExpr } = params;
+  const { crs, ssds, boardType, visibilityFilter, sortExpr, destinationCrs } = params;
 
   return db
     .select({
@@ -393,6 +421,7 @@ export async function fetchBoardServices(params: {
         // Exclude services explicitly deleted from the Darwin schedule
         sql`${serviceRt.isDeleted} IS NOT TRUE`,
         visibilityFilter,
+        buildDestinationFilterSql(destinationCrs),
       ),
     )
     .orderBy(sortExpr, asc(callingPoints.ptaTimetable));

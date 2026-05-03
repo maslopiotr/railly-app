@@ -2,7 +2,7 @@
 
 - **Severity:** High
 - **Type:** Data integrity / matching logic
-- **Status:** Under Investigation (2026-05-03)
+- **Status:** Fixed (2026-05-03)
 - **Discovered:** 2026-05-03 (reported earlier as "MKC?dest=EUS shows non-EUS trains")
 - **File:** `packages/api/src/routes/boards.ts`
 

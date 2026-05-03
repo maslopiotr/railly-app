@@ -156,6 +156,7 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       boardType,
       visibilityFilter,
       sortExpr,
+      destinationCrs,
     });
 
     if (scheduledResults.length === 0) {
@@ -194,7 +195,6 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       referenceMinutes,
       todayStr,
       boardType,
-      destinationCrs,
       offset,
       limit,
     });

@@ -205,8 +205,8 @@ Any status that implies temporal proximity (e.g. "approaching") must validate ag
 - **`--glow-live`**: Theme-aware box-shadow for live indicator dot (light: emerald, dark: softer emerald)
 - **Shared components**: `PlatformBadge` (standard + compact), `DelayBadge`, `formatDisplayTime`/`computeDelay` from shared utils
 - **CallingPoints dots**: green=arrived, yellow=next/current, grey=future, red=cancelled (all via `--call-*` tokens)
-- **ServiceRow**: Single CSS Grid layout — no `sm:hidden`/`hidden sm:flex` dual DOM trees
-- **Loading bars**: 6 `--loading-*` tokens — low/moderate/busy tiers × `-bg` (track background) + `-bar` (filled portion). Consistent 3-tier thresholds (0-30/31-70/71-100) used across both `LoadingBar` (calling points) and `BusyIndicator` (board rows). Minimum 5% bar width prevents invisibility. Dynamic width via inline `style={{ width }}` (Tailwind can't express dynamic percentages).
+- **ServiceRow**: Single CSS Grid layout — no `sm:hidden`/`hidden sm:flex` dual DOM trees. Grid: `Time | Plat | Dest | [Calling at] | Chevron` — no separate Status column (time column IS the status indicator via delay colours). Journey info visible on all screen sizes via `journeyText` prop. No trainId/BusyIndicator on board rows (service detail only). `computeDurationMinutes` and `countStops` are segment-aware: board station → destination, with real-time time priority (atd > etd > ptd).
+- **Loading bars**: 6 `--loading-*` tokens — low/moderate/busy tiers × `-bg` (track background) + `-bar` (filled portion). Consistent 3-tier thresholds (0-30/31-70/71-100) used in `LoadingBar` (calling points detail view). Minimum 5% bar width prevents invisibility. Dynamic width via inline `style={{ width }}` (Tailwind can't express dynamic percentages). BusyIndicator removed from board rows — loading shown in service detail only.
 
 ## Key Decisions
 

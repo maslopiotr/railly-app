@@ -1,6 +1,53 @@
 # Progress
 
-## Latest (2026-05-03, Session 3) — Monolithic File Refactoring
+## Latest (2026-05-03, Session 5) — ServiceRow Redesign v2
+
+### ServiceRow v2 UI Redesign ✅
+- ✅ Two-row card layout on ALL screen sizes (consistent height)
+- ✅ Row 1 (grid): Time | Platform | Destination | Chevron
+- ✅ Row 2 (full-width): Status word · Journey info · Operator · Coaches
+- ✅ Same 4-column grid at all breakpoints — no xl-specific column changes
+- ✅ Status words in semantic colours: "On time", "Delayed +17m", "Cancelled", "Departed", "At platform", "Approaching"
+- ✅ Operator always visible on all screens
+- ✅ Coaches always visible on all screens
+- ✅ Removed "Calling at" column from laptop (detail view only)
+- ✅ Removed `stationCrs` prop from ServiceRow (no longer needed)
+- ✅ `boardGrid.ts` simplified to 4 columns with no xl breakpoint difference
+- ✅ `BoardTableHeader.tsx` simplified: Time | Plat | Destination | (empty)
+- ✅ Build compiles, deployed and verified
+
+### Duration/Stops Data Fix ✅ (Session 4)
+- ✅ `computeDurationMinutes` now segment-aware: board station → destination (or last stop)
+- ✅ `countStops` now segment-aware: intermediate stops between board station and destination
+- ✅ Both functions accept `stationCrs`, `isArrival`, `destinationCrs` parameters
+- ✅ Real-time times used when available (atd > etd > ptd priority chain)
+- ✅ Cross-midnight handling (adds 1440 min if end < start)
+- ✅ Fallback to full journey if board station CRS not found
+
+### Files Modified (Session 5)
+| File | Change |
+|---|---|
+| `packages/frontend/src/components/board/boardGrid.ts` | Simplified to 4 columns, removed xl breakpoint |
+| `packages/frontend/src/components/board/BoardTableHeader.tsx` | Removed Calling at column, 4-column header |
+| `packages/frontend/src/components/board/ServiceRow.tsx` | Full v2 redesign — 2-row structure, status words, operator on all screens |
+| `packages/frontend/src/components/board/BoardServiceList.tsx` | Removed `stationCrs` prop from ServiceRow call |
+
+---
+
+## Completed (2026-05-03, Session 3) — Monolithic File Refactoring + Destination Filter Fix
+
+### Destination Filter Leak Fix ✅
+- ✅ Root cause: JS post-filter matched destination CRS anywhere in calling pattern (~50% wrong results)
+- ✅ Fix: Moved to SQL `EXISTS` subquery with positional comparison (`day_offset` + `sort_time`)
+- ✅ `buildDestinationFilterSql()` added to `board-queries.ts`
+- ✅ JS `applyDestinationFilter()` removed from `board-builder.ts`
+- ✅ `destinationCrs` removed from `BuildServicesParams` (now SQL-level)
+- ✅ Verified: MKC→EUS shows 0 backwards matches (was ~50% leaked)
+- ✅ Verified: EUS→MKC, WAT→CLJ, CLJ→WAT, EUS→BHM all correct
+- ✅ Verified: No destination param still works (unfiltered)
+- ✅ SQL data validated: 1371 buggy → 685 fixed for MKC↔EUS pair
+- ✅ Bug doc updated: `bugs/destination-filter-leak.md` status → Fixed
+
 
 ### Board Route Refactoring ✅
 - ✅ `boards.ts` (600+ lines) split into 4 service modules + thin handler (216 lines)
@@ -234,13 +281,12 @@
 
 | Bug | Severity | Status |
 |-----|----------|--------|
-| Destination filter leak (~50% wrong results) | High | Fix designed — see `bugs/destination-filter-leak.md` |
 | BUG-015: CP filter by station | Low | Backlog |
 | BUG-016: No tests | Medium | Backlog |
 | BUG-022: VSTP duplicate PP | Low | Wontfix |
 | BUG-025b: Stale CP timestamps | Low | Wontfix |
 
 ## Next Steps
-- Implement destination filter fix from `bugs/destination-filter-leak.md`
+- Deduplicate `computeDelayMinutes` into `shared/src/utils/time.ts`
 - BUG-015: Calling points filter by current station
 - BUG-016: Add tests to codebase

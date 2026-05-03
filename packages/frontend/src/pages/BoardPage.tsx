@@ -79,7 +79,7 @@ export function BoardPage({
     : null;
 
   return (
-    <div className="w-full max-w-6xl mx-auto animate-fade-slide-up">
+    <div className="w-full max-w-4xl mx-auto animate-fade-slide-up">
       <BoardHeader
         station={station}
         board={board}
@@ -112,7 +112,7 @@ export function BoardPage({
 
       {/* Favourite bar — saves the current journey */}
       {onToggleFavourite && (
-        <div className="border-b border-border-default bg-surface-card mb-4">
+        <div className="border-b border-border-default bg-surface-card mb-2">
           <button
             onClick={onToggleFavourite}
             className={`w-full flex items-center gap-2 px-4 py-2 text-sm transition-colors select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 ${

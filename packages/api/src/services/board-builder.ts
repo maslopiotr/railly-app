@@ -1,7 +1,7 @@
 /**
  * Board builder — Transform raw DB rows into HybridBoardService[] response
  *
- * Handles deduplication, destination filtering, calling pattern mapping,
+ * Handles deduplication, calling pattern mapping,
  * train status classification, and all the BUG-017/BUG-025 workarounds.
  * No Express or database dependencies — receives pre-fetched data and
  * returns the final API shape.
@@ -34,33 +34,6 @@ export function deduplicateResults(results: BoardServiceRow[]): BoardServiceRow[
     if (seenRids.has(r.rid)) return false;
     seenRids.add(r.rid);
     return true;
-  });
-}
-
-// ── Destination filter ────────────────────────────────────────────────────
-
-/**
- * Filter services that call at the given destination CRS along their route.
- * Checks all calling points (including PP/passing points) for a CRS match.
- * Falls back to checking the final destination if no calling pattern is available.
- */
-export function applyDestinationFilter(
-  results: BoardServiceRow[],
-  callingPatternMap: Map<string, CallingPatternRow[]>,
-  endpointMap: Map<string, EndpointInfo>,
-  destinationCrs: string,
-): BoardServiceRow[] {
-  return results.filter((r) => {
-    const pattern = callingPatternMap.get(r.rid);
-    if (!pattern) {
-      // Fallback: check final destination
-      const ep = endpointMap.get(r.rid);
-      return ep?.destination?.crs === destinationCrs;
-    }
-    // Match any passenger stop (has CRS) along the route
-    return pattern.some(
-      (cp) => cp.crs === destinationCrs && !["PP", "OPOR", "OPIP", "OPDT"].includes(cp.stopType ?? ""),
-    );
   });
 }
 
@@ -305,7 +278,6 @@ export interface BuildServicesParams {
   referenceMinutes: number;
   todayStr: string;
   boardType: "departures" | "arrivals";
-  destinationCrs: string | null;
   offset: number;
   limit: number;
 }
@@ -315,9 +287,11 @@ export interface BuildServicesParams {
  *
  * Handles:
  * 1. Deduplication by RID
- * 2. Destination filtering (if requested)
- * 3. Pagination (offset/limit + hasMore)
- * 4. Per-service mapping via buildSingleService
+ * 2. Pagination (offset/limit + hasMore)
+ * 3. Per-service mapping via buildSingleService
+ *
+ * Note: Destination filtering is now handled at SQL level by
+ * buildDestinationFilterSql() in board-queries.ts.
  */
 export function buildServices(params: BuildServicesParams): {
   services: HybridBoardService[];
@@ -330,7 +304,6 @@ export function buildServices(params: BuildServicesParams): {
     referenceMinutes,
     todayStr,
     boardType,
-    destinationCrs,
     offset,
     limit,
   } = params;
@@ -338,19 +311,8 @@ export function buildServices(params: BuildServicesParams): {
   // 1. Deduplicate by RID
   const uniqueResults = deduplicateResults(results);
 
-  // 2. Apply destination filter if requested
-  let filteredResults = uniqueResults;
-  if (destinationCrs) {
-    filteredResults = applyDestinationFilter(
-      uniqueResults,
-      callingPatternMap,
-      endpointMap,
-      destinationCrs,
-    );
-  }
-
-  // 3. Paginate — fetch one extra to determine hasMore
-  const pagedResults = filteredResults.slice(offset, offset + limit + 1);
+  // 2. Paginate — fetch one extra to determine hasMore
+  const pagedResults = uniqueResults.slice(offset, offset + limit + 1);
   const hasMore = pagedResults.length > limit;
 
   // 4. Build each service

@@ -43,7 +43,7 @@ export function TimeNavigationBar({
             if (timeWindowOffset !== 0) onNow();
           }}
           disabled={timeWindowOffset === 0}
-          className={`text-xl font-mono font-semibold tabular-nums px-2 py-1 rounded select-none focus-visible:ring-1 focus-visible:ring-blue-500 flex items-center gap-1.5 ${
+          className={`text-xl font-mono font-semibold tabular-nums pl-2 pr-1 py-1 rounded select-none focus-visible:ring-1 focus-visible:ring-blue-500 flex items-center gap-1.5 ${
             timeWindowOffset === 0
               ? "text-text-primary cursor-default"
               : "text-text-secondary hover:text-text-primary hover:bg-surface-hover cursor-pointer"
@@ -61,7 +61,7 @@ export function TimeNavigationBar({
         <button
           onClick={onRefresh}
           disabled={isLoading}
-          className={`text-sm select-none transition-colors duration-300 text-text-muted hover:text-text-primary px-2
+          className={`text-sm select-none transition-colors duration-300 text-text-muted hover:text-text-primary pr-2 pl-1
              py-1 min-h-9 flex items-center gap-0 focus-visible:ring-2 focus-visible:ring-blue-500 rounded`}
           aria-label="Refresh board"
           title={timeWindowOffset === 0 && lastRefreshed ? `Refreshed ${relativeTime}` : "Refresh"}
