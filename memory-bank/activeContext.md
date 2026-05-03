@@ -1,86 +1,37 @@
 # Active Context
 
-## Current Focus: Destination Filter Bug Fix + Backlog Triage
+## Current Focus: Board Service Refactoring Complete
 
-The frontend has been extracted and reorganised. The StationFilterBar redesign (equal-width From/To) is complete. Favourite system is fully implemented with inline favourite bar in BoardPage. Current focus: fixing the destination filter bug and triaging open bugs.
+The board route (`routes/boards.ts`) has been refactored from a monolithic 600-line file into four service modules + a thin route handler (~150 lines).
 
-### Latest Changes (2026-05-02 — Component Extraction & Reorganisation)
+### Latest Changes (2026-05-05 — Board Service Refactoring)
 
-**TrainsBoard extracted into 7 sub-components + useBoard hook:**
-- `TrainsBoard.tsx` (703 lines) → deleted, replaced by `pages/BoardPage.tsx` (139 lines)
-- New hook `hooks/useBoard.ts` owns all board state: fetch, polling, visibility, pull-to-refresh, time navigation
-- 7 new components in `components/board/`: `BoardHeader`, `BoardTabs`, `StationFilterBar`, `TimeNavigationBar`, `NrccMessages`, `BoardTableHeader`, `BoardServiceList`
-- `App.tsx` trimmed from 542 → 283 lines — thin orchestrator with 3-way page router
+**Files created:**
+- `packages/api/src/services/board-time.ts` (~120 lines) — Pure time utilities and constants. No dependencies.
+- `packages/api/src/services/board-status.ts` (~120 lines) — Train status, current location, platform source. Depends on `board-time.ts` and shared types.
+- `packages/api/src/services/board-queries.ts` (~280 lines) — SQL expression builders (`buildWallSchedSql`, `buildWallDisplaySql`, etc.), visibility filter builder (`buildVisibilityFilter`), and DB query functions (`fetchStationName`, `fetchBoardServices`, `fetchEndpoints`, `fetchCallingPatterns`). Depends on `board-time.ts`, Drizzle, schema.
+- `packages/api/src/services/board-builder.ts` (~230 lines) — Row→response mapping (`buildSingleService`, `buildServices`), deduplication (`deduplicateResults`), destination filter (`applyDestinationFilter`), calling pattern mapping (`mapCallingPoints`). Depends on `board-status.ts`, `board-time.ts`, `board-queries.ts` types.
 
-**Directory restructure:**
-- Components moved from flat `components/` into `components/shared/`, `components/board/`, `components/service-detail/`
-- New top-level directories: `pages/`, `utils/`, `constants/`
-- Utility functions extracted: `utils/navigation.ts` (buildUrl, parseUrl), `utils/service.ts` (computeDurationMinutes, countStops, formatDuration)
-- `constants/stations.ts` holds `POPULAR_STATIONS`
+**Files modified:**
+- `packages/api/src/routes/boards.ts` — Reduced from ~600 lines to ~150 lines. Now a thin handler that validates CRS, computes time params, builds visibility filter, calls service functions, and returns JSON.
+- `memory-bank/systemPatterns.md` — Added Board Service Module Architecture section.
 
-**Docker build fixes:**
-- `NrccMessage` → `NRCCMessage` (type name casing caught by `tsc -b` in Docker, missed by local `tsc --noEmit`)
-- Removed unused `HybridCallingPoint` import in `utils/service.ts`
+**Bug fix during refactoring:**
+- Fixed SQL `todayStr` parameter: Original code embedded `todayStr` via template literal interpolation. The refactored SQL builder functions now take `todayStr` as an explicit parameter, ensuring correctness.
 
-### Previous Changes (2026-05-03 — Landing Page & Journey Favourites)
-
-**Landing Page Redesign:**
-- **Dual search**: "From" and optional "To" `StationSearch` fields, equal width with `w-10` labels and matching spacer divs
-- **Search placeholders**: `"Enter a station name…"` / `"Filter by destination (optional)"`
-- **Compact journey favourite cards**: Inline `From → To` on one line with departure time + status colour dot + `PlatformBadge` below
-- **Mobile limit**: 3 favourites shown on mobile, `+N more` toggle for extras
-- **Quick Access**: Recent + Popular merged under one section, recent chips tinted blue
-- **Layout**: Favourites and Quick Access constrained to `w-full sm:max-w-xl` with `px-2 sm:px-0` margins — aligned with search box
-- **Card grid**: `grid-cols-1 sm:grid-cols-2` — 2 columns on desktop prevents text truncation
-
-**Journey Favourites System:**
-- **New type**: `FavouriteJourney = { from: StationSearchResult, to: StationSearchResult | null }`
-- **Storage**: `railly-favourite-journeys` key in localStorage, automatic migration from old `railly-favourite-stations`
-- **`toggleFavourite(from, to)`**: toggles by `(fromCrs, toCrs ?? null)` composite key
-- **`isFavourite(fromCrs, toCrs)`**: matches journey pair
-
-**Board Favourite Bar:**
-- Star removed from `BoardHeader` (was next to station name) and `StationFilterBar` (was inside To pill)
-- **Inline favourite bar** in `BoardPage.tsx` between `StationFilterBar` and `TimeNavigationBar` — NO separate `FavouriteBar` component file
-- Reads `"☆ Save Euston → Manchester to favourites"` or `"★ Journey saved · tap to remove"`
-
-**Favourite Card Data Fetching:**
-- Fetches `limit: 3` departures per favourite (was `limit: 1`)
-- Skips departed trains: `data.services.find(s => s.trainStatus !== "departed") ?? data.services[0]`
-- Falls back gracefully on error (shows card without departure info)
-- No polling — fetch once on mount
-
-**App.tsx Refactor (Session 2):**
-- DRY: `restoreFromUrl()` shared by initial mount + popstate
-- Single `fetchBoard` call on URL restore (was calling twice)
-- Fixed AbortController race (create new controller before aborting old)
-- `activeTab` state moved from App → `BoardPage` local state
-- `ServiceDetail` derives `isArrival` from service object, not board tab
-- `navigateTo` has stable `[]` dependency (no unnecessary re-renders)
-- Loading spinner during URL restore + error state with "Return to home" button
-- SVG sun/moon icons replace emoji theme toggle
-
-**StationFilterBar (Session 1):**
-- `w-10` labels for From/To equal width
-- `sm:w-[300px]` fields (was `sm:w-[200px]`)
+**Type fixes:**
+- `uid` field: `entry.uid` is `string | null` from DB but `HybridBoardService.uid` requires `string` — added `?? ""` fallback.
+- `platIsSuppressed`: `boolean | null` from DB but `boolean` required — added `?? false` fallback.
+- Removed unused `parseTimeToMinutes` import from `board-status.ts`.
 
 ### Key Files
-- `packages/frontend/src/pages/BoardPage.tsx` — thin presenter, composes useBoard + sub-components + inline favourite bar
-- `packages/frontend/src/hooks/useBoard.ts` — all board state, fetch, polling, pull-to-refresh, time nav
-- `packages/frontend/src/components/board/StationFilterBar.tsx` — equal-width From/To fields
-- `packages/frontend/src/components/board/BoardServiceList.tsx` — service rows, skeletons, empty state, load more
-- `packages/frontend/src/components/board/TimeNavigationBar.tsx` — Earlier · clock · Later + refresh
-- `packages/frontend/src/components/board/NrccMessages.tsx` — NRCC disruption alert banners
-- `packages/frontend/src/components/board/BoardHeader.tsx` — station name, back button (no star)
-- `packages/frontend/src/pages/LandingPage.tsx` — clock, dual search, compact cards, quick access
-- `packages/frontend/src/pages/ServiceDetailPage.tsx` — service detail view
-- `packages/frontend/src/utils/navigation.ts` — buildUrl, parseUrl
-- `packages/frontend/src/utils/service.ts` — computeDurationMinutes, countStops, formatDuration
-- `packages/frontend/src/constants/stations.ts` — POPULAR_STATIONS
-- `packages/frontend/src/hooks/useFavourites.ts` — journey-based favourites, localStorage migration
-- `packages/frontend/src/App.tsx` — thin orchestrator (283 lines)
+- `packages/api/src/services/board-time.ts` — Pure time utilities, constants
+- `packages/api/src/services/board-status.ts` — Train status classification logic
+- `packages/api/src/services/board-queries.ts` — SQL builders + DB queries
+- `packages/api/src/services/board-builder.ts` — Row→response mapping, dedup, filtering
+- `packages/api/src/routes/boards.ts` — Thin Express handler
 
 ### Next Steps
-- Investigate: destination filter bug — MKC?dest=EUS shows non-EUS trains
+- Implement destination filter fix from `bugs/destination-filter-leak.md`
 - BUG-015: Calling points filter by current station
 - BUG-016: Add tests to codebase

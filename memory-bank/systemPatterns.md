@@ -40,6 +40,19 @@ Darwin Push Port Kafka → Consumer → PostgreSQL (real-time overlay)
 6. Per service: build `HybridBoardService` with timetable base + real-time overlay
 7. Full calling pattern fetched for current location + departure inference (BUG-017b)
 
+### Board Service Module Architecture
+The board route was refactored from a single 600-line file into four service modules + a thin route handler:
+```
+src/services/
+├── board-time.ts      — Pure time utilities, constants (no deps)
+├── board-status.ts    — Train status, current location, platform source (depends on board-time)
+├── board-queries.ts   — SQL expression builders + DB queries (depends on board-time, schema, db)
+└── board-builder.ts   — Row→response mapping, dedup, filtering (depends on board-status, board-time, board-queries types)
+src/routes/
+└── boards.ts          — Thin Express handler: validate, compute params, call services, return JSON
+```
+Dependency graph: `board-time ← board-status ← board-builder ← routes/boards.ts`; `board-time ← board-queries ← routes/boards.ts`. No circular deps.
+
 ## Train Status Logic (`determineTrainStatus`)
 1. **Cancelled** → `isCancelled === true`
 2. **No realtime** → `"scheduled"`

@@ -1,5 +1,15 @@
 # Progress
 
+## Latest (2026-05-03, Session 2) — Destination Filter Leak Investigation
+
+### Investigation ✅
+- ✅ Root cause identified: positional awareness missing in JS post-filter (`boards.ts:715`)
+- ✅ SQL evidence gathered across 8 station pairs (~50% leak rate)
+- ✅ Concrete example documented (train RID `202605017602221`: EUS 06:39 → MKC 07:45)
+- ✅ Fix designed: SQL `EXISTS` subquery with `sort_time`/`day_offset` positional comparison
+- ✅ Findings documented in `bugs/destination-filter-leak.md`
+- ✅ Code kept clean — `boards.ts` reverted to original, no broken changes
+
 ## Completed (2026-05-03) — Component Extraction & Reorganisation
 
 ### TrainsBoard Decomposition ✅
@@ -186,13 +196,13 @@
 
 | Bug | Severity | Status |
 |-----|----------|--------|
-| Destination filter (dest=EUS) not filtering correctly | Medium | Investigating |
+| Destination filter leak (~50% wrong results) | High | Fix designed — see `bugs/destination-filter-leak.md` |
 | BUG-015: CP filter by station | Low | Backlog |
 | BUG-016: No tests | Medium | Backlog |
 | BUG-022: VSTP duplicate PP | Low | Wontfix |
 | BUG-025b: Stale CP timestamps | Low | Wontfix |
 
 ## Next Steps
-- Investigate: destination filter bug — MKC?dest=EUS shows non-EUS trains
+- Implement destination filter fix from `bugs/destination-filter-leak.md`
 - BUG-015: Calling points filter by current station
 - BUG-016: Add tests to codebase

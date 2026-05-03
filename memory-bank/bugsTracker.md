@@ -4,6 +4,18 @@
 
 ---
 
+### Destination Filter Leak — positional awareness bug
+- **Severity:** High
+- **Type:** Data integrity / matching logic
+- **Status:** Investigated — fix planned (2026-05-03)
+- **Discovered:** 2026-05-03
+- **Impact:** ~50% of filtered services are wrong — destination filter shows trains where the destination comes BEFORE the departure station
+- **Root cause:** JS filter at `boards.ts:715` uses `pattern.some(cp => cp.crs === destinationCrs)` without checking position
+- **Proposed fix:** SQL-level `EXISTS` with `sort_time >` / `day_offset >` comparison
+- **Doc:** `bugs/destination-filter-leak.md`
+
+---
+
 ### BUG-038: Phantom duplicate CP rows — stop-type routing in TS handler
 - **Severity:** High
 - **Type:** Data integrity / matching logic
