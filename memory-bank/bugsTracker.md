@@ -10,13 +10,22 @@
 - **Files:** `packages/frontend/src/components/service-detail/CallingPoints.tsx`
 
 ### BUG-044: Partial cancellations not displayed in calling points
-- **Severity:** High · **Type:** Data / UX · **Status:** 🔲 Needs investigation
+- **Severity:** High · **Type:** Data / UX · **Status:** 🔍 Investigated — awaiting fix
+
+User note - we should check deactivate messages if we are processing those correctly.
 - **Discovered:** 2026-05-03
 - **Impact:** Train 202605038708410 (BHM→EUS) partially cancelled BHM→LBK but all stops appear as normal future stops.
-- **Root cause:** Either per-location `cancelled` flags aren't processed, or per-stop `is_cancelled` isn't set correctly from Darwin TS data. All CPs show `is_cancelled = false`.
-- **Potential fixes:** (1) Backend: verify TS handler processes per-location `cancelled` flags, (2) Frontend: detect "not served" stops (no pushport data, scheduled time in past) and show "Not served" label.
-- **Verification needed:** Check `darwin_events` and raw TS messages for this RID.
-- **Files:** `packages/consumer/src/handlers/ts/handler.ts`, `packages/frontend/src/components/service-detail/CallingPoints.tsx`
+- **Root cause:** Darwin might be using **omission-based partial cancellation** — it stops sending TS data for cancelled stops rather than setting explicit `can`/`cancelled` flags. All 81 raw Darwin messages for this service contain ZERO cancellation flags. Early TS messages start from BHAMNWS (full route); from ~20:27 onwards, TS messages start from NMPTN, omitting the cancelled portion entirely. Our handlers correctly process explicit `can`/`cancelled` flags when present, but have no heuristic to detect omission-based cancellations.
+- **Evidence:**
+  - All 40 `calling_points` have `is_cancelled = false`
+  - `service_rt.is_cancelled = false`
+  - 1,280 services in DB have Darwin OR ≠ timetable OR (the "service starts from" pattern)
+  - Only 3 services in entire DB have per-location `is_cancelled=true` (explicit Darwin flags)
+  - NMPTN has duplicate entry: one OR (source_darwin=true, source_timetable=false, no CRS) from TS handler, one IP (source_timetable=true, source_darwin=true, CRS=NMP) from timetable seed
+- **Unprocessed message types NOT the cause:** All stubbed handlers reviewed — `association` cancels join/split operations (not calling points), `trainAlert` is free-text, others carry no cancellation data.
+- **Prerequisite:** Process remaining Darwin message types (associations, trainAlerts, etc.) before implementing the fix, as they may provide supplementary data.
+- **Potential fixes:** (1) Heuristic: detect when TS messages change origin mid-route and mark skipped stops as cancelled, (2) Frontend: detect "not served" stops (no pushport data, scheduled time in past) and show "Not served" label, (3) Process `association` messages to link split services.
+- **Files:** `packages/consumer/src/handlers/ts/handler.ts`, `packages/consumer/src/handlers/schedule.ts`, `packages/frontend/src/components/service-detail/CallingPoints.tsx`
 
 ---
 

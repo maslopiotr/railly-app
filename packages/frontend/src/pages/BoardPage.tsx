@@ -97,7 +97,7 @@ export function BoardPage({
         onEarlier={handleEarlier}
         onLater={handleLater}
         onNow={handleNow}
-        onRefresh={() => loadBoard()}
+        onRefresh={() => timeWindowOffset !== 0 ? handleNow() : loadBoard()}
       />
 
       {onDestinationChange && (
