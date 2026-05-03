@@ -1,19 +1,24 @@
 # Progress
 
-## Latest (2026-05-03, Session 5) — ServiceRow Redesign v2
+## Latest (2026-05-03, Session 5) — ServiceRow v2 Redesign
 
 ### ServiceRow v2 UI Redesign ✅
 - ✅ Two-row card layout on ALL screen sizes (consistent height)
 - ✅ Row 1 (grid): Time | Platform | Destination | Chevron
-- ✅ Row 2 (full-width): Status word · Journey info · Operator · Coaches
+- ✅ Row 2 (flex): Status word · Journey info · Operator · Coaches
 - ✅ Same 4-column grid at all breakpoints — no xl-specific column changes
+- ✅ Visual delay indicators in time column:
+  - Delayed: scheduled struck-through + "Exp HH:MM" below in amber
+  - Departed/Arrived: actual time below in severity colour (green/amber/red)
+  - Cancelled: scheduled struck-through in red, card at 60% opacity
 - ✅ Status words in semantic colours: "On time", "Delayed +17m", "Cancelled", "Departed", "At platform", "Approaching"
 - ✅ Operator always visible on all screens
-- ✅ Coaches always visible on all screens
+- ✅ Coaches always visible on all screens (dimmed as `text-text-muted`)
+- ✅ Row 2: `text-xs`, `font-semibold` status, `gap-1.5`, `·` with `mx-0.5`
 - ✅ Removed "Calling at" column from laptop (detail view only)
 - ✅ Removed `stationCrs` prop from ServiceRow (no longer needed)
-- ✅ `boardGrid.ts` simplified to 4 columns with no xl breakpoint difference
-- ✅ `BoardTableHeader.tsx` simplified: Time | Plat | Destination | (empty)
+- ✅ Board container `max-w-4xl` on laptop (leaves space for sidebar/ads)
+- ✅ `BoardTableHeader.tsx`: "Platform" (not "Plat"), visible on all breakpoints, alignment matches data rows
 - ✅ Build compiles, deployed and verified
 
 ### Duration/Stops Data Fix ✅ (Session 4)
@@ -28,9 +33,10 @@
 | File | Change |
 |---|---|
 | `packages/frontend/src/components/board/boardGrid.ts` | Simplified to 4 columns, removed xl breakpoint |
-| `packages/frontend/src/components/board/BoardTableHeader.tsx` | Removed Calling at column, 4-column header |
-| `packages/frontend/src/components/board/ServiceRow.tsx` | Full v2 redesign — 2-row structure, status words, operator on all screens |
-| `packages/frontend/src/components/board/BoardServiceList.tsx` | Removed `stationCrs` prop from ServiceRow call |
+| `packages/frontend/src/components/board/BoardTableHeader.tsx` | "Platform" label, visible on all breakpoints, correct alignment |
+| `packages/frontend/src/components/board/ServiceRow.tsx` | Two-row card with visual delay indicators, status words in row 2 |
+| `packages/frontend/src/components/board/BoardServiceList.tsx` | Removed `stationCrs` prop, passes `journeyText` |
+| `packages/frontend/src/pages/BoardPage.tsx` | `max-w-4xl` laptop constraint |
 
 ---
 

@@ -1,41 +1,41 @@
 # Active Context
 
-## Current Focus: Service Row Redesign + Data Fix (2026-05-03)
+## Current Focus: ServiceRow v2 Redesign (2026-05-03, Session 5)
 
-### Latest Changes — Board ServiceRow Overhaul
+### Latest Changes — ServiceRow v2 Two-Row Card + Visual Delay Indicators
 
-**Problem:** `computeDurationMinutes` and `countStops` computed values for the entire journey (first → last stop), not the relevant segment (board station → destination). Journey info was invisible on mobile. Redundant Status badge column on tablet/desktop.
+**Design:** Two-row card on ALL screen sizes (consistent height):
+- Row 1 (grid): `Time | Platform | Destination | Chevron`
+- Row 2 (flex): `Status · Journey info · Operator · Coaches`
 
-**Data Fixes:**
-- `computeDurationMinutes(service, stationCrs, isArrival, destinationCrs?)` — now computes duration for the relevant segment:
-  - Departures: board station departure → destination (or last stop) arrival
-  - Arrivals: first stop departure → board station arrival
-  - Uses real-time times when available (atd > etd > ptd priority chain)
-  - Handles cross-midnight (adds 1440 min if end < start)
-  - Falls back to full journey if board station CRS not found in calling points
-- `countStops(service, stationCrs, isArrival, destinationCrs?)` — same segment logic, counts intermediate passenger stops only
+**Visual delay indicators in time column:**
+- On time: scheduled time only (primary colour)
+- Delayed: scheduled time struck-through (muted) + "Exp HH:MM" below in amber
+- Departed/Arrived: scheduled time + actual time below (green/amber/red by delay severity)
+- Cancelled: scheduled time struck-through (red) + card at 60% opacity
 
-**UI Redesign:**
-- Removed Status badge column from tablet/laptop grid (time column IS the status indicator via colours)
-- Removed `StatusBadge`, `DelayPill`, `BusyIndicator`, `getBoardStationLoading` from ServiceRow
-- Removed `trainId` (headcode) from board rows — shown in service detail only
-- Journey info ("2 stops · 47m" / "Direct") now visible on all screen sizes
-- Desktop subtitle: `journeyText · operator · N coaches`
-- Mobile bottom row: status text + operator + coaches
-- Grid columns changed: `Time | Plat | Dest | Chevron` (mobile/tablet), `Time | Plat | Dest | Calling at | Chevron` (laptop)
-- `subtitle` prop replaced by `journeyText` prop on ServiceRow
+**Status words in semantic colours (row 2):**
+- On time (green), Delayed +Nm (amber), Cancelled (red), Departed (green), At platform (blue), Approaching (blue), Scheduled (muted)
 
-**Files Modified:**
-- `packages/frontend/src/utils/service.ts` — Rewrote `computeDurationMinutes` + `countStops` with segment awareness + real-time data
-- `packages/frontend/src/components/board/BoardServiceList.tsx` — Pass station context to compute functions; use `journeyText` prop
-- `packages/frontend/src/components/board/boardGrid.ts` — Remove Status column from sm+ grid
-- `packages/frontend/src/components/board/BoardTableHeader.tsx` — Remove Status column header
-- `packages/frontend/src/components/board/ServiceRow.tsx` — Full redesign removing redundant components, adding journey info to all screens
+**Other refinements:**
+- Board container `max-w-4xl` on laptop (leaves space for sidebar/ads)
+- `text-xs` for row 2, `font-semibold` for status, `text-text-muted` for coaches
+- BoardTableHeader: "Platform" (not "Plat"), visible on all breakpoints, alignment matches data rows
+- Removed "Calling at" column from laptop (detail view only)
+- Removed `stationCrs` prop from ServiceRow (no longer needed)
+
+**Data fixes (from Session 4, unchanged):**
+- `computeDurationMinutes(service, stationCrs, isArrival, destinationCrs?)` — segment-aware: board station → destination/last stop
+- `countStops(service, stationCrs, isArrival, destinationCrs?)` — same segment logic
+- Both use real-time times (atd > etd > ptd priority chain), cross-midnight handling
 
 ### Key Files
 - `packages/frontend/src/utils/service.ts` — Segment-aware duration/stops computation
-- `packages/frontend/src/components/board/ServiceRow.tsx` — Simplified board row
-- `packages/frontend/src/components/board/boardGrid.ts` — Shared grid config (no Status column)
+- `packages/frontend/src/components/board/ServiceRow.tsx` — Two-row card with visual delay indicators
+- `packages/frontend/src/components/board/boardGrid.ts` — 4-column grid config (no xl breakpoint)
+- `packages/frontend/src/components/board/BoardTableHeader.tsx` — Header visible on all breakpoints
+- `packages/frontend/src/components/board/BoardServiceList.tsx` — Computes `journeyText` and passes to ServiceRow
+- `packages/frontend/src/pages/BoardPage.tsx` — `max-w-4xl` board container
 
 ### Next Steps
 - BUG-015: Calling points filter by current station
