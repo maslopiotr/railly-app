@@ -115,7 +115,8 @@ export interface DarwinScheduleLocation {
   stopType: "OR" | "OPOR" | "IP" | "OPIP" | "PP" | "DT" | "OPDT";
 }
 
-/** Deactivated schedule notification */
+/** Deactivated schedule notification — Darwin removes this RID from its active set.
+ * XSD (rttiPPTSchedules_v2.xsd DeactivatedSchedule): only @rid (required). */
 export interface DarwinDeactivated {
   rid: string;
 }

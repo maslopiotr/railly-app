@@ -42,7 +42,13 @@ export async function handleStationMessage(
         : null;
   const suppress = ow.suppress ?? false;
   const messageRaw = ow.messageRaw ?? (ow.Msg ? JSON.stringify(ow.Msg) : null);
-  const stations = ow.Station ?? [];
+  // Darwin sends Station arrays on the initial OW message but often omits
+  // them on subsequent updates (only changing message text/severity). If we
+  // DELETE+INSERT on every update, we wipe station links that Darwin hasn't
+  // re-sent. Fix: only replace station links when the update explicitly
+  // includes a Station array.
+  const hasStations = ow.Station !== undefined;
+  const stations = hasStations ? ow.Station! : [];
 
   await sql.begin(async (tx) => {
     // 1. UPSERT station_messages
@@ -58,13 +64,12 @@ export async function handleStationMessage(
         updated_at = NOW()
     `;
 
-    // 2. DELETE old station links (will be replaced with current data)
-    await tx`
-      DELETE FROM station_message_stations WHERE message_id = ${messageId}
-    `;
+    // 2. DELETE old + INSERT new station links ONLY when Darwin sent Station data
+    if (hasStations) {
+      await tx`
+        DELETE FROM station_message_stations WHERE message_id = ${messageId}
+      `;
 
-    // 3. INSERT new station links
-    if (stations.length > 0) {
       for (const s of stations) {
         if (s.crs) {
           await tx`
@@ -78,6 +83,6 @@ export async function handleStationMessage(
   });
 
   log.debug(
-    `   📢 Station message ${messageId}: ${category ?? "no-cat"}/${severity ?? "no-sev"} — ${message.slice(0, 80)}${stations.length > 0 ? ` [${stations.map((s) => s.crs).join(",")}]` : ""}`,
+    `   📢 Station message ${messageId}: ${category ?? "no-cat"}/${severity ?? "no-sev"} — ${message.slice(0, 80)}${hasStations ? ` [${stations.map((s) => s.crs).join(",")}]` : " [stations preserved]"}`,
   );
 }

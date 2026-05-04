@@ -180,7 +180,7 @@ async function replay() {
         if (message.deactivated) {
           for (const d of message.deactivated) {
             try {
-              await handleDeactivated(d.rid);
+              await handleDeactivated(d.rid, generatedAt);
               metrics.deactivated++;
             } catch (err) {
               metrics.errors++;

@@ -328,7 +328,7 @@ export async function handleDarwinMessage(
     if (message.deactivated) {
       for (const d of message.deactivated) {
         try {
-          await handleDeactivated(d.rid);
+          await handleDeactivated(d.rid, generatedAt);
           incrementType("deactivated");
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
@@ -455,16 +455,44 @@ function incrementType(type: string): void {
 
 // ── Deactivated handler ───────────────────────────────────────────────────────
 
-export async function handleDeactivated(rid: string): Promise<void> {
+export async function handleDeactivated(rid: string, generatedAt: string): Promise<void> {
   // deactivated means Darwin has removed this RID from its active set.
   // This is a pure lifecycle event — no inference about cancellation
   // or completion. Just record the timestamp Darwin told us.
-  await sql`
+
+  // Use Darwin's generated_at timestamp (not NOW()) for accuracy.
+  // This ensures deactivated_at reflects when Darwin actually deactivated
+  // the service, not when our consumer processed it (typically ~0.2s later).
+  const result = await sql`
     UPDATE service_rt
-    SET deactivated_at = NOW(), last_updated = NOW()
+    SET deactivated_at = ${generatedAt}::timestamp with time zone,
+        last_updated = NOW()
     WHERE rid = ${rid}
+      AND deactivated_at IS NULL
   `;
-  log.debug(`   🗑️ Deactivated: ${rid}`);
+
+  // Dedup: if 0 rows updated, either the RID doesn't exist or it was
+  // already deactivated — both are benign but worth distinguishing.
+  const updated = Number(result.count ?? 0);
+
+  if (updated === 0) {
+    // Check if the RID exists at all — if not, it's an orphaned deactivated
+    const [existing] = await sql`
+      SELECT deactivated_at FROM service_rt WHERE rid = ${rid}
+    `;
+    if (!existing) {
+      // Orphaned: Darwin deactivated a service we never saw a schedule/TS for.
+      // Not an error, but log for data quality visibility.
+      log.debug(`   ⚠️ Deactivated orphaned RID (not in service_rt): ${rid}`);
+      await logDarwinAudit("deactivated", "skip", rid, "ORPHANED_RID",
+        `Deactivated message for RID not in service_rt — no schedule/TS received`, "");
+    } else if (existing.deactivated_at) {
+      // Already deactivated — duplicate message from Darwin (common: ~76% are dupes)
+      log.debug(`   ⏭️ Deactivated duplicate: ${rid} (already at ${existing.deactivated_at})`);
+    }
+  } else {
+    log.debug(`   🗑️ Deactivated: ${rid}`);
+  }
 }
 
 // ── Station Message handler (P1) ──────────────────────────────────────────────

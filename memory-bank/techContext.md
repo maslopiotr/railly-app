@@ -36,7 +36,7 @@ npm run docker:rebuild   # rebuild Docker after changes
 | `schedule` | `handlers/schedule.ts` | Upserts journeys + CPs. TIPLOC matching, no DELETE. Timetable preserves pushport; VSTP preserves timetable. |
 | `TS` | `handlers/trainStatus.ts` | Updates CPs by natural key `(rid, tpl, day_offset, sort_time, stop_type)`, creates Darwin stubs for unknown RIDs |
 | `OW` | `handlers/stationMessage.ts` | UPSERTs `station_messages`, DELETEs old + INSERTs new `station_message_stations` in transaction. 7-day retention cleanup. |
-| `deactivated` | `handlers/index.ts` | Sets `deactivated_at` timestamp via `handleDeactivated`. `handleSchedule` handles `schedule.deleted` flag for `is_deleted`. |
+| `deactivated` | `handlers/index.ts` | Sets `deactivated_at` = Darwin `generated_at` (not `NOW()`) via `handleDeactivated(rid, generatedAt)`. Dedup guard: `WHERE deactivated_at IS NULL`. Logs orphaned RIDs (not in `service_rt`) to `darwin_audit`. ~76% of deactivated messages are duplicates. |
 | `association`, `scheduleFormations`, `serviceLoading`, `formationLoading`, `trainAlert`, `trainOrder`, `trackingID`, `alarm` | `handlers/index.ts` | Stub handlers — logged only (except `serviceLoading` which is implemented) |
 
 ## PostgreSQL Performance
@@ -96,6 +96,7 @@ SELECT severity, message_type, error_code, count(*) FROM darwin_audit GROUP BY s
 - **Pushport time columns** (`etd_pushport`, `eta_pushport`, `atd_pushport`, `ata_pushport`): `char(5)` — only stores HH:MM format. Parser `normaliseTime()` truncates HH:MM:SS to HH:MM. Sentinel strings like "On time" or "Cancelled" physically cannot fit (7/9 chars). Cancellation is tracked via `is_cancelled` boolean on `service_rt`.
 - **Stop types in DB**: IP, PP, DT, OR, OPIP, OPDT, OPOR — 7 types. No `RM` exists in the Darwin data pipeline. Board filter excludes PP, OPOR, OPIP, OPDT from display.
 - **Board visibility**: 5 SQL conditions (cancelled, at platform, recently departed, display time window, scheduled-only). `wall_display` uses COALESCE priority: actual > estimated > scheduled (atd > etd > ptd).
+- **Deactivated messages**: XSD `DeactivatedSchedule` (`rttiPPTSchedules_v2.xsd`) defines **only `rid`** — no `ssd`/`uid` attributes. Live data confirms: 10K+ items all `{"rid":"..."}` only. `DarwinDeactivated` type matches XSD exactly. ~76% are duplicates. 3 orphaned RIDs found. `deactivated_at` uses Darwin's `generated_at`, not `NOW()`. Array always length 1, no composite envelopes, no subtypes. Board API does not filter on `deactivated_at`.
 
 ## Consumer Graceful Shutdown
 The consumer handles SIGTERM with a specific sequence to prevent data loss:

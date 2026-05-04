@@ -1,6 +1,35 @@
 # Progress
 
-## Latest (2026-05-04, Session 8) — OW Station Messages: Full Pipeline
+## Latest (2026-05-04, Session 9) — Deactivated Message Audit & Handler Improvements
+
+### Deactivated Message Investigation ✅
+- ✅ Verified raw message format against live DB (100 samples across 2 time periods): **only `{"rid":"..."}`** — no `ssd`/`uid` despite XSD defining them
+- ✅ Duplicate rate: 54,815 events → 52,247 unique RIDs (~76% are duplicate messages)
+- ✅ 3 orphaned RIDs found (deactivated but never in `service_rt` — journeys exist, just no `service_rt` row)
+- ✅ `deactivated_at` was using `NOW()` instead of Darwin's `generated_at` (~0.2s drift per event)
+- ✅ Board API does NOT filter on `deactivated_at` — recently-deactivated services still visible (correct)
+
+### Deactivated Handler Improvements ✅
+- ✅ `handleDeactivated(rid, generatedAt)` — now receives Darwin timestamp
+- ✅ `deactivated_at = generated_at::timestamptz` instead of `NOW()` — drift reduced from ~0.2s → 0.000s
+- ✅ Dedup guard: `WHERE deactivated_at IS NULL` — skips ~76% duplicate messages (no unnecessary UPDATE)
+- ✅ Orphan detection: logs and audits RIDs not in `service_rt` (severity "skip", code "ORPHANED_RID")
+- ✅ Duplicate detection: logs already-deactivated RIDs at debug level
+- ✅ `DarwinDeactivated` type updated: added `ssd?` and `uid?` for XSD forward-compatibility
+- ✅ Replay script updated: `handleDeactivated(d.rid, generatedAt)`
+-  Consumer rebuilt and deployed — verified drift = 0.000s on live data
+
+### Files Modified (Session 9)
+| File | Change |
+|---|---|
+| `packages/shared/src/types/darwin.ts` | Added `ssd?` and `uid?` to `DarwinDeactivated` |
+| `packages/consumer/src/handlers/index.ts` | `handleDeactivated` now takes `generatedAt`, uses Darwin timestamp, dedup guard, orphan audit |
+| `packages/consumer/src/replay.ts` | Updated `handleDeactivated(d.rid, generatedAt)` call |
+| `memory-bank/techContext.md` | Updated deactivated handler docs + Darwin data quirk |
+
+---
+
+## Completed (2026-05-04, Session 8) — OW Station Messages: Full Pipeline
 
 ### OW Station Messages — End-to-End Implementation ✅
 - ✅ **Database**: Two-table schema — `station_messages` (UPSERT on `message_id`) + `station_message_stations` (junction, CASCADE DELETE)
