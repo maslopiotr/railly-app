@@ -43,6 +43,7 @@ import {
   fetchBoardServices,
   fetchEndpoints,
   fetchCallingPatterns,
+  fetchStationMessages,
 } from "../services/board-queries.js";
 import { buildServices } from "../services/board-builder.js";
 import { boardCache, stationCache, buildBoardCacheKey } from "../services/cache.js";
@@ -200,6 +201,9 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
     // Abort early if client disconnected during query 2
     if (clientDisconnected) return;
 
+    // ── Query: Station messages for this CRS ──────────────────────────────
+    const stationMessages = await fetchStationMessages(crs);
+
     // Early return for empty results (no need for further queries)
     if (scheduledResults.length === 0) {
       const emptyResponse = {
@@ -207,7 +211,7 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
         stationName: stationName || null,
         date: todayStr,
         generatedAt: new Date().toISOString(),
-        nrccMessages: [],
+        nrccMessages: stationMessages,
         services: [],
         hasMore: false,
       };
@@ -258,7 +262,7 @@ router.get("/:crs/board", async (req, res, next: NextFunction) => {
       stationName: stationName || null,
       date: todayStr,
       generatedAt: new Date().toISOString(),
-      nrccMessages: [],
+      nrccMessages: stationMessages,
       services,
       hasMore,
     };

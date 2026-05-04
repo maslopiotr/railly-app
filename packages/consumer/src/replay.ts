@@ -26,6 +26,7 @@ import { sql, closeDb } from "./db.js";
 import { handleSchedule } from "./handlers/schedule.js";
 import { handleTrainStatus } from "./handlers/trainStatus.js";
 import { handleDeactivated } from "./handlers/index.js";
+import { handleStationMessage } from "./handlers/stationMessage.js";
 import type { DarwinMessage } from "@railly-app/shared";
 
 // ── Configuration ──────────────────────────────────────────────────────────────
@@ -77,6 +78,7 @@ const metrics = {
   schedule: 0,
   TS: 0,
   deactivated: 0,
+  OW: 0,
   skipped: 0,
   errors: 0,
   startTime: Date.now(),
@@ -92,7 +94,8 @@ async function replay() {
       count(*) as total,
       count(*) FILTER (WHERE message_type = 'schedule') as schedule_count,
       count(*) FILTER (WHERE message_type = 'TS') as ts_count,
-      count(*) FILTER (WHERE message_type = 'deactivated') as deactivated_count
+      count(*) FILTER (WHERE message_type = 'deactivated') as deactivated_count,
+      count(*) FILTER (WHERE message_type = 'OW') as ow_count
     FROM darwin_events
     WHERE received_at >= ${fromDate + " 00:00:00"}::timestamptz
       AND received_at < ${endDateStr + " 00:00:00"}::timestamptz
@@ -102,9 +105,10 @@ async function replay() {
   const scheduleCount = Number(countResult.schedule_count);
   const tsCount = Number(countResult.ts_count);
   const deactivatedCount = Number(countResult.deactivated_count);
+  const owCount = Number(countResult.ow_count);
 
   console.log(`   Total events: ${totalEvents.toLocaleString()}`);
-  console.log(`   Schedule: ${scheduleCount.toLocaleString()}, TS: ${tsCount.toLocaleString()}, Deactivated: ${deactivatedCount.toLocaleString()}`);
+  console.log(`   Schedule: ${scheduleCount.toLocaleString()}, TS: ${tsCount.toLocaleString()}, Deactivated: ${deactivatedCount.toLocaleString()}, OW: ${owCount.toLocaleString()}`);
 
   if (totalEvents === 0) {
     console.log("   ⚠️ No events found in date range. Exiting.");
@@ -186,8 +190,22 @@ async function replay() {
           }
         }
 
-        // If message has none of the above, it's an unknown/OW type  skip
-        if (!message.schedule && !message.TS && !message.deactivated) {
+        // --- P1: Station messages ---
+        if (message.OW) {
+          for (const ow of message.OW) {
+            try {
+              await handleStationMessage(ow, generatedAt);
+              metrics.OW++;
+            } catch (err) {
+              metrics.errors++;
+              const error = err instanceof Error ? err : new Error(String(err));
+              console.error(`   ❌ OW error for ${ow.id}: ${error.message}`);
+            }
+          }
+        }
+
+        // If message has none of the above, it's an unknown type — skip
+        if (!message.schedule && !message.TS && !message.deactivated && !message.OW) {
           metrics.skipped++;
         }
       } catch (err) {
@@ -209,12 +227,13 @@ async function replay() {
 
   // Summary
   const elapsed = ((Date.now() - metrics.startTime) / 1000).toFixed(1);
-  const totalProcessed = metrics.schedule + metrics.TS + metrics.deactivated;
+  const totalProcessed = metrics.schedule + metrics.TS + metrics.deactivated + metrics.OW;
   console.log("\n📊 Replay Summary:");
   console.log(`   Schedule: ${metrics.schedule.toLocaleString()}`);
   console.log(`   TS: ${metrics.TS.toLocaleString()}`);
   console.log(`   Deactivated: ${metrics.deactivated.toLocaleString()}`);
-  console.log(`   Skipped (unknown/OW): ${metrics.skipped.toLocaleString()}`);
+  console.log(`   OW: ${metrics.OW.toLocaleString()}`);
+  console.log(`   Skipped (unknown): ${metrics.skipped.toLocaleString()}`);
   console.log(`   Errors: ${metrics.errors.toLocaleString()}`);
   console.log(`   Total processed: ${totalProcessed.toLocaleString()}`);
   console.log(`   Elapsed: ${elapsed}s`);

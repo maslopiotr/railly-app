@@ -90,6 +90,7 @@ export type {
   PlatformSource,
   TrainStatus,
   CurrentLocation,
+  StationMessage,
 } from "./types/board.js";
 
 // Utils

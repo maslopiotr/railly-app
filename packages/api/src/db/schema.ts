@@ -4,6 +4,7 @@ import {
   varchar,
   char,
   integer,
+  smallint,
   timestamp,
   index,
   uniqueIndex,
@@ -337,3 +338,56 @@ export type NewSeedLog = typeof seedLog.$inferInsert;
 
 /** Type for inserting a skipped location row */
 export type NewSkippedLocation = typeof skippedLocations.$inferInsert;
+
+/**
+ * Station messages — OW (Station Message) data from Darwin Push Port
+ * Each message has a unique message_id (from Darwin's id field).
+ * Messages are UPSERTed — the same id can appear multiple times with updated content.
+ */
+export const stationMessages = pgTable(
+  "station_messages",
+  {
+    id: serial("id").primaryKey(),
+    messageId: varchar("message_id", { length: 20 }).notNull().unique(), // Darwin OW id field
+    category: varchar("category", { length: 20 }), // Train, Station, Connections, System, Misc, PriorTrains, PriorOther
+    severity: smallint("severity"), // 0=normal, 1=minor, 2=major, 3=severe
+    suppress: boolean("suppress").notNull().default(false), // If true, don't show to public
+    message: text("message").notNull(), // Normalised plain text
+    messageRaw: text("message_raw"), // Original JSON for debugging
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => [
+    index("idx_station_messages_category").on(table.category),
+    index("idx_station_messages_created").on(table.createdAt),
+  ],
+);
+
+/**
+ * Station message stations — many-to-many junction
+ * Links station_messages to CRS codes. A single OW message can affect
+ * multiple stations (e.g. a route-wide disruption affecting 20+ stations).
+ */
+export const stationMessageStations = pgTable(
+  "station_message_stations",
+  {
+    id: serial("id").primaryKey(),
+    messageId: varchar("message_id", { length: 20 })
+      .notNull()
+      .references(() => stationMessages.messageId, { onDelete: "cascade" }),
+    crs: char("crs", { length: 3 }).notNull(),
+  },
+  (table) => [
+    index("idx_station_message_stations_crs").on(table.crs),
+    uniqueIndex("idx_station_message_stations_unique").on(table.messageId, table.crs),
+  ],
+);
+
+/** Type for inserting a station message row */
+export type NewStationMessage = typeof stationMessages.$inferInsert;
+/** Type for a station message row as read from the DB */
+export type StationMessageRow = typeof stationMessages.$inferSelect;
+/** Type for inserting a station message station row */
+export type NewStationMessageStation = typeof stationMessageStations.$inferInsert;
+/** Type for a station message station row as read from the DB */
+export type StationMessageStationRow = typeof stationMessageStations.$inferSelect;

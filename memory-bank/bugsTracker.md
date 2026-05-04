@@ -2,6 +2,14 @@
 
 ## Open Bugs
 
+### BUG-045: Nginx location trailing slash caused station search 301 redirect
+- **Severity:** High · **Type:** Infrastructure / Nginx · **Status:** ✅ Fixed
+- **Discovered:** 2026-05-04
+- **Impact:** Station search via "From" or "To" fields showed "Search failed" because nginx returned 301 redirect from `/api/v1/stations?q=EUS` to `/api/v1/stations/?q=EUS`, dropping the port number.
+- **Root cause:** `location /api/v1/stations/` (with trailing slash) didn't match `/api/v1/stations?q=EUS` (no slash). Nginx auto-redirected with 301, breaking the request.
+- **Fix:** Changed to `location /api/v1/stations` (no trailing slash) so both search and board paths match.
+- **Files:** `packages/frontend/nginx.conf`
+
 ### BUG-043: Train 202605038706867 shows incorrect next upcoming stop
 - **Severity:** Medium · **Type:** UX / Data · **Status:** 🔲 Needs investigation
 - **Discovered:** 2026-05-03
@@ -92,6 +100,7 @@ User note - we should check deactivate messages if we are processing those corre
 | Bug A35 | Cancelled services showing as scheduled — not reproducible | — |
 | Bug A36 | "Departed" for future stops — added "En route to" for `future` status | 2026-05-02 |
 | BUG-017b | Origin stops not showing "departed" when train has left | 2026-04-30 |
+| BUG-045 | Nginx 301 redirect on station search — trailing slash in location block | 2026-05-04 |
 
 ---
 

@@ -14,7 +14,7 @@
  * - db/schema.js  (Drizzle schema definitions)
  */
 
-import { sql, eq, inArray, and, asc } from "drizzle-orm";
+import { sql, eq, inArray, and, asc, desc } from "drizzle-orm";
 import { db } from "../db/connection.js";
 import {
   stations,
@@ -23,7 +23,10 @@ import {
   tocRef,
   locationRef,
   serviceRt,
+  stationMessages,
+  stationMessageStations,
 } from "../db/schema.js";
+import type { StationMessage } from "@railly-app/shared";
 import {
   CANCELLED_LOOKBACK,
   DEPARTED_LOOKBACK,
@@ -519,4 +522,41 @@ export async function fetchCallingPatterns(
   }
 
   return map;
+}
+
+// ── Station Messages ────────────────────────────────────────────────────────
+
+/**
+ * Fetch active station messages for a given CRS code.
+ * Returns messages where suppress=false, ordered by severity DESC then created_at DESC.
+ * Limited to 10 most recent messages.
+ */
+export async function fetchStationMessages(crs: string): Promise<StationMessage[]> {
+  const rows = await db
+    .select({
+      id: stationMessages.messageId,
+      category: stationMessages.category,
+      severity: stationMessages.severity,
+      message: stationMessages.message,
+    })
+    .from(stationMessages)
+    .innerJoin(
+      stationMessageStations,
+      eq(stationMessages.messageId, stationMessageStations.messageId),
+    )
+    .where(
+      and(
+        eq(stationMessageStations.crs, crs),
+        eq(stationMessages.suppress, false),
+      ),
+    )
+    .orderBy(desc(stationMessages.severity), desc(stationMessages.createdAt))
+    .limit(10);
+
+  return rows.map((row) => ({
+    id: row.id,
+    category: row.category,
+    severity: (row.severity ?? 0) as 0 | 1 | 2 | 3,
+    message: row.message,
+  }));
 }

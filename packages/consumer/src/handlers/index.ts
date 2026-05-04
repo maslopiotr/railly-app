@@ -16,11 +16,11 @@ import type {
   DarwinFormationLoading,
   DarwinTrackingID,
   DarwinAlarm,
-  DarwinStationMessage,
 } from "@railly-app/shared";
 import { handleSchedule } from "./schedule.js";
 import { handleTrainStatus } from "./trainStatus.js";
 import { handleServiceLoading as handleServiceLoadingImpl } from "./serviceLoading.js";
+import { handleStationMessage as handleStationMessageImpl } from "./stationMessage.js";
 import { sql } from "../db.js";
 import { log } from "../log.js";
 
@@ -342,8 +342,15 @@ export async function handleDarwinMessage(
     // --- P1: Station messages ---
     if (message.OW) {
       for (const ow of message.OW) {
-        await handleStationMessage(ow, generatedAt);
-        incrementType("OW");
+        try {
+          await handleStationMessageImpl(ow, generatedAt);
+          incrementType("OW");
+        } catch (err) {
+          const error = err instanceof Error ? err : new Error(String(err));
+          log.error(`   ❌ OW handler error for ${ow.id}:`, error.message);
+          metrics.messagesErrored++;
+          await logDarwinError("OW", ow.id ?? null, error, JSON.stringify(ow));
+        }
       }
     }
 
@@ -461,15 +468,7 @@ export async function handleDeactivated(rid: string): Promise<void> {
 }
 
 // ── Station Message handler (P1) ──────────────────────────────────────────────
-
-async function handleStationMessage(
-  _ow: DarwinStationMessage,
-  _generatedAt: string,
-): Promise<void> {
-  // TODO: Store station messages in PostgreSQL
-  // For now, log only (P1 — not critical for board/service detail)
-  log.debug("   📢 Station message received");
-}
+// Replaced by handlers/stationMessage.ts — imported as handleStationMessageImpl
 
 // ── Stubbed P2/P3 Handlers ───────────────────────────────────────────────────
 

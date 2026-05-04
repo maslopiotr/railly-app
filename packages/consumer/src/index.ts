@@ -182,7 +182,19 @@ async function runRetentionCleanup(): Promise<number> {
       log.info(`🧹 Retention cleanup: deleted ${skippedDeleted} old skipped_locations (>7 days)`);
     }
 
-    return deleted + skippedDeleted;
+    // Clean up station messages older than 7 days
+    // station_message_stations rows are deleted via ON DELETE CASCADE
+    const stationMsgCutoff = `NOW() - INTERVAL '7 days'`;
+    const stationMsgResult = await sql`
+      DELETE FROM station_messages
+      WHERE created_at < ${sql.unsafe(stationMsgCutoff)}
+    `;
+    const stationMsgDeleted = stationMsgResult.count ?? 0;
+    if (stationMsgDeleted > 0) {
+      log.info(`🧹 Retention cleanup: deleted ${stationMsgDeleted} old station_messages (>7 days)`);
+    }
+
+    return deleted + skippedDeleted + stationMsgDeleted;
   } catch (err) {
     log.warn("   ⚠️ Retention cleanup failed:", (err as Error).message);
     return 0;

@@ -153,6 +153,20 @@ export interface HybridBoardService {
   actualDeparture: string | null;
 }
 
+// ─── Station Message (from Darwin OW) ──────────────────────────────────────
+
+/** A station message from Darwin Push Port (OW element) */
+export interface StationMessage {
+  /** Unique message identifier */
+  id: string;
+  /** Message category: Train, Station, Connections, System, Misc, PriorTrains, PriorOther */
+  category: string | null;
+  /** Severity: 0=normal, 1=minor, 2=major, 3=severe */
+  severity: 0 | 1 | 2 | 3;
+  /** Normalised plain-text message */
+  message: string;
+}
+
 // ─── Hybrid Board Response ─────────────────────────────────────────────────
 
 export interface HybridBoardResponse {
@@ -160,8 +174,8 @@ export interface HybridBoardResponse {
   stationName: string | null;
   date: string;
   generatedAt: string;
-  /** NRMCC messages from LDBWS */
-  nrccMessages: { Value: string }[];
+  /** Station messages from Darwin Push Port (OW) */
+  nrccMessages: StationMessage[];
   /** Services ordered by departure/arrival time */
   services: HybridBoardService[];
   /** Whether more services are available beyond this page */
