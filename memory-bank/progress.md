@@ -1,6 +1,61 @@
 # Progress
 
-## Latest (2026-05-03, Session 6) — ServiceDetailPage + CallingPoints Redesign
+## Latest (2026-05-04, Session 7) — Caching Audit, Performance & BUG-045 Fix
+
+### Caching & Performance Audit ✅
+- ✅ 3-layer caching implemented: API in-memory (10s board, 1h station) → nginx proxy (10s) → browser (no-store)
+- ✅ API TTLCache with 100MB max, LRU eviction, `buildBoardCacheKey()` for composite keys
+- ✅ API ReferenceCache for station names (1h TTL, DB hit only on first request per CRS)
+- ✅ Nginx proxy cache: 10s board responses, stampede prevention (`proxy_cache_lock`)
+- ✅ Health check endpoint: `/api/v1/health/detail` with cache stats (entries, size, hit rate)
+- ✅ Cache headers: `X-Cache: HIT/MISS`, `Cache-Control: public, max-age=10, stale-while-revalidate=15`
+- ✅ PostgreSQL `statement_timeout=5000` kills runaway queries
+- ✅ Connection pool increased to 20 (was 10)
+- ✅ `Promise.all` for parallel queries 3 & 4 (fetchEndpoints + fetchCallingPatterns)
+
+### PERF-1: Client Disconnect Detection ✅
+- ✅ `req.on("close")` listener in boards route sets `clientDisconnected` flag
+- ✅ Checks flag between each DB query phase — skips remaining queries if client gone
+- ✅ Prevents wasted connection pool resources on abandoned requests
+
+### PERF-3: Frontend Retry with Exponential Backoff ✅
+- ✅ `loadBoard()` retries on transient errors (network failures, 5xx)
+- ✅ Max 3 attempts: 1 initial + 2 retries, backoff 1s → 2s → 4s
+- ✅ Does NOT retry on AbortError (navigation) or 4xx client errors
+- ✅ `isTransientError()` helper classifies errors for retry eligibility
+
+### BUG-045: Nginx 301 Redirect on Station Search ✅
+- ✅ `location /api/v1/stations/` (trailing slash) caused 301 redirect for `/api/v1/stations?q=MKC`
+- ✅ Fixed to `location /api/v1/stations` (no trailing slash)
+- ✅ Also added `proxy_headers_hash_max_size 1024;` to suppress nginx warning
+
+### Scaling Roadmap Documented (F-08)
+| Priority | Item | Effort |
+|----------|------|--------|
+| P1 | Cloudflare CDN (free tier) | S |
+| P1 | Nginx rate limiting | S |
+| P2 | Horizontal API scaling (replicas) | S |
+| P2 | Pre-computed wall-clock columns (PERF-2) | M |
+| P3 | PostgreSQL read replica | M |
+| P3 | Redis shared cache | M |
+| P3 | Prometheus + Grafana | M |
+| P4 | Kubernetes / ECS | L |
+
+### Files Modified (Session 7)
+| File | Change |
+|---|---|
+| `packages/api/src/services/cache.ts` | **New** — TTLCache, ReferenceCache, singletons, buildBoardCacheKey |
+| `packages/api/src/routes/boards.ts` | Cache integration, Promise.all, X-Cache headers, client disconnect detection |
+| `packages/api/src/routes/health.ts` | Cache stats in `/health/detail`, 503 on DB failure |
+| `packages/api/src/db/connection.ts` | Pool size 10→20 |
+| `packages/frontend/src/hooks/useBoard.ts` | Retry with exponential backoff (1s→2s→4s, max 3 attempts) |
+| `packages/frontend/nginx.conf` | Proxy cache zone, no trailing slash fix, proxy_headers_hash_max_size |
+| `packages/frontend/Dockerfile` | Create `/var/cache/nginx/api` for proxy cache |
+| `docker-compose.yml` | PostgreSQL `statement_timeout=5000` |
+
+---
+
+## Completed (2026-05-03, Session 6) — ServiceDetailPage + CallingPoints Redesign
 
 ### ServiceDetailPage v2 — Full Redesign ✅
 - ✅ Complete page restructure: Header → Route hero → Alerts → Time table → Formation → Timeline → Footer

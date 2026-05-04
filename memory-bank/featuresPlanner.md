@@ -62,6 +62,24 @@ This document tracks feature development for Railly, prioritised using the MoSCo
 
 ---
 
+### F-08: Scaling & Infrastructure Roadmap
+**Status:** 📋 Planned
+**Objective:** Prepare Railly for higher traffic with progressive scaling.
+
+| ID | Item | Priority | Effort | Notes |
+|----|------|----------|--------|-------|
+| SCALE-1 | Cloudflare CDN (free tier) | P1 | S | DNS change + config. Caches static assets indefinitely, board API 10s TTL at edge |
+| SCALE-2 | Nginx rate limiting | P1 | S | `limit_req_zone` per IP, protects against scrapers |
+| SCALE-3 | Horizontal API scaling | P2 | S | `deploy: replicas: N` in docker-compose + nginx upstream. API is stateless |
+| SCALE-4 | Pre-computed wall-clock columns (PERF-2) | P2 | M | Biggest remaining DB query win — eliminates per-row EXTRACT computations |
+| SCALE-5 | PostgreSQL read replica | P3 | M | Primary for writes (consumer), replica for reads (API). Streaming replication built into PG |
+| SCALE-6 | Redis shared cache | P3 | M | Replace per-process in-memory cache. All API instances see same cache after horizontal scaling |
+| SCALE-7 | Prometheus + Grafana (PERF-4) | P3 | M | Query latency histograms, cache hit rates, connection pool, request counts |
+| SCALE-8 | Kubernetes / ECS | P4 | L | Auto-scaling API pods. Replaces Docker Compose for production |
+| SCALE-9 | TimescaleDB (F-05) | P4 | M | Hypertable partitioning for calling_points (4M+ rows) and darwin_events |
+
+---
+
 ## Darwin Consumer: Handler Status
 
 | Priority | Handler | Status | Data Description |

@@ -1,38 +1,37 @@
 # Active Context
 
-## Current Focus: Performance Improvements PERF-1 & PERF-3 — Completed ✅
+## Current Focus: Scaling & Infrastructure Roadmap Documented
 
 ### What Was Done
-Implemented two remaining performance improvements from the caching audit backlog:
+- Completed caching audit: 3-layer cache (API memory → nginx proxy → browser none)
+- Implemented PERF-1 (client disconnect detection) and PERF-3 (frontend retry with backoff)
+- Fixed BUG-045: nginx trailing slash causing 301 redirect on station search
+- Documented F-08: Scaling & Infrastructure Roadmap in featuresPlanner.md
 
-1. **PERF-1: Client Disconnect Detection** (`packages/api/src/routes/boards.ts`)
-   - Added `req.on("close")` listener to detect when client disconnects
-   - Checks `clientDisconnected` flag between each DB query phase
-   - If client has gone away, the handler returns early — skipping remaining DB queries
-   - Prevents wasted connection pool resources on abandoned requests
+### Recently Completed
+| Item | Description |
+|------|-------------|
+| PERF-1 | Client disconnect detection in board route |
+| PERF-3 | Frontend retry with exponential backoff |
+| BUG-045 | Nginx 301 redirect on station search — trailing slash in location block |
+| Caching | 3-layer cache (API memory, nginx proxy, browser no-store) |
+| Connection pool | 20 connections, statement_timeout 5s |
+| Health check | `/api/v1/health/detail` with cache stats |
 
-2. **PERF-3: Frontend Retry with Exponential Backoff** (`packages/frontend/src/hooks/useBoard.ts`)
-   - `loadBoard()` now retries on transient errors (network failures, 5xx server errors)
-   - Max 3 attempts: 1 initial + 2 retries
-   - Backoff: 1s → 2s → 4s between retries
-   - Does NOT retry on: AbortError (navigation away), 4xx client errors
-   - Backoff timer is cancelled if AbortController fires (user navigates away during retry wait)
-   - `isTransientError()` helper classifies errors for retry eligibility
-
-### Previously Completed (Caching Audit)
-- 3-layer caching (API memory → nginx proxy → browser no-store)
-- PostgreSQL `statement_timeout=5000` and connection pool 20
-- `Promise.all` for parallel queries 3 & 4
-- Station name reference cache (1h TTL)
-- Health check with cache stats
-- Client disconnect detection (PERF-1)
-
-### Remaining Backlog (F-07)
-| ID | Item | Priority | Effort |
-|----|------|----------|--------|
-| PERF-2 | Pre-computed wall-clock columns | P1 | M |
-| PERF-4 | Prometheus/monitoring metrics | P2 | M |
+### Scaling Roadmap (F-08)
+| Priority | Item | Effort |
+|----------|------|--------|
+| P1 | Cloudflare CDN (free tier) | S |
+| P1 | Nginx rate limiting | S |
+| P2 | Horizontal API scaling (replicas) | S |
+| P2 | Pre-computed wall-clock columns (PERF-2) | M |
+| P3 | PostgreSQL read replica | M |
+| P3 | Redis shared cache | M |
+| P3 | Prometheus + Grafana | M |
+| P4 | Kubernetes / ECS | L |
+| P4 | TimescaleDB | M |
 
 ### Next Steps
-- Implement Phase 1 (OW/Station Messages) from `docs/darwin-outstanding-handlers-plan.md`
-- Monitor cache hit rates via `/api/v1/health/detail` in production
+- Implement F-06 Phase 1 (OW/Station Messages) — unlocks disruption alerts
+- Implement SCALE-1 (Cloudflare CDN) — biggest bang for buck
+- Implement SCALE-2 (rate limiting) — protects against scrapers
