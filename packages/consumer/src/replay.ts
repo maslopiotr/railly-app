@@ -25,7 +25,7 @@ import "./env.js";
 import { sql, closeDb } from "./db.js";
 import { handleSchedule } from "./handlers/schedule.js";
 import { handleTrainStatus } from "./handlers/trainStatus.js";
-import { handleDeactivated } from "./handlers/index.js";
+import { handleDeactivated } from "./handlers/audit.js";
 import { handleStationMessage } from "./handlers/stationMessage.js";
 import { handleAssociation } from "./handlers/association.js";
 import type { DarwinMessage } from "@railly-app/shared";

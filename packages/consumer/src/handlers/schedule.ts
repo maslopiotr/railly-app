@@ -14,7 +14,7 @@
 import type { DarwinSchedule, DarwinScheduleLocation } from "@railly-app/shared";
 import { toArray, parseTs, parseTimeToMinutes, computeSortTime, deriveSsdFromRid } from "@railly-app/shared";
 import { sql, beginWrite } from "../db.js";
-import { logDarwinSkip } from "./index.js";
+import { logDarwinSkip } from "./audit.js";
 import { log } from "../log.js";
 
 /**

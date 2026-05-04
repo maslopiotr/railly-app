@@ -97,6 +97,22 @@ Dependency graph: `utils ← matching ← handler`; `utils ← stub ← handler`
 - PP locations use `pass` sub-object for detection (`deriveStopType`)
 - `FOR UPDATE` dedup: schedule uses `generated_at`, TS uses `ts_generated_at`
 
+### Consumer Handler Architecture (Post-Circular-Dep Fix)
+Barrel file `handlers/index.ts` must NOT contain utility code — only re-exports and the message router. Audit/logging utilities live in `handlers/audit.ts`, a leaf module with no handler imports.
+```
+src/handlers/
+├── index.ts          — Barrel: re-exports + handleDarwinMessage router (NO utility code)
+├── audit.ts          — Leaf module: EventBuffer, logDarwinEvent/Audit/Error/Skip, handleDeactivated, metrics
+├── association.ts    — Association handler (JJ/VV/NP/LK messages)
+├── schedule.ts       — Schedule handler
+├── serviceLoading.ts — Service loading handler
+├── stationMessage.ts — Station message handler
+├── trainStatus.ts    — Thin re-export for ts/handler.ts
+└── ts/               — TS handler sub-modules
+```
+Rule: Handlers import audit utilities from `./audit.js` (or `../audit.js`), never from `./index.js`. This prevents circular deps between the barrel and its dependants.
+
+
 ## Midnight-Safe Delay
 ```ts
 let delay = actualMins - schedMins;

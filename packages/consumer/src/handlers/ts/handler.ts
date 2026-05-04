@@ -16,7 +16,7 @@
  * - ts/stub.ts      (createDarwinStub)
  * - ../db.js        (sql)
  * - ../log.js       (log)
- * - handlers/index.ts (logDarwinSkip)
+ * - handlers/audit.ts (logDarwinSkip)
  * - @railly-app/shared  (DarwinTS type, toArray, parseTs, deriveSsdFromRid, computeDelay, parseTimeToMinutes)
  */
 
@@ -24,7 +24,7 @@ import type { DarwinTS, DarwinTSLocation } from "@railly-app/shared";
 import { toArray, parseTs, deriveSsdFromRid, computeDelay, parseTimeToMinutes } from "@railly-app/shared";
 import { sql, beginWrite } from "../../db.js";
 import { log } from "../../log.js";
-import { logDarwinSkip } from "../index.js";
+import { logDarwinSkip } from "../audit.js";
 import { deriveStopType } from "./utils.js";
 import type { CpUpdate } from "./utils.js";
 import { matchLocationsToCps } from "./matching.js";

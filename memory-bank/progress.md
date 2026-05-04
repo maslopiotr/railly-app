@@ -556,6 +556,27 @@
 - ✅ Board visibility rewrite (5 SQL conditions)
 - ✅ NULLIF chain fix + frontend pagination
 
+
+### Circular Dependency Untangling ✅ (Session 16)
+- ✅ Madge v8.0.0: 4 circular deps found in consumer, 0 in shared/api/frontend, 0 cross-package
+- ✅ Manual audit: no type-only cycles, no runtime-only cycles, no implicit transitive cycles
+- ✅ Critical assessment written: `plans/circular-dependencies-assessment.md`
+- ✅ Fix: extracted audit utilities from `handlers/index.ts` into leaf module `handlers/audit.ts`
+- ✅ All 5 import sites updated, JSDoc comments updated, backward compatibility via re-exports
+- ✅ Verified: Madge 0 cycles, `npm run build --workspaces` passes, `docker compose build --no-cache` passes
+
+### Files Modified (Session 16)
+| File | Change |
+|------|--------|
+| `packages/consumer/src/handlers/audit.ts` | **New** — leaf module with EventBuffer, logDarwinEvent/Audit/Error/Skip, handleDeactivated, metrics |
+| `packages/consumer/src/handlers/index.ts` | Removed audit code, added re-exports from `./audit.js` |
+| `packages/consumer/src/handlers/schedule.ts` | Import: `./index.js` → `./audit.js` |
+| `packages/consumer/src/handlers/serviceLoading.ts` | Import: `./index.js` → `./audit.js` |
+| `packages/consumer/src/handlers/ts/handler.ts` | Import + JSDoc: `../index.js` → `../audit.js` |
+| `packages/consumer/src/handlers/ts/stub.ts` | Import + JSDoc: `../index.js` → `../audit.js` |
+| `packages/consumer/src/replay.ts` | Import: `./handlers/index.js` → `./handlers/audit.js` |
+| `plans/circular-dependencies-assessment.md` | **New** — critical assessment document |
+
 ## Known Issues Summary
 
 | Bug | Severity | Status |

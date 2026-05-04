@@ -12,13 +12,13 @@
  * - ts/utils.ts    (deriveStopType)
  * - @railly-app/shared  (DarwinTSLocation type, computeDelay, computeSortTime)
  * - ../log.js     (log)
- * - handlers/index.ts (logDarwinSkip)
+ * - handlers/audit.ts (logDarwinSkip)
  */
 
 import type { DarwinTSLocation } from "@railly-app/shared";
 import { computeDelay, computeSortTime } from "@railly-app/shared";
 import { log } from "../../log.js";
-import { logDarwinSkip } from "../index.js";
+import { logDarwinSkip } from "../audit.js";
 import { deriveStopType } from "./utils.js";
 
 /**

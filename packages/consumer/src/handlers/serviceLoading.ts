@@ -17,7 +17,7 @@
 import type { DarwinServiceLoading } from "@railly-app/shared";
 import { parseTimeToMinutes } from "@railly-app/shared";
 import { beginWrite } from "../db.js";
-import { logDarwinSkip } from "./index.js";
+import { logDarwinSkip } from "./audit.js";
 import { log } from "../log.js";
 
 /**
