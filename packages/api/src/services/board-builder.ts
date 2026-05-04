@@ -11,16 +11,15 @@
  *
  * Depends on:
  * - board-status.ts  (determineTrainStatus, determineCurrentLocation, getPlatformSource)
- * - board-time.ts    (computeDelayMinutes)
+ * - @railly-app/shared  (HybridBoardService, HybridCallingPoint types, computeDelay)
  * - board-queries.ts  (type definitions: BoardServiceRow, EndpointInfo, CallingPatternRow)
- * - @railly-app/shared  (HybridBoardService, HybridCallingPoint types)
  */
 
 import type { HybridBoardService, HybridCallingPoint } from "@railly-app/shared";
+import { computeDelay } from "@railly-app/shared";
 import type { BoardServiceRow, EndpointInfo, CallingPatternRow } from "./board-queries.js";
 import type { CallingPatternRow as StatusCallingPatternRow } from "./board-status.js";
 import { determineTrainStatus, determineCurrentLocation, getPlatformSource } from "./board-status.js";
-import { computeDelayMinutes } from "./board-time.js";
 
 // ── Deduplication ─────────────────────────────────────────────────────────
 
@@ -140,7 +139,7 @@ export function buildSingleService(
 
   // Use DB delay_minutes (computed by consumer) when available.
   // Only recompute if DB value is null and we have pushport data.
-  const delayMinutes = entry.delayMinutes ?? computeDelayMinutes(
+  const delayMinutes = entry.delayMinutes ?? computeDelay(
     entry.ptdTimetable || entry.ptaTimetable,
     eta || etd,
     entry.ataPushport || entry.atdPushport,

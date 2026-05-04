@@ -1,6 +1,53 @@
 # Progress
 
-## Latest (2026-05-04, Session 9) — Deactivated Message Audit & Handler Improvements
+## Latest (2026-05-04, Session 10) — DRY Deduplication: HIGH Confidence Fixes
+
+### DRY Audit & Implementation ✅
+- ✅ Comprehensive audit across all 4 packages — documented in `plans/dry-deduplication-assessment.md`
+- ✅ Phase 1: Shared package enhanced with `toArray`, `parseTs`, `deriveSsdFromRid`, `parseTimeToMinutes`, `computeDelay`, `computeSortTime`, `getUkNow`
+- ✅ Phase 2: Consumer package — 6 files updated (utils.ts, matching.ts, stub.ts, handler.ts, schedule.ts, serviceLoading.ts)
+- ✅ Phase 3: API package — 5 files updated (board-time.ts, board-status.ts, board-builder.ts, boards.ts, seed-timetable.ts)
+- ✅ All 4 packages build successfully (shared ✅, consumer ✅, api ✅, frontend ✅)
+
+### Key Reconciliation Decisions
+- **Return type**: Shared utils return `null` (not `-1` sentinel). All consumer callers updated: `>= 0` → `!== null`, `< 0` → `=== null`
+- **`computeDelay`** (shared) returns `null` for cancelled; API re-exports as deprecated alias `computeDelayMinutes`
+- **`computeNewSortTime`** in handler.ts NOT replaced — extended pushport fallback chain is intentionally different
+- **`deriveSsdFromRid`** returns `null` for short RIDs (was `""`). Call sites use `?? ""` for SQL compatibility
+- **`computeSortTime`** params made optional to accept `DarwinTSLocation`
+
+### Build Errors Fixed
+1. `schedule.ts:76` — `||` and `??` mixing → `(deriveSsdFromRid(rid) ?? "")`
+2. `handler.ts:56` — Same `||`/`??` mixing → same fix
+3. `stub.ts:122` — DarwinTSLocation optional props vs required params → made params optional
+4. `board-time.ts:68,84` — Re-export doesn't create local bindings → import + export
+
+### Files Modified (Session 10)
+| File | Change |
+|---|---|
+| `packages/shared/src/utils/time.ts` | Made `computeSortTime` params optional |
+| `packages/shared/src/utils/array.ts` | New — `toArray` |
+| `packages/shared/src/utils/darwin.ts` | New — `parseTs`, `deriveSsdFromRid` |
+| `packages/shared/src/index.ts` | Export new utils |
+| `packages/consumer/src/handlers/ts/utils.ts` | Stripped to `CpUpdate` + `deriveStopType` only |
+| `packages/consumer/src/handlers/ts/matching.ts` | Shared imports, null checks |
+| `packages/consumer/src/handlers/ts/stub.ts` | Shared imports for `computeDelay`, `computeSortTime` |
+| `packages/consumer/src/handlers/ts/handler.ts` | Major import restructuring, null checks |
+| `packages/consumer/src/handlers/schedule.ts` | Removed 5 local utils, shared imports |
+| `packages/consumer/src/handlers/serviceLoading.ts` | Shared `parseTimeToMinutes`, null checks |
+| `packages/api/src/services/board-time.ts` | Import + re-export shared utils, deprecated alias |
+| `packages/api/src/services/board-status.ts` | Shared `computeDelay` import |
+| `packages/api/src/services/board-builder.ts` | Shared `computeDelay` import |
+| `packages/api/src/routes/boards.ts` | Shared `getUkNow` import |
+| `packages/api/src/db/seed-timetable.ts` | Removed local `parseTimeToMinutes` + `computeSortTime` |
+
+### Remaining (MEDIUM confidence — not yet implemented)
+- Frontend `timeToMinutes` in `CallingPoints.tsx` + `service.ts` (identical logic, MEDIUM confidence due to frontend bundle size concerns)
+- Frontend `getUkNowMinutes` in `CallingPoints.tsx` (similar to shared `getUkNow` but different return shape)
+
+---
+
+## Completed (2026-05-04, Session 9) — Deactivated Message Audit & Handler Improvements
 
 ### Deactivated Message Investigation ✅
 - ✅ Verified raw message format against live DB (100 samples across 2 time periods): **only `{"rid":"..."}`** — no `ssd`/`uid` despite XSD defining them
@@ -448,6 +495,6 @@
 | BUG-025b: Stale CP timestamps | Low | Wontfix |
 
 ## Next Steps
-- Deduplicate `computeDelayMinutes` into `shared/src/utils/time.ts`
+- MEDIUM confidence DRY: Frontend `timeToMinutes` dedup into shared
 - BUG-015: Calling points filter by current station
 - BUG-016: Add tests to codebase

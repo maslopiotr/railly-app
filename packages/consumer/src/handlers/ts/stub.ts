@@ -9,16 +9,17 @@
  * - ts/handler.ts  (createDarwinStub)
  *
  * Depends on:
- * - ts/utils.ts    (deriveStopType, computeDelayMinutes)
+ * - ts/utils.ts    (deriveStopType)
+ * - @railly-app/shared  (DarwinTSLocation type, computeDelay, computeSortTime)
  * - ../log.js     (log)
  * - handlers/index.ts (logDarwinSkip)
- * - @railly-app/shared  (DarwinTSLocation type)
  */
 
 import type { DarwinTSLocation } from "@railly-app/shared";
+import { computeDelay, computeSortTime } from "@railly-app/shared";
 import { log } from "../../log.js";
 import { logDarwinSkip } from "../index.js";
-import { deriveStopType, computeDelayMinutes } from "./utils.js";
+import { deriveStopType } from "./utils.js";
 
 /**
  * Create a Darwin stub for an unknown service RID.
@@ -91,12 +92,6 @@ export async function createDarwinStub(
     }
   }
 
-  // Compute sort_time helper — timetable-only, same logic as schedule handler
-  const computeStubSortTime = (loc: DarwinTSLocation): string => {
-    const raw = loc.wtd || loc.ptd || loc.wtp || loc.wta || loc.pta;
-    if (!raw) return "00:00";
-    return raw.length > 5 ? raw.substring(0, 5) : raw;
-  };
 
   // Create calling points from TS locations — using natural key
   // Skip locations where stop type cannot be determined (no Darwin flags)
@@ -124,7 +119,7 @@ export async function createDarwinStub(
     const crsData = crsLookup.get(tpl);
     const crs = crsData?.crs || null;
     const name = crsData?.name || null;
-    const sortTime = computeStubSortTime(loc);
+    const sortTime = computeSortTime(loc);
 
     const etaPushport = loc.eta?.trim() || null;
     const etdPushport = loc.etd?.trim() || null;
@@ -135,7 +130,7 @@ export async function createDarwinStub(
     const platPushport = loc.platform?.trim() || null;
 
     // Compute delay from TS times (no timetable data to compare, so delay is approximate)
-    const delayMinutes = computeDelayMinutes(
+    const delayMinutes = computeDelay(
       loc.ptd || loc.wtd || null,
       etdPushport,
       atdPushport,

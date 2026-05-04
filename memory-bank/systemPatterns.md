@@ -85,7 +85,7 @@ The TS handler was refactored from a single 927-line file into four focused sub-
 src/handlers/
 ├── trainStatus.ts     — Thin re-export (preserves import path for index.ts)
 └── ts/
-    ├── utils.ts       — Pure helpers (toArray, parseTs, deriveSsdFromRid, computeDelayMinutes, deriveStopType, parseTimeToMinutes, CpUpdate type)
+    ├── utils.ts       — Domain-specific helpers (deriveStopType, CpUpdate type). Generic utilities imported from @railly-app/shared
     ├── matching.ts    — Location-to-CP matching (matchLocationsToCps, ExistingCpRow type)
     ├── stub.ts        — Darwin stub creation for unknown services (createDarwinStub)
     └── handler.ts     — Main orchestration (handleTrainStatus, skippedLocationsTotal)

@@ -29,13 +29,12 @@
  */
 
 import { Router, type NextFunction } from "express";
-import { normalizeCrsCode } from "@railly-app/shared";
+import { normalizeCrsCode, getUkNow } from "@railly-app/shared";
 import {
   MAX_CRS_LENGTH,
   SAFE_CRS_REGEX,
   DEFAULT_LIMIT,
   MAX_LIMIT,
-  getUkNow,
 } from "../services/board-time.js";
 import {
   buildVisibilityFilter,

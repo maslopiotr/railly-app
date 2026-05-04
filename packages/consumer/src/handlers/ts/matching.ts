@@ -8,12 +8,11 @@
  * - ts/handler.ts  (matchLocationsToCps)
  *
  * Depends on:
- * - ts/utils.ts  (parseTimeToMinutes)
- * - @railly-app/shared  (DarwinTSLocation type)
+ * - @railly-app/shared  (DarwinTSLocation type, parseTimeToMinutes)
  */
 
 import type { DarwinTSLocation } from "@railly-app/shared";
-import { parseTimeToMinutes } from "./utils.js";
+import { parseTimeToMinutes } from "@railly-app/shared";
 
 /** Database row shape for existing calling points used in matching */
 export interface ExistingCpRow {
@@ -97,14 +96,14 @@ export function matchLocationsToCps(
     // match by planned time proximity
     const tsMinutes = parseTimeToMinutes(tsTime);
 
-    if (tsMinutes >= 0) {
+    if (tsMinutes !== null) {
       let bestMatch = candidates[0];
       let bestDiff = Infinity;
 
       for (const candidate of candidates) {
         const dbTime = getDbTime(candidate);
         const dbMinutes = parseTimeToMinutes(dbTime);
-        if (dbMinutes >= 0) {
+        if (dbMinutes !== null) {
           const diff = Math.abs(tsMinutes - dbMinutes);
           if (diff < bestDiff) {
             bestDiff = diff;

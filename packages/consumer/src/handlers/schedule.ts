@@ -12,6 +12,7 @@
  */
 
 import type { DarwinSchedule, DarwinScheduleLocation } from "@railly-app/shared";
+import { toArray, parseTs, parseTimeToMinutes, computeSortTime, deriveSsdFromRid } from "@railly-app/shared";
 import { sql } from "../db.js";
 import { logDarwinSkip } from "./index.js";
 import { log } from "../log.js";
@@ -49,62 +50,6 @@ interface ExistingCpRow {
   tsGeneratedAt: string | null;
 }
 
-/**
- * Ensure a value is an array (Darwin sometimes sends single objects).
- */
-function toArray<T>(v: T | T[] | undefined): T[] {
-  if (Array.isArray(v)) return v;
-  if (v !== undefined && v !== null) return [v];
-  return [];
-}
-
-/**
- * Parse ISO timestamp for comparison.
- */
-function parseTs(ts: string): number {
-  return new Date(ts).getTime();
-}
-
-/**
- * Parse "HH:MM" or "HH:MM:SS" time string to minutes since midnight.
- * Returns -1 for invalid/unparseable times.
- */
-function parseTimeToMinutes(time: string | null | undefined): number {
-  if (!time) return -1;
-  const m = time.match(/^(\d{2}):(\d{2})(?::(\d{2}))?$/);
-  if (!m) return -1;
-  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
-}
-
-/**
- * Compute sort_time from timetable times — the natural key for ordering.
- * Uses timetable-only times (never pushport) because these are stable
- * and don't change with real-time updates.
- * Priority: wtd > ptd > wtp > wta > pta > '00:00' (fallback)
- * Truncates HH:MM:SS to HH:MM for consistency.
- */
-function computeSortTime(pt: {
-  wtd: string | null | undefined;
-  ptd: string | null | undefined;
-  wtp: string | null | undefined;
-  wta: string | null | undefined;
-  pta: string | null | undefined;
-}): string {
-  const raw = pt.wtd || pt.ptd || pt.wtp || pt.wta || pt.pta;
-  if (!raw) return "00:00";
-  return raw.length > 5 ? raw.substring(0, 5) : raw;
-}
-
-/**
- * Derive SSD from RID.
- * RID format: YYYYMMDDNNNNNNN (first 4 = year, next 2 = month, next 2 = day)
- */
-function deriveSsdFromRid(rid: string): string {
-  if (rid.length >= 8) {
-    return `${rid.slice(0, 4)}-${rid.slice(4, 6)}-${rid.slice(6, 8)}`;
-  }
-  return "";
-}
 
 /**
  * Process a schedule message: upsert calling pattern into PostgreSQL.
@@ -128,7 +73,7 @@ export async function handleSchedule(
   }
 
   const uid = schedule.uid || "";
-  const ssd = schedule.ssd || deriveSsdFromRid(rid);
+  const ssd = schedule.ssd || (deriveSsdFromRid(rid) ?? "");
   const trainId = schedule.trainId || "";
   const toc = schedule.toc || null;
   const isPassengerSvc = schedule.isPassengerSvc === true ? true : schedule.isPassengerSvc === false ? false : null;
@@ -147,9 +92,9 @@ export async function handleSchedule(
     const timeB = b.wtd || b.ptd || b.wtp || b.wta || b.pta || "";
     const minA = parseTimeToMinutes(timeA);
     const minB = parseTimeToMinutes(timeB);
-    if (minA < 0 && minB < 0) return 0;
-    if (minA < 0) return 1;
-    if (minB < 0) return -1;
+    if (minA === null && minB === null) return 0;
+    if (minA === null) return 1;
+    if (minB === null) return -1;
     return minA - minB;
   });
 
@@ -168,12 +113,12 @@ export async function handleSchedule(
       // Compute day_offset: when time wraps from evening to morning, increment
       const timeStr = loc.wtd || loc.ptd || loc.wtp || loc.wta || loc.pta;
       const currentMinutes = parseTimeToMinutes(timeStr);
-      if (currentMinutes >= 0 && prevMinutes >= 0) {
+      if (currentMinutes !== null && prevMinutes >= 0) {
         if (currentMinutes < prevMinutes && prevMinutes >= 1200) {
           dayOffset++;
         }
       }
-      if (currentMinutes >= 0) prevMinutes = currentMinutes;
+      if (currentMinutes !== null) prevMinutes = currentMinutes;
 
       // Darwin schedule messages always include stopType (verified across 157K+
       // messages). If missing, skip the location entirely rather than assuming

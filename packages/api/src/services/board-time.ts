@@ -1,15 +1,17 @@
 /**
- * Board time utilities — Pure functions for UK-local time computation
+ * Board time utilities — Constants and API-specific time functions
+ *
+ * Generic time utilities (getUkNow, parseTimeToMinutes, computeDelay) are
+ * imported from @railly-app/shared. This module retains API-specific
+ * constants and computeStopWallMinutes.
  *
  * No dependencies on Express, Drizzle, or database schema.
- * All functions are deterministic and side-effect-free (except getUkNow
- * which reads the system clock).
+ * All functions are deterministic and side-effect-free.
  *
  * Imported by:
- * - board-status.ts  (parseTimeToMinutes, computeDelayMinutes, computeStopWallMinutes, APPROACHING_PROXIMITY_MINUTES)
+ * - board-status.ts  (computeStopWallMinutes, APPROACHING_PROXIMITY_MINUTES)
  * - board-queries.ts (time window constants)
- * - board-builder.ts  (computeDelayMinutes)
- * - routes/boards.ts  (MAX_CRS_LENGTH, SAFE_CRS_REGEX, DEFAULT_LIMIT, MAX_LIMIT, getUkNow, constants)
+ * - routes/boards.ts  (MAX_CRS_LENGTH, SAFE_CRS_REGEX, DEFAULT_LIMIT, MAX_LIMIT, constants)
  */
 
 // ── Validation constants ──────────────────────────────────────────────────
@@ -20,7 +22,7 @@ export const MAX_CRS_LENGTH = 3;
 /** Only allow alpha chars in CRS codes */
 export const SAFE_CRS_REGEX = /^[A-Z]+$/;
 
-// ── Pagination constants ─────────────────────────────────────────────────
+// ── Pagination constants ────────────────────────��────────────────────────
 
 /** Default number of services per page */
 export const DEFAULT_LIMIT = 15;
@@ -56,39 +58,23 @@ export const APPROACHING_PROXIMITY_MINUTES = 2;
 /** Time-selected mode lookback (matches National Rail behaviour) */
 export const TIME_SELECTED_LOOKBACK = 30;
 
-// ── Time utility functions ────────────────────────────────────────────────
+// ── Re-exported shared utilities ──────────────────────────────────────────
+// Generic time utilities now live in @railly-app/shared.
+// Import as local bindings so computeStopWallMinutes can reference them,
+// then re-export for backward compatibility with existing consumers.
 
-/** Get UK-local date string and minutes-since-midnight */
-export function getUkNow(): { dateStr: string; nowMinutes: number } {
-  const now = new Date();
-  const ukTime = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Europe/London",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).format(now);
+import {
+  getUkNow,
+  parseTimeToMinutes,
+  computeDelay,
+} from "@railly-app/shared";
 
-  const dateParts = ukTime.split(", ")[0].split("/");
-  const timePart = ukTime.split(", ")[1];
-  const dateStr = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`;
-  const [hours, minutes] = timePart.split(":").map(Number);
-  return { dateStr, nowMinutes: hours * 60 + minutes };
-}
+export { getUkNow, parseTimeToMinutes, computeDelay };
 
-/** Parse "HH:MM" to minutes since midnight */
-export function parseTimeToMinutes(time: string | null): number | null {
-  if (!time) return null;
-  const match = time.match(/^(\d{2}):(\d{2})$/);
-  if (!match) return null;
-  const hours = parseInt(match[1], 10);
-  const mins = parseInt(match[2], 10);
-  if (hours > 23 || mins > 59) return null;
-  return hours * 60 + mins;
-}
+/** @deprecated Use computeDelay from @railly-app/shared instead. */
+export const computeDelayMinutes = computeDelay;
+
+// ── API-specific time utility functions ────────────────────────────────────
 
 /**
  * Compute a calling point's wall-clock minutes relative to todayStr.
@@ -102,7 +88,7 @@ export function computeStopWallMinutes(
   todayStr: string,
 ): number | null {
   if (!cpSsd) return null;
-  const mins = parseTimeToMinutes(timeStr);
+  const mins = parseTimeToMinutes(timeStr); // from shared import
   if (mins === null) return null;
   const dayDelta =
     Math.round(
@@ -111,29 +97,4 @@ export function computeStopWallMinutes(
         86400000,
     ) + dayOffset;
   return dayDelta * 1440 + mins;
-}
-
-/**
- * Compute delay in minutes between scheduled and estimated/actual time.
- * Handles midnight crossings correctly (e.g. 23:50 → 00:05 = +15 min).
- */
-export function computeDelayMinutes(
-  scheduled: string | null,
-  estimated: string | null,
-  actual: string | null,
-): number | null {
-  const actualOrEstimated = actual || estimated;
-  if (!scheduled || !actualOrEstimated) return null;
-  if (actualOrEstimated === "On time" || actualOrEstimated === "Cancelled")
-    return 0;
-
-  const schedMins = parseTimeToMinutes(scheduled);
-  const actualMins = parseTimeToMinutes(actualOrEstimated);
-  if (schedMins === null || actualMins === null) return null;
-
-  let delay = actualMins - schedMins;
-  // Handle midnight crossing in both directions
-  if (delay < -720) delay += 1440;
-  if (delay > 720) delay -= 1440;
-  return delay;
 }

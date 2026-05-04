@@ -95,5 +95,7 @@ export type {
 
 // Utils
 export { isValidCrsCode, normalizeCrsCode } from "./utils/crs.js";
-export { formatRailTime, formatDisplayTime, getCurrentRailTime, computeDelay, parseTimeToMinutes } from "./utils/time.js";
+export { formatRailTime, formatDisplayTime, getCurrentRailTime, computeDelay, parseTimeToMinutes, computeSortTime, getUkNow } from "./utils/time.js";
 export { normaliseStationName } from "./utils/stationName.js";
+export { toArray } from "./utils/array.js";
+export { parseTs, deriveSsdFromRid } from "./utils/darwin.js";

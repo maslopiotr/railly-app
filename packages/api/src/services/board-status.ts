@@ -8,8 +8,8 @@
  * - board-builder.ts  (determineTrainStatus, determineCurrentLocation, getPlatformSource)
  *
  * Depends on:
- * - board-time.ts  (parseTimeToMinutes, computeDelayMinutes, computeStopWallMinutes, APPROACHING_PROXIMITY_MINUTES)
- * - @railly-app/shared  (HybridCallingPoint, TrainStatus, CurrentLocation types)
+ * - board-time.ts  (computeStopWallMinutes, APPROACHING_PROXIMITY_MINUTES)
+ * - @railly-app/shared  (HybridCallingPoint, TrainStatus, CurrentLocation types, computeDelay)
  */
 
 import type {
@@ -17,8 +17,8 @@ import type {
   TrainStatus,
   CurrentLocation,
 } from "@railly-app/shared";
+import { computeDelay } from "@railly-app/shared";
 import {
-  computeDelayMinutes,
   computeStopWallMinutes,
   APPROACHING_PROXIMITY_MINUTES,
 } from "./board-time.js";
@@ -58,7 +58,7 @@ export function determineTrainStatus(
   // Return "scheduled" when platform data exists but no timing data
   if (!estimatedTime) return "scheduled";
 
-  const delay = computeDelayMinutes(std, estimatedTime, null);
+  const delay = computeDelay(std, estimatedTime, null);
   if (delay !== null && delay >= 2) return "delayed";
 
   return "on_time";

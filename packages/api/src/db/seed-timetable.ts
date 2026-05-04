@@ -6,6 +6,7 @@ import { readdirSync, readFileSync, statSync } from "fs";
 import { gunzipSync } from "zlib";
 import { createHash } from "crypto";
 import sax from "sax";
+import { parseTimeToMinutes, computeSortTime } from "@railly-app/shared";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -325,12 +326,6 @@ function parseRefXml(xmlContent: string): {
 
 // ── Helper: compute day_offset for calling points ──────────────────────────────
 
-function parseTimeToMinutes(time: string | null): number {
-  if (!time) return -1;
-  const m = time.match(/^(\d{2}):(\d{2})(?::(\d{2}))?$/);
-  if (!m) return -1;
-  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
-}
 
 function computeDayOffsets(points: ParsedCallingPoint[]): void {
   let dayOffset = 0;
@@ -340,7 +335,7 @@ function computeDayOffsets(points: ParsedCallingPoint[]): void {
     const time = pt.wtd || pt.ptd || pt.wtp || pt.wta || pt.pta;
     const currentMinutes = parseTimeToMinutes(time);
 
-    if (currentMinutes >= 0 && prevMinutes >= 0) {
+    if (currentMinutes !== null && prevMinutes >= 0) {
       if (currentMinutes < prevMinutes && prevMinutes >= 1200) {
         dayOffset++;
       }
@@ -348,31 +343,12 @@ function computeDayOffsets(points: ParsedCallingPoint[]): void {
 
     pt.dayOffset = dayOffset;
 
-    if (currentMinutes >= 0) {
+    if (currentMinutes !== null) {
       prevMinutes = currentMinutes;
     }
   }
 }
 
-/**
- * Compute sort_time from timetable times — the natural key for ordering.
- * Uses timetable-only times (never pushport) because these are stable
- * and don't change with real-time updates.
- * Priority: wtd > ptd > wtp > wta > pta > '00:00' (fallback)
- * Truncates HH:MM:SS to HH:MM for consistency (working times are VARCHAR(8)).
- */
-function computeSortTime(pt: {
-  wtd: string | null;
-  ptd: string | null;
-  wtp: string | null;
-  wta: string | null;
-  pta: string | null;
-}): string {
-  const raw = pt.wtd || pt.ptd || pt.wtp || pt.wta || pt.pta;
-  if (!raw) return "00:00";
-  // Truncate HH:MM:SS to HH:MM
-  return raw.length > 5 ? raw.substring(0, 5) : raw;
-}
 
 // ── Helper: read and decompress gzipped XML ───────────────────────────────────
 

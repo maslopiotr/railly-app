@@ -15,20 +15,10 @@
  */
 
 import type { DarwinServiceLoading } from "@railly-app/shared";
+import { parseTimeToMinutes } from "@railly-app/shared";
 import { sql } from "../db.js";
 import { logDarwinSkip } from "./index.js";
 import { log } from "../log.js";
-
-/**
- * Parse "HH:MM" or "HH:MM:SS" time string to minutes since midnight.
- * Returns -1 for invalid/unparseable times.
- */
-function parseTimeToMinutes(time: string | null | undefined): number {
-  if (!time) return -1;
-  const m = time.match(/^(\d{2}):(\d{2})(?::(\d{2}))?$/);
-  if (!m) return -1;
-  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
-}
 
 /**
  * Process a serviceLoading message: update loading columns on calling_points.
@@ -100,7 +90,7 @@ export async function handleServiceLoading(
         targetCpId = existingRows[0].id;
       } else {
         // Multiple CPs at same TIPLOC (circular trip) — match by planned time
-        if (slMinutes >= 0) {
+        if (slMinutes !== null) {
           let bestMatch = existingRows[0];
           let bestDiff = Infinity;
 
@@ -108,7 +98,7 @@ export async function handleServiceLoading(
             const dbTime = row.wtd_timetable || row.wtp_timetable || row.wta_timetable
               || row.ptd_timetable || row.pta_timetable;
             const dbMinutes = parseTimeToMinutes(dbTime);
-            if (dbMinutes >= 0) {
+            if (dbMinutes !== null) {
               const diff = Math.abs(slMinutes - dbMinutes);
               if (diff < bestDiff) {
                 bestDiff = diff;

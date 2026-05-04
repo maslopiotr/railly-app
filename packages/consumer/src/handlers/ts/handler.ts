@@ -11,27 +11,21 @@
  * - handlers/trainStatus.ts  (re-export of handleTrainStatus)
  *
  * Depends on:
- * - ts/utils.ts     (toArray, parseTs, deriveSsdFromRid, CpUpdate, computeDelayMinutes, deriveStopType, parseTimeToMinutes)
+ * - ts/utils.ts     (CpUpdate, deriveStopType)
  * - ts/matching.ts  (matchLocationsToCps, ExistingCpRow)
  * - ts/stub.ts      (createDarwinStub)
  * - ../db.js        (sql)
  * - ../log.js       (log)
  * - handlers/index.ts (logDarwinSkip)
- * - @railly-app/shared  (DarwinTS type)
+ * - @railly-app/shared  (DarwinTS type, toArray, parseTs, deriveSsdFromRid, computeDelay, parseTimeToMinutes)
  */
 
 import type { DarwinTS, DarwinTSLocation } from "@railly-app/shared";
+import { toArray, parseTs, deriveSsdFromRid, computeDelay, parseTimeToMinutes } from "@railly-app/shared";
 import { sql } from "../../db.js";
 import { log } from "../../log.js";
 import { logDarwinSkip } from "../index.js";
-import {
-  toArray,
-  parseTs,
-  deriveSsdFromRid,
-  computeDelayMinutes,
-  deriveStopType,
-  parseTimeToMinutes,
-} from "./utils.js";
+import { deriveStopType } from "./utils.js";
 import type { CpUpdate } from "./utils.js";
 import { matchLocationsToCps } from "./matching.js";
 import type { ExistingCpRow } from "./matching.js";
@@ -59,7 +53,7 @@ export async function handleTrainStatus(
   }
 
   const tsUid = uid || "";
-  const tsSsd = ssd || deriveSsdFromRid(rid) || "";
+  const tsSsd = ssd || (deriveSsdFromRid(rid) ?? "");
   const tsTrainId = trainId || "";
 
   // Extract cancel reason text from Darwin structure
@@ -205,12 +199,12 @@ export async function handleTrainStatus(
           const timeStr = loc.wtd || loc.ptd || loc.wtp || loc.wta || loc.pta
             || loc.wetd || loc.weta || loc.etd || loc.eta || loc.atd || loc.ata;
           const currentMinutes = parseTimeToMinutes(timeStr);
-          if (currentMinutes >= 0 && prevMinutes >= 0) {
+          if (currentMinutes !== null && prevMinutes >= 0) {
             if (currentMinutes < prevMinutes && prevMinutes >= 1200) {
               currentDayOffset++;
             }
           }
-          if (currentMinutes >= 0) prevMinutes = currentMinutes;
+          if (currentMinutes !== null) prevMinutes = currentMinutes;
 
           const dayOffset = currentDayOffset;
 
@@ -222,7 +216,7 @@ export async function handleTrainStatus(
           const wetdPushport = loc.wetd?.trim() || null;
           const platPushport = loc.platform?.trim() || null;
 
-          const delayMinutes = computeDelayMinutes(
+          const delayMinutes = computeDelay(
             loc.ptd || loc.wtd || null,
             etdPushport,
             atdPushport,
@@ -354,8 +348,8 @@ export async function handleTrainStatus(
         const schedArr = matchedRow?.pta_timetable || null;
         const schedDep = matchedRow?.ptd_timetable || null;
 
-        const delayArr = computeDelayMinutes(schedArr, etaPushport, ataPushport);
-        const delayDep = computeDelayMinutes(schedDep, etdPushport, atdPushport);
+        const delayArr = computeDelay(schedArr, etaPushport, ataPushport);
+        const delayDep = computeDelay(schedDep, etdPushport, atdPushport);
         const delayMinutes = delayDep !== null ? delayDep : (delayArr !== null ? delayArr : null);
 
         cpUpdates.push({
