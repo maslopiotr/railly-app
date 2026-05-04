@@ -37,6 +37,7 @@
     "node": ">=22.0.0"
   },
   "devDependencies": {
-    "knip": "^6.6.2"
+    "knip": "^6.6.2",
+    "madge": "^8.0.0"
   }
 }

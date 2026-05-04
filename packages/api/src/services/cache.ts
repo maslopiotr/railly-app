@@ -194,9 +194,6 @@ export const boardCache = new TTLCache<Record<string, unknown>>(10_000, 100 * 10
 /** Station name cache — immutable reference data (1h TTL). Note: fetchStationName returns string | null */
 export const stationCache = new ReferenceCache<string | null>(3_600_000, 5 * 1024 * 1024);
 
-/** TOC name cache — immutable reference data (1h TTL) */
-export const tocNameCache = new ReferenceCache<string | null>(3_600_000, 1 * 1024 * 1024);
-
 /**
  * Build the board cache key from request parameters.
  * Format: board:{crs}:{type}:{time}:{date}:{destination}:{offset}:{limit}

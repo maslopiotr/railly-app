@@ -58,21 +58,11 @@ export const APPROACHING_PROXIMITY_MINUTES = 2;
 /** Time-selected mode lookback (matches National Rail behaviour) */
 export const TIME_SELECTED_LOOKBACK = 30;
 
-// ── Re-exported shared utilities ──────────────────────────────────────────
-// Generic time utilities now live in @railly-app/shared.
-// Import as local bindings so computeStopWallMinutes can reference them,
-// then re-export for backward compatibility with existing consumers.
+// ── Shared utility imports ─────────────────────────────────────────────────
+// Used internally by computeStopWallMinutes; consumers should import
+// getUkNow, parseTimeToMinutes, computeDelay directly from @railly-app/shared.
 
-import {
-  getUkNow,
-  parseTimeToMinutes,
-  computeDelay,
-} from "@railly-app/shared";
-
-export { getUkNow, parseTimeToMinutes, computeDelay };
-
-/** @deprecated Use computeDelay from @railly-app/shared instead. */
-export const computeDelayMinutes = computeDelay;
+import { parseTimeToMinutes } from "@railly-app/shared";
 
 // ── API-specific time utility functions ────────────────────────────────────
 

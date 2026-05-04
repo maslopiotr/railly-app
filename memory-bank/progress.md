@@ -1,6 +1,41 @@
 # Progress
 
-## Latest (2026-05-04, Session 10) — DRY Deduplication: HIGH Confidence Fixes
+## Latest (2026-05-04, Session 14) — Unused Code Removal
+
+### Knip + Manual Audit & Removal ✅
+- ✅ Ran Knip across monorepo — found 2 unused files, 15 unused exports, 4 unused types, 1 duplicate export
+- ✅ Ran `tsc -b` on all 4 packages — all passed cleanly
+- ✅ Manual audit verified each finding (many Knip flags were false positives — internal helpers used within same module)
+- ✅ Critical assessment written to `plans/unused-code-assessment.md` (12 HIGH, 6 MEDIUM, 0 LOW)
+- ✅ Implemented all 12 HIGH-confidence removals
+- ✅ All 4 packages compile cleanly after removals
+
+### Files Deleted
+| File | Reason |
+|------|--------|
+| `packages/frontend/src/components/service-detail/TimePicker.tsx` | Never imported |
+| `packages/frontend/src/assets/hero.png` | Never referenced |
+| `packages/shared/src/types/timetable.ts` | All types unused by consumers |
+| `packages/shared/src/types/api.ts` | All types unused by consumers |
+
+### Files Modified
+| File | Change |
+|------|--------|
+| `packages/api/src/services/board-time.ts` | Removed `computeDelayMinutes` deprecated alias, removed re-exports of `getUkNow`/`parseTimeToMinutes`/`computeDelay`; kept local import for `computeStopWallMinutes` |
+| `packages/api/src/services/cache.ts` | Removed `tocNameCache` singleton |
+| `packages/shared/src/utils/time.ts` | Removed `formatRailTime` and `getCurrentRailTime` |
+| `packages/shared/src/utils/crs.ts` | Removed `isValidCrsCode` |
+| `packages/shared/src/types/station.ts` | Removed `Station` interface |
+| `packages/shared/src/types/ldbws.ts` | Removed 22 unused types (kept `FormationData`, `ServiceType`, `LoadingCategory`, `CoachData`, `ToiletAvailabilityType`, `ToiletStatus`) |
+| `packages/shared/src/index.ts` | Removed all re-exports for deleted types/functions |
+
+### Remaining MEDIUM Items (Not Implemented)
+- Internal `export` keywords on helpers: `deduplicateResults`, `mapCallingPoints`, `buildSingleService`, `buildWallSchedSql` etc., `TTLCache`, `ReferenceCache`, `BuildServicesParams`, `EndpointRow`, `VisibilityFilterParams`, `ParseResult`
+- These are used within their modules but unnecessarily exported
+
+---
+
+## Completed (2026-05-04, Session 10) — DRY Deduplication: HIGH Confidence Fixes
 
 ### DRY Audit & Implementation ✅
 - ✅ Comprehensive audit across all 4 packages — documented in `plans/dry-deduplication-assessment.md`

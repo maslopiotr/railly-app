@@ -31,6 +31,28 @@
 - **Fix:** Added deduplication of `pointRows` by conflict key before batch INSERT. Uses a `Map<string, NewCallingPoint>` keyed on `journey_rid|tpl|day_offset|sort_time|stop_type`. Last row wins for duplicates.
 - **Files:** `packages/api/src/db/seed-timetable.ts`
 
+### BUG-048: Duplicate calling points when Darwin changes stop type (IP→DT, IP→OR, etc.)
+- **Severity:** Medium · **Type:** Data / Display · **Status:** 🔍 Investigated — awaiting fix
+- **Discovered:** 2026-05-04
+- **Impact:** Services display duplicate calling points at the same station and time. Example: service 202605048705520 shows Rugby twice (IP + DT) at 10:46 when viewed from Euston. Affects 1,043 duplicate groups across the database.
+- **Root cause:** Darwin schedule amendments change stop types (e.g. IP→DT when a train's terminus changes, or IP→OR when Darwin corrects the origin). Because `stop_type` is part of the natural key `(journey_rid, tpl, day_offset, sort_time, stop_type)`, the new stop type creates a new row instead of updating the existing one. Both rows pass through `mapCallingPoints` (which only filters PP, OPOR, OPIP, OPDT), so both appear on the board.
+- **Breakdown of duplicates:**
+  - IP + OR: 958 (Darwin corrects origin stop type)
+  - IP + OPIP: 41 (operational origin variant)
+  - OR + OPIP: 35
+  - DT + IP: 6 (Darwin changes terminus, e.g. Rugby IP→DT)
+  - DT + OR: 2, DT + OPIP: 1, OPDT + OPIP: 1
+- **Evidence (service 202605048705520):**
+  - Early schedule messages (01:48–06:45 UTC): Rugby as `IP` with `act=T`
+  - Late schedule messages (09:37 UTC): Rugby as `DT` with `act=TF` (Train Finishes)
+  - IP row: `source_timetable=true, source_darwin=true`, has TS timestamps
+  - DT row: `source_timetable=false, source_darwin=true`, no timestamps (inserted by schedule handler, never updated by TS)
+- **Potential fixes:**
+  1. **Board-level dedup** (quick): In `mapCallingPoints`, prefer the row with the "stronger" stop type when multiple CPs share `(tpl, sortTime, dayOffset)` — DT > OR > IP for origins/destinations
+  2. **Consumer-level cleanup**: When Darwin schedule handler finds a new CP matches an existing CP on `(tpl, sortTime, dayOffset)` with different `stop_type`, delete/supersede the old row
+  3. **Data cleanup**: One-time query to merge duplicate CPs, preferring Darwin-sourced stop types
+- **Files:** `packages/consumer/src/handlers/schedule.ts`, `packages/api/src/services/board-builder.ts`
+
 ### BUG-043: Train 202605038706867 shows incorrect next upcoming stop
 - **Severity:** Medium · **Type:** UX / Data · **Status:** 🔲 Needs investigation
 - **Discovered:** 2026-05-03

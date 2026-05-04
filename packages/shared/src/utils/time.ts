@@ -6,14 +6,6 @@
  * the system clock). No runtime dependencies — only built-in Intl and Date APIs.
  */
 
-/** Format a UK rail time string (HHmm) to display format (HH:MM) */
-export function formatRailTime(railTime: string): string {
-  if (!railTime || railTime.length < 4) return railTime;
-  const hours = railTime.slice(0, 2);
-  const minutes = railTime.slice(2, 4);
-  return `${hours}:${minutes}`;
-}
-
 /**
  * Format a rail time string for display.
  * Handles multiple input formats:
@@ -34,14 +26,6 @@ export function formatDisplayTime(time: string | null | undefined): string | nul
     return cleaned.substring(0, 5);
   }
   return cleaned;
-}
-
-/** Get current time as UK rail format (HHmm) */
-export function getCurrentRailTime(): string {
-  const now = new Date();
-  const hours = now.getHours().toString().padStart(2, "0");
-  const minutes = now.getMinutes().toString().padStart(2, "0");
-  return `${hours}${minutes}`;
 }
 
 /**
