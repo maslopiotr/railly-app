@@ -1,6 +1,39 @@
 # Progress
 
-## Latest (2026-05-04, Session 7) — Caching Audit, Performance & BUG-045 Fix
+## Latest (2026-05-04, Session 8) — OW Station Messages: Full Pipeline
+
+### OW Station Messages — End-to-End Implementation ✅
+- ✅ **Database**: Two-table schema — `station_messages` (UPSERT on `message_id`) + `station_message_stations` (junction, CASCADE DELETE)
+- ✅ **Drizzle schema**: `stationMessages` + `stationMessageStations` tables in `packages/api/src/db/schema.ts`
+- ✅ **Manual migration**: `0007_station_messages.sql` (drizzle-kit generate fails — entries 1–6 lack snapshot files)
+- ✅ **Consumer handler**: `handlers/stationMessage.ts` — UPSERT message, DELETE old stations, INSERT new stations in transaction
+- ✅ **Consumer wiring**: OW routed in `handlers/index.ts` + `replay.ts` (Phase 1 query + handling block)
+- ✅ **Retention cleanup**: 7-day expiry on `station_messages` added to `runRetentionCleanup()` in `index.ts`
+- ✅ **Shared types**: `StationMessage` interface in `shared/types/board.ts` with `id`, `category`, `severity`, `message`, `messageRaw`, `stations`
+- ✅ **API query**: `fetchStationMessages(crs)` in `board-queries.ts` — joins `station_message_stations` filtered by CRS
+- ✅ **Board route**: Station messages fetched before empty-response check, passed as `nrccMessages`
+- ✅ **Frontend**: `NrccMessages.tsx` rewritten — severity colour-coding (info=blue, minor=amber, major=red, severe=red+bold), category labels
+- ✅ **Docker rebuild**: All containers healthy, consumer processing TS messages, OW ready for live data
+- ✅ **End-to-end verified**: Test INSERT → API `/stations/KGX/board` returns message → DELETE cleanup
+
+### Files Modified (Session 8)
+| File | Change |
+|---|---|
+| `packages/api/src/db/schema.ts` | Added `stationMessages` + `stationMessageStations` tables with indexes |
+| `packages/api/drizzle/meta/0007_station_messages.sql` | **New** — manual migration for both tables |
+| `packages/api/drizzle/meta/_journal.json` | Added entry for `0007_station_messages` |
+| `packages/consumer/src/handlers/stationMessage.ts` | **New** — OW handler (UPSERT + DELETE + INSERT in transaction) |
+| `packages/consumer/src/handlers/index.ts` | Removed unused `DarwinStationMessage` import |
+| `packages/consumer/src/index.ts` | Added 7-day retention cleanup for `station_messages` |
+| `packages/consumer/src/replay.ts` | Added OW routing, metrics, skip condition, summary count |
+| `packages/shared/src/types/board.ts` | Added `StationMessage` interface, changed `nrccMessages` type |
+| `packages/api/src/services/board-queries.ts` | Added `fetchStationMessages(crs)` query |
+| `packages/api/src/routes/boards.ts` | Added station messages fetch + pass to response |
+| `packages/frontend/src/components/board/NrccMessages.tsx` | Rewritten with severity colour-coding + category labels |
+
+---
+
+## Completed (2026-05-04, Session 7) — Caching Audit, Performance & BUG-045 Fix
 
 ### Caching & Performance Audit ✅
 - ✅ 3-layer caching implemented: API in-memory (10s board, 1h station) → nginx proxy (10s) → browser (no-store)

@@ -35,12 +35,13 @@ npm run docker:rebuild   # rebuild Docker after changes
 |---------|------|-------------|
 | `schedule` | `handlers/schedule.ts` | Upserts journeys + CPs. TIPLOC matching, no DELETE. Timetable preserves pushport; VSTP preserves timetable. |
 | `TS` | `handlers/trainStatus.ts` | Updates CPs by natural key `(rid, tpl, day_offset, sort_time, stop_type)`, creates Darwin stubs for unknown RIDs |
+| `OW` | `handlers/stationMessage.ts` | UPSERTs `station_messages`, DELETEs old + INSERTs new `station_message_stations` in transaction. 7-day retention cleanup. |
 | `deactivated` | `handlers/index.ts` | Sets `deactivated_at` timestamp via `handleDeactivated`. `handleSchedule` handles `schedule.deleted` flag for `is_deleted`. |
-| `OW`, `association`, `scheduleFormations`, `serviceLoading`, `formationLoading`, `trainAlert`, `trainOrder`, `trackingID`, `alarm` | `handlers/index.ts` | Stub handlers — logged only (except `serviceLoading` which is implemented) |
+| `association`, `scheduleFormations`, `serviceLoading`, `formationLoading`, `trainAlert`, `trainOrder`, `trackingID`, `alarm` | `handlers/index.ts` | Stub handlers — logged only (except `serviceLoading` which is implemented) |
 
 ## PostgreSQL Performance
 - **Autovacuum**: `darwin_events` + `calling_points` scale_factor 0.05/0.02 (triggers sooner on high-churn tables)
-- **Retention cleanup**: Every 15 min; `darwin_events` >2 days, `skipped_locations` >7 days
+- **Retention cleanup**: Every 15 min; `darwin_events` >2 days, `skipped_locations` >7 days, `station_messages` >7 days
 - **`darwin_events`**: ~3.2 GB, ~90K inserts/hr; full JSON in `raw_json` column
 - **`calling_points`**: ~2 GB, 4M+ rows; natural key index ~427 MB
 - **Docker resources**: PostgreSQL ~565 MB, Consumer ~75 MB, API ~66 MB, Frontend ~4 MB
@@ -74,6 +75,11 @@ SELECT severity, message_type, error_code, count(*) FROM darwin_audit GROUP BY s
 - **Frontend board components**: `packages/frontend/src/components/board/` — 8 components + 1 grid utility (BoardHeader, BoardTabs, StationFilterBar, TimeNavigationBar, NrccMessages, BoardTableHeader, BoardServiceList, ServiceRow, boardGrid.ts)
 - **Frontend shared components**: `packages/frontend/src/components/shared/` — ErrorBoundary, PlatformBadge, StationSearch
 - **Frontend service detail**: `packages/frontend/src/pages/ServiceDetailPage.tsx` + `components/service-detail/`
+
+### Drizzle Migrations
+- **Manual SQL pattern**: `drizzle-kit generate` fails because entries 1–6 in `_journal.json` lack snapshot files
+- **New migrations**: Create SQL files manually in `packages/api/drizzle/meta/` (e.g. `0007_station_messages.sql`) and add entries to `_journal.json`
+- **Apply**: `docker exec -i railly-app-postgres-1 psql -U railly -d railly -f /dev/stdin < packages/api/drizzle/meta/NNNN_name.sql`
 
 ### TypeScript Build Differences
 - **Local `tsc --noEmit`** (Vite dev server): runs on `.tsx`/`.ts` files only, relaxed checking
