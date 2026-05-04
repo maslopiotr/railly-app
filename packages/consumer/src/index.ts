@@ -194,6 +194,19 @@ async function runRetentionCleanup(): Promise<number> {
       log.info(`🧹 Retention cleanup: deleted ${stationMsgDeleted} old station_messages (>7 days)`);
     }
 
+    // ── Associations ─────────────────────────────────────────────────────────
+    // Delete associations where BOTH services have been deactivated
+    // (association data is only relevant while services are active)
+    const [assocResult] = await sql`
+      DELETE FROM associations
+      WHERE main_rid IN (SELECT rid FROM service_rt WHERE deactivated_at IS NOT NULL)
+        AND assoc_rid IN (SELECT rid FROM service_rt WHERE deactivated_at IS NOT NULL)
+    `;
+    const assocDeleted = Number(assocResult?.count ?? 0);
+    if (assocDeleted > 0) {
+      log.info(`🧹 Retention cleanup: deleted ${assocDeleted} associations (both services deactivated)`);
+    }
+
     return deleted + skippedDeleted + stationMsgDeleted;
   } catch (err) {
     log.warn("   ⚠️ Retention cleanup failed:", (err as Error).message);

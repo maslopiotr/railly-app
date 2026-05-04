@@ -1,55 +1,53 @@
 # Active Context
 
-## Current Focus: Unused Code Removal (Session 14)
+## Current Focus: Association Handler Complete (Session 15)
 
-### What Was Done (Session 14)
-- ✅ Ran Knip + TypeScript compiler across all 4 packages
-- ✅ Manual audit of all flagged exports, files, and types
-- ✅ Critical assessment written to `plans/unused-code-assessment.md` with HIGH/MEDIUM/LOW ratings
-- ✅ Implemented all 12 HIGH-confidence removals
-- ✅ All 4 packages compile cleanly (shared ✅, api ✅, consumer ✅, frontend ✅)
-- ✅ Post-removal Knip run confirms only MEDIUM items remain (internal `export` keywords)
-
-### HIGH Confidence Removals (All Implemented)
-| # | Item | File | Action |
-|---|------|------|--------|
-| H1 | `TimePicker.tsx` | frontend | Deleted |
-| H2 | `hero.png` | frontend | Deleted |
-| H3 | `computeDelayMinutes` | api/board-time.ts | Removed deprecated alias |
-| H4 | `tocNameCache` | api/cache.ts | Removed unused singleton |
-| H5 | Re-exports (`getUkNow`, `parseTimeToMinutes`, `computeDelay`) | api/board-time.ts | Removed re-exports, kept local import for `computeStopWallMinutes` |
-| H6 | `formatRailTime` | shared/time.ts + index.ts | Removed function + export |
-| H7 | `getCurrentRailTime` | shared/time.ts + index.ts | Removed function + export |
-| H8 | `isValidCrsCode` | shared/crs.ts + index.ts | Removed function + export |
-| H9 | All `timetable.ts` types | shared/types/timetable.ts | Deleted file + re-exports |
-| H10 | `Station` type | shared/types/station.ts | Removed interface + export |
-| H11 | All `api.ts` types | shared/types/api.ts | Deleted file + re-exports |
-| H12 | 22 unused LDBWS types | shared/types/ldbws.ts | Removed types + re-exports (kept `FormationData`, `ServiceType`) |
-
-### Remaining MEDIUM Items (Not Implemented — Unnecessary `export` Keywords)
-- `TTLCache` / `ReferenceCache` class exports (cache.ts) — used internally for singletons
-- `deduplicateResults` / `mapCallingPoints` / `buildSingleService` (board-builder.ts) — internal helpers
-- `BuildServicesParams` / `EndpointRow` / `VisibilityFilterParams` interfaces — internal types
-- `buildWallSchedSql` etc. (board-queries.ts) — internal helpers
-- `ParseResult` type export (parser.ts) — local type only
-- `AT_PLATFORM_BOUND_ARRIVALS` duplicate export flag — intentional semantic constant
+### What Was Done (Session 15)
+- ✅ Implemented Phase 2 of the Darwin handlers plan: Association (Joins/Splits)
+- ✅ Queried live data: 62,024 association messages, 4 categories (NP: 57,833, JJ: 648, VV: 542, LK: 1)
+- ✅ 3,422 cancelled associations, 60 deleted associations found in live data
+- ✅ Parser normalisation for `isCancelled`/`isDeleted` string→boolean
+- ✅ Database schema: `associations` table with natural key `(category, main_rid, assoc_rid, tiploc)`
+- ✅ Consumer handler: UPSERT on natural key, DELETE on `isDeleted=true`
+- ✅ Handler wired into `index.ts` with error handling + `logDarwinError`
+- ✅ Replay script updated with association routing + metrics
+- ✅ Retention cleanup: delete associations where both services deactivated
+- ✅ Deployed and verified: 15 associations stored in first 15 seconds, all data correct
 
 ### Key Design Decisions
 | Decision | Choice | Why |
 |----------|--------|-----|
-| `computeDelayMinutes` removal | Delete entirely, not just deprecate | Zero consumers; all code uses `computeDelay` from shared |
-| `board-time.ts` re-exports | Remove re-exports, keep local import | `computeStopWallMinutes` needs `parseTimeToMinutes`; consumers import from shared directly |
-| LDBWS types | Keep `FormationData`, `ServiceType` + dependencies | Used by `board.ts` for formation data |
-| `Station` type | Remove entirely | Only `StationSearchResult` is used by consumers |
-| `timetable.ts` | Delete entire file | API timetable route constructs responses inline |
-| `api.ts` | Delete entire file | API has its own `ApiError` class; health route constructs responses inline |
+| `isDeleted` handling | DELETE row from DB (not just flag) | Darwin withdrew the association — no point keeping stale data |
+| `isCancelled` handling | Keep row with `is_cancelled=true` | The association still exists; it's just cancelled (relevant for display) |
+| Natural key | `(category, main_rid, assoc_rid, tiploc)` | Same pair can associate at different locations |
+| Retention | Delete where both services deactivated | No longer relevant once both services are done |
+| Parser normalisation | String `"true"`→boolean `true` | Darwin JSON sends booleans as strings |
+
+### Files Modified (Session 15)
+| File | Change |
+|------|--------|
+| `packages/shared/src/types/darwin.ts` | No change — `DarwinAssociation` type already correct |
+| `packages/consumer/src/parser.ts` | Added `normalizeAssociation()` for string→boolean conversion, `associationItems` variable |
+| `packages/api/src/db/schema.ts` | Added `associations` table with Drizzle definitions |
+| `packages/api/drizzle/meta/0008_associations.sql` | New — manual migration |
+| `packages/api/drizzle/meta/_journal.json` | Added entry for `0008_associations` |
+| `packages/consumer/src/handlers/association.ts` | New — UPSERT/DELETE handler |
+| `packages/consumer/src/handlers/index.ts` | Replaced stub with real handler, error handling, removed `DarwinAssociation` import |
+| `packages/consumer/src/replay.ts` | Added association routing, import, metrics |
+| `packages/consumer/src/index.ts` | Added association retention cleanup |
 
 ### Next Steps
+- Phase 3: Schedule Formations + Formation Loading (P2)
+- Phase 4: Train Alerts (P3)
+- Phase 5: Train Order, Tracking ID, Alarm (P3 — mostly debug logs)
+- API endpoint for associations (separate session — deferred)
+- Frontend "divides at" / "joins with" display (deferred)
+- BUG-044: Partial cancellations display (depends on API + frontend)
+- BUG-015: Calling points filter by current station
+- BUG-016: Add tests to codebase
 - Frontend: verify "Delayed" text renders correctly on live boards
 - Implement SCALE-1 (Cloudflare CDN)
 - Implement SCALE-2 (rate limiting)
 - Implement F-06 Phase 2 (Associations — joins/splits)
-- BUG-015: Calling points filter by current station
-- BUG-016: Add tests to codebase
 - BUG-043: Incorrect next upcoming stop
 - BUG-044: Partial cancellations not displayed

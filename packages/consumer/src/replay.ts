@@ -27,6 +27,7 @@ import { handleSchedule } from "./handlers/schedule.js";
 import { handleTrainStatus } from "./handlers/trainStatus.js";
 import { handleDeactivated } from "./handlers/index.js";
 import { handleStationMessage } from "./handlers/stationMessage.js";
+import { handleAssociation } from "./handlers/association.js";
 import type { DarwinMessage } from "@railly-app/shared";
 
 // ── Configuration ──────────────────────────────────────────────────────────────
@@ -79,6 +80,7 @@ const metrics = {
   TS: 0,
   deactivated: 0,
   OW: 0,
+  association: 0,
   skipped: 0,
   errors: 0,
   startTime: Date.now(),
@@ -204,8 +206,24 @@ async function replay() {
           }
         }
 
+        // --- P2: Associations ---
+        if (message.association) {
+          for (const a of message.association) {
+            try {
+              await handleAssociation(a, generatedAt);
+              metrics.association++;
+            } catch (err) {
+              metrics.errors++;
+              const error = err instanceof Error ? err : new Error(String(err));
+              const mainRid = a.main?.rid ?? "unknown";
+              const assocRid = a.assoc?.rid ?? "unknown";
+              console.error(`   ❌ Association error for ${mainRid} ↔ ${assocRid} at ${a.tiploc}: ${error.message}`);
+            }
+          }
+        }
+
         // If message has none of the above, it's an unknown type — skip
-        if (!message.schedule && !message.TS && !message.deactivated && !message.OW) {
+        if (!message.schedule && !message.TS && !message.deactivated && !message.OW && !message.association) {
           metrics.skipped++;
         }
       } catch (err) {
@@ -227,12 +245,13 @@ async function replay() {
 
   // Summary
   const elapsed = ((Date.now() - metrics.startTime) / 1000).toFixed(1);
-  const totalProcessed = metrics.schedule + metrics.TS + metrics.deactivated + metrics.OW;
+  const totalProcessed = metrics.schedule + metrics.TS + metrics.deactivated + metrics.OW + metrics.association;
   console.log("\n📊 Replay Summary:");
   console.log(`   Schedule: ${metrics.schedule.toLocaleString()}`);
   console.log(`   TS: ${metrics.TS.toLocaleString()}`);
   console.log(`   Deactivated: ${metrics.deactivated.toLocaleString()}`);
   console.log(`   OW: ${metrics.OW.toLocaleString()}`);
+  console.log(`   Association: ${metrics.association.toLocaleString()}`);
   console.log(`   Skipped (unknown): ${metrics.skipped.toLocaleString()}`);
   console.log(`   Errors: ${metrics.errors.toLocaleString()}`);
   console.log(`   Total processed: ${totalProcessed.toLocaleString()}`);

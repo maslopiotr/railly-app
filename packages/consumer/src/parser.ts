@@ -774,11 +774,32 @@ export function parseDarwinMessage(raw: Buffer | string | null): ParseResult {
     });
   };
 
+  // ── Association (P2) ──────────────────────────────────────────────────
+  // Darwin JSON: { tiploc, category, isCancelled?, isDeleted?, main: { rid, wta?, wtd?, pta?, ptd? }, assoc: { rid, wta?, wtd?, pta?, ptd? } }
+  // Normalise: convert string booleans isCancelled/isDeleted to actual booleans
+  const normalizeAssociation = (items: unknown[]): unknown[] => {
+    return items.map((item) => {
+      if (typeof item !== "object" || item === null) return item;
+      const assoc = item as Record<string, unknown>;
+
+      // String booleans → boolean
+      if (assoc.isCancelled !== undefined) {
+        assoc.isCancelled = toBool(assoc.isCancelled) ?? false;
+      }
+      if (assoc.isDeleted !== undefined) {
+        assoc.isDeleted = toBool(assoc.isDeleted) ?? false;
+      }
+
+      return item;
+    });
+  };
+
   let scheduleItems = toArray(d.schedule);
   let tsItems = toArray(d.TS);
   let formationLoadingItems = toArray(d.formationLoading);
   let owItems = toArray(d.OW);
   let scheduleFormationsItems = toArray(d.scheduleFormations);
+  let associationItems = toArray(d.association);
   let trainAlertItems = toArray(d.trainAlert);
   let trainOrderItems = toArray(d.trainOrder);
   let trackingIDItems = toArray(d.trackingID);
@@ -788,6 +809,7 @@ export function parseDarwinMessage(raw: Buffer | string | null): ParseResult {
   if (tsItems) tsItems = normalizeTS(tsItems);
   if (formationLoadingItems) formationLoadingItems = normalizeFormationLoading(formationLoadingItems);
   if (owItems) owItems = normalizeOW(owItems);
+  if (associationItems) associationItems = normalizeAssociation(associationItems);
   if (scheduleFormationsItems) scheduleFormationsItems = normalizeScheduleFormations(scheduleFormationsItems);
   if (trainAlertItems) trainAlertItems = normalizeTrainAlert(trainAlertItems);
   if (trainOrderItems) trainOrderItems = normalizeTrainOrder(trainOrderItems);
@@ -801,7 +823,7 @@ export function parseDarwinMessage(raw: Buffer | string | null): ParseResult {
     schedule: scheduleItems as DarwinMessage["schedule"],
     TS: tsItems as DarwinMessage["TS"],
     deactivated: toArray(d.deactivated) as DarwinMessage["deactivated"],
-    association: toArray(d.association) as DarwinMessage["association"],
+    association: associationItems as DarwinMessage["association"],
     scheduleFormations: scheduleFormationsItems as DarwinMessage["scheduleFormations"],
     serviceLoading: toArray(d.serviceLoading) as DarwinMessage["serviceLoading"],
     formationLoading: formationLoadingItems as DarwinMessage["formationLoading"],

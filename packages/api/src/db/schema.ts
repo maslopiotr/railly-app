@@ -398,3 +398,66 @@ export type StationMessageRow = typeof stationMessages.$inferSelect;
 export type NewStationMessageStation = typeof stationMessageStations.$inferInsert;
 /** Type for a station message station row as read from the DB */
 export type StationMessageStationRow = typeof stationMessageStations.$inferSelect;
+
+/**
+ * Associations — Darwin Push Port service associations (Join, Split, Next-Working, Linked)
+ * Links two services together at a specific location (TIPLOC).
+ * Used for BUG-044 (partial cancellations) and service detail display.
+ *
+ * Categories:
+ *   JJ = Join — two services join together at this location
+ *   VV = Split (Divide) — service divides into portions at this location
+ *   NP = Next-Working — services follow each other (most common, ~93%)
+ *   LK = Linked — rare operational link
+ *
+ * Live data distribution: NP ~57,833 | JJ ~648 | VV ~542 | LK ~1
+ * ~3,422 associations have isCancelled=true; ~60 have isDeleted=true
+ *
+ * Natural key: (category, main_rid, assoc_rid, tiploc)
+ * — same pair of services can associate at different locations
+ * — isDeleted=true means DELETE the row (association withdrawn by Darwin)
+ * — isCancelled=true means keep the row but mark as cancelled (link won't happen)
+ */
+export const associations = pgTable(
+  "associations",
+  {
+    id: serial("id").primaryKey(),
+    category: char("category", { length: 2 }).notNull(), // JJ, VV, NP, LK
+    tiploc: varchar("tiploc", { length: 10 }).notNull(), // Where the association happens
+    // Main service (through/previous/link-to service)
+    mainRid: varchar("main_rid", { length: 20 }).notNull(),
+    mainWta: char("main_wta", { length: 8 }), // Working arrival at association point (HH:MM:SS)
+    mainWtd: char("main_wtd", { length: 8 }), // Working departure from association point
+    mainPta: char("main_pta", { length: 5 }), // Public arrival (HH:MM)
+    mainPtd: char("main_ptd", { length: 5 }), // Public departure (HH:MM)
+    // Associated service (starting/terminating/subsequent/link-from service)
+    assocRid: varchar("assoc_rid", { length: 20 }).notNull(),
+    assocWta: char("assoc_wta", { length: 8 }),
+    assocWtd: char("assoc_wtd", { length: 8 }),
+    assocPta: char("assoc_pta", { length: 5 }),
+    assocPtd: char("assoc_ptd", { length: 5 }),
+    // Status
+    isCancelled: boolean("is_cancelled").default(false).notNull(),
+    isDeleted: boolean("is_deleted").default(false).notNull(),
+    // Metadata
+    generatedAt: timestamp("generated_at", { withTimezone: true }), // Darwin message timestamp
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("idx_associations_natural").on(
+      table.category,
+      table.mainRid,
+      table.assocRid,
+      table.tiploc,
+    ),
+    index("idx_associations_main_rid").on(table.mainRid),
+    index("idx_associations_assoc_rid").on(table.assocRid),
+    index("idx_associations_tiploc").on(table.tiploc),
+  ],
+);
+
+/** Type for inserting an association row */
+export type NewAssociation = typeof associations.$inferInsert;
+/** Type for an association row as read from the DB */
+export type AssociationRow = typeof associations.$inferSelect;

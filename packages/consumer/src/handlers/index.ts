@@ -8,7 +8,6 @@
 
 import type {
   DarwinMessage,
-  DarwinAssociation,
   DarwinTrainAlert,
   DarwinTrainOrder,
   DarwinScheduleFormations,
@@ -21,6 +20,7 @@ import { handleSchedule } from "./schedule.js";
 import { handleTrainStatus } from "./trainStatus.js";
 import { handleServiceLoading as handleServiceLoadingImpl } from "./serviceLoading.js";
 import { handleStationMessage as handleStationMessageImpl } from "./stationMessage.js";
+import { handleAssociation as handleAssociationImpl } from "./association.js";
 import { sql, beginWrite } from "../db.js";
 import { log } from "../log.js";
 
@@ -357,8 +357,17 @@ export async function handleDarwinMessage(
     // --- P2: Associations & Formations & Loading ---
     if (message.association) {
       for (const a of message.association) {
-        await handleAssociation(a);
-        incrementType("association");
+        try {
+          await handleAssociationImpl(a, generatedAt);
+          incrementType("association");
+        } catch (err) {
+          const error = err instanceof Error ? err : new Error(String(err));
+          const mainRid = a.main?.rid ?? null;
+          const assocRid = a.assoc?.rid ?? null;
+          log.error(`   ❌ Association handler error for ${mainRid} ↔ ${assocRid} at ${a.tiploc}:`, error.message);
+          metrics.messagesErrored++;
+          await logDarwinError("association", mainRid, error, JSON.stringify(a));
+        }
       }
     }
 
@@ -499,11 +508,7 @@ export async function handleDeactivated(rid: string, generatedAt: string): Promi
 // Replaced by handlers/stationMessage.ts — imported as handleStationMessageImpl
 
 // ── Stubbed P2/P3 Handlers ───────────────────────────────────────────────────
-
-async function handleAssociation(assoc: DarwinAssociation): Promise<void> {
-  // TODO: Phase 2 — store association data for service detail joins/splits
-  log.debug("   📎 Association:", assoc.tiploc, assoc.category);
-}
+// Association handler replaced by handlers/association.ts — imported as handleAssociationImpl
 
 async function handleScheduleFormations(formations: DarwinScheduleFormations): Promise<void> {
   // TODO: Phase 2 — store coach formation data

@@ -1,6 +1,42 @@
 # Progress
 
-## Latest (2026-05-04, Session 14) — Unused Code Removal
+## Latest (2026-05-04, Session 15) — Association Handler (Phase 2)
+
+### Association Handler — Full Pipeline ✅
+- ✅ Queried live Darwin data: 62,024 association messages (NP: 57,833, JJ: 648, VV: 542, LK: 1)
+- ✅ Found 3,422 cancelled (`isCancelled=true`) and 60 deleted (`isDeleted=true`) associations
+- ✅ Parser normalisation: `isCancelled`/`isDeleted` string→boolean conversion
+- ✅ Database: `associations` table with natural key `(category, main_rid, assoc_rid, tiploc)`
+- ✅ Drizzle schema + manual migration `0008_associations.sql`
+- ✅ Consumer handler: UPSERT on natural key, DELETE when `isDeleted=true`
+- ✅ Handler wired into `index.ts` with error handling + audit logging
+- ✅ Replay script updated with association routing + metrics
+- ✅ Retention cleanup: delete associations where both services deactivated
+- ✅ Deployed and verified: 15 associations stored in first 15 seconds
+
+### Key Design Decisions
+| Decision | Choice | Why |
+|----------|--------|-----|
+| `isDeleted` | DELETE row from DB | Darwin withdrew the association — no stale data needed |
+| `isCancelled` | Keep row with `is_cancelled=true` | Association still exists, just cancelled (relevant for display) |
+| Natural key | `(category, main_rid, assoc_rid, tiploc)` | Same pair can associate at different locations |
+| Flattened columns | `main_wta`, `assoc_wtd` etc. | SQL ergonomics, no JSON columns |
+
+### Files Modified (Session 15)
+| File | Change |
+|------|--------|
+| `packages/consumer/src/parser.ts` | Added `normalizeAssociation()` for string→boolean, `associationItems` variable |
+| `packages/api/src/db/schema.ts` | Added `associations` table with Drizzle definitions |
+| `packages/api/drizzle/meta/0008_associations.sql` | New — manual migration |
+| `packages/api/drizzle/meta/_journal.json` | Added entry for `0008_associations` |
+| `packages/consumer/src/handlers/association.ts` | New — UPSERT/DELETE handler |
+| `packages/consumer/src/handlers/index.ts` | Replaced stub, error handling, removed unused `DarwinAssociation` import |
+| `packages/consumer/src/replay.ts` | Added association routing, import, metrics |
+| `packages/consumer/src/index.ts` | Added association retention cleanup |
+
+---
+
+## Completed (2026-05-04, Session 14) — Unused Code Removal
 
 ### Knip + Manual Audit & Removal ✅
 - ✅ Ran Knip across monorepo — found 2 unused files, 15 unused exports, 4 unused types, 1 duplicate export
