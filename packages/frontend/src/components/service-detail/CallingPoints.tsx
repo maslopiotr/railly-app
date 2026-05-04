@@ -127,7 +127,7 @@ function DelayPill({ delay }: { delay: number | null }) {
 
   return (
     <span
-      className={`text-[10px] font-mono font-medium border px-1.5 py-0 rounded ${severityClass}`}
+      className={`text-xs font-mono font-medium border px-1.5 py-0 rounded ${severityClass}`}
     >
       +{delay} min
     </span>
