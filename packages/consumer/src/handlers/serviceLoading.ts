@@ -16,7 +16,7 @@
 
 import type { DarwinServiceLoading } from "@railly-app/shared";
 import { parseTimeToMinutes } from "@railly-app/shared";
-import { sql } from "../db.js";
+import { beginWrite } from "../db.js";
 import { logDarwinSkip } from "./index.js";
 import { log } from "../log.js";
 
@@ -61,7 +61,7 @@ export async function handleServiceLoading(
   }
 
   try {
-    await sql.begin(async (tx) => {
+    await beginWrite(async (tx) => {
       // ── Query existing calling points for this RID with matching TIPLOC ────
       const existingRows = await tx`
         SELECT id, tpl, stop_type, sort_time, day_offset,

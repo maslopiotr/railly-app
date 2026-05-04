@@ -13,7 +13,7 @@
 
 import type { DarwinSchedule, DarwinScheduleLocation } from "@railly-app/shared";
 import { toArray, parseTs, parseTimeToMinutes, computeSortTime, deriveSsdFromRid } from "@railly-app/shared";
-import { sql } from "../db.js";
+import { sql, beginWrite } from "../db.js";
 import { logDarwinSkip } from "./index.js";
 import { log } from "../log.js";
 
@@ -152,7 +152,7 @@ export async function handleSchedule(
 
   try {
     // ── Do ALL work inside a single transaction ───────────────────────────────
-    await sql.begin(async (tx) => {
+    await beginWrite(async (tx) => {
       // ── Deduplication: check if stored schedule is newer (inside tx) ─────
       const existing = await tx`
         SELECT generated_at FROM service_rt WHERE rid = ${rid}

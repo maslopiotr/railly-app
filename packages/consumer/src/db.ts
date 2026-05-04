@@ -23,6 +23,23 @@ export const sql = postgres(connectionString, {
 });
 
 /**
+ * Begin a write transaction with an extended statement timeout.
+ *
+ * The global PostgreSQL `statement_timeout` (5s) is too tight for write
+ * transactions that may contend with the seed process or other concurrent
+ * consumer messages. `SET LOCAL` scopes the override to the current
+ * transaction — it resets automatically on commit/rollback.
+ */
+export function beginWrite(
+  fn: (tx: postgres.TransactionSql<postgres.Row>) => Promise<unknown>,
+): Promise<unknown> {
+  return sql.begin(async (tx) => {
+    await tx`SET LOCAL statement_timeout = '15s'`;
+    return fn(tx);
+  }) as Promise<unknown>;
+}
+
+/**
  * Gracefully close the PostgreSQL connection.
  */
 export async function closeDb(): Promise<void> {

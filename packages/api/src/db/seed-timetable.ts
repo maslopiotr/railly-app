@@ -367,6 +367,11 @@ async function seed() {
   );
   console.log(`   Data directory: ${DATA_DIR}`);
 
+  // Set a generous session-level statement timeout for bulk operations
+  // (global default is 5s which is too tight for large UPSERTs)
+  await db.execute(sql`SET statement_timeout = '300s'`);
+  console.log("   ✅ Session statement_timeout set to 300s");
+
   logMemory("start");
 
   // Discover all latest files and compute hashes
@@ -492,7 +497,7 @@ async function seed() {
   let totalJourneys = 0;
   let totalPointsUpserted = 0;
 
-  const JOURNEY_BATCH_SIZE = 5000;
+  const JOURNEY_BATCH_SIZE = 100;
 
   for (const ttFile of ttFiles) {
     console.log(`   Processing ${ttFile.filename}...`);
@@ -541,6 +546,9 @@ async function seed() {
       );
 
       await db.transaction(async (tx) => {
+        // ── Extend timeout for bulk writes (global default is 5s) ────────────
+        await tx.execute(sql`SET LOCAL statement_timeout = '120s'`);
+
         // ── Step 1: Upsert journeys ──────────────────────────────────────────
         const journeyRows: NewJourney[] = [];
         for (const rid of batchRids) {
@@ -616,9 +624,21 @@ async function seed() {
           }
         }
 
-        const POINT_BATCH = 500;
-        for (let i = 0; i < pointRows.length; i += POINT_BATCH) {
-          const insertBatch = pointRows.slice(i, i + POINT_BATCH);
+        // Deduplicate by conflict key (journey_rid, tpl, day_offset, sort_time, stop_type)
+        // to prevent "ON CONFLICT DO UPDATE command cannot affect row a second time"
+        const seen = new Map<string, NewCallingPoint>();
+        for (const row of pointRows) {
+          const key = `${row.journeyRid}|${row.tpl}|${row.dayOffset}|${row.sortTime}|${row.stopType}`;
+          seen.set(key, row);
+        }
+        const dedupedRows = [...seen.values()];
+        if (dedupedRows.length < pointRows.length) {
+          console.log(`       Deduped: ${pointRows.length} → ${dedupedRows.length} calling points (${pointRows.length - dedupedRows.length} duplicates)`);
+        }
+
+        const POINT_BATCH = 100;
+        for (let i = 0; i < dedupedRows.length; i += POINT_BATCH) {
+          const insertBatch = dedupedRows.slice(i, i + POINT_BATCH);
           await tx
             .insert(callingPoints)
             .values(insertBatch)
@@ -649,7 +669,7 @@ async function seed() {
             });
           if (i % 50000 === 0 && i > 0) {
             console.log(
-              `       Calling points: ${Math.min(i + POINT_BATCH, pointRows.length)}/${pointRows.length}`,
+              `       Calling points: ${Math.min(i + POINT_BATCH, dedupedRows.length)}/${dedupedRows.length}`,
             );
           }
         }

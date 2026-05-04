@@ -13,7 +13,7 @@
  * All three operations run in a transaction for atomicity.
  */
 
-import { sql } from "../db.js";
+import { beginWrite } from "../db.js";
 import { log } from "../log.js";
 import type { DarwinStationMessage } from "@railly-app/shared";
 
@@ -50,7 +50,7 @@ export async function handleStationMessage(
   const hasStations = ow.Station !== undefined;
   const stations = hasStations ? ow.Station! : [];
 
-  await sql.begin(async (tx) => {
+  await beginWrite(async (tx) => {
     // 1. UPSERT station_messages
     await tx`
       INSERT INTO station_messages (message_id, category, severity, suppress, message, message_raw, updated_at)

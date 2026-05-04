@@ -21,7 +21,7 @@ import { handleSchedule } from "./schedule.js";
 import { handleTrainStatus } from "./trainStatus.js";
 import { handleServiceLoading as handleServiceLoadingImpl } from "./serviceLoading.js";
 import { handleStationMessage as handleStationMessageImpl } from "./stationMessage.js";
-import { sql } from "../db.js";
+import { sql, beginWrite } from "../db.js";
 import { log } from "../log.js";
 
 // ── Event Buffer for batched darwin_events inserts ─────────────────────────────
@@ -94,7 +94,7 @@ class EventBuffer {
       // Use a transaction to insert all rows in a single atomic batch.
       // Individual INSERT statements with tagged template literals
       // provide full type safety — no type assertions or hacks needed.
-      await sql.begin(async (tx) => {
+      await beginWrite(async (tx) => {
         for (const e of batch) {
           await tx`
             INSERT INTO darwin_events (

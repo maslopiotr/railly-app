@@ -43,9 +43,9 @@ npm run docker:rebuild   # rebuild Docker after changes
 - **Autovacuum**: `darwin_events` + `calling_points` scale_factor 0.05/0.02 (triggers sooner on high-churn tables)
 - **Retention cleanup**: Every 15 min; `darwin_events` >2 days, `skipped_locations` >7 days, `station_messages` >7 days
 - **`darwin_events`**: ~3.2 GB, ~90K inserts/hr; full JSON in `raw_json` column
-- **`calling_points`**: ~2 GB, 4M+ rows; natural key index ~427 MB
+- **`calling_points`**: ~1.15 GB total (530 MB data + 621 MB indexes), 2.8M rows; 8 indexes including natural key
 - **Docker resources**: PostgreSQL ~565 MB, Consumer ~75 MB, API ~66 MB, Frontend ~4 MB
-- **Statement timeout**: 5s (`statement_timeout=5000` in PostgreSQL config) — prevents runaway queries under load
+- **Statement timeout**: 5s global default (`statement_timeout=5000` in PostgreSQL config) — prevents runaway queries under load. Consumer write transactions override to 15s via `beginWrite()` (SET LOCAL). Seed overrides to 120s per transaction.
 - **Connection pool**: 20 connections (up from 10) to support ~6-7 concurrent board requests
 - **Client disconnect detection**: `req.on("close")` in boards route — skips remaining DB queries if client has gone, preventing wasted resources
 - **Frontend retry**: `useBoard.loadBoard()` retries up to 3 times on transient errors with exponential backoff (1s → 2s → 4s), no retry on AbortError or 4xx

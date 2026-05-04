@@ -22,7 +22,7 @@
 
 import type { DarwinTS, DarwinTSLocation } from "@railly-app/shared";
 import { toArray, parseTs, deriveSsdFromRid, computeDelay, parseTimeToMinutes } from "@railly-app/shared";
-import { sql } from "../../db.js";
+import { sql, beginWrite } from "../../db.js";
 import { log } from "../../log.js";
 import { logDarwinSkip } from "../index.js";
 import { deriveStopType } from "./utils.js";
@@ -83,7 +83,7 @@ export async function handleTrainStatus(
   let insertedNewStops = 0;
 
   try {
-    await sql.begin(async (tx) => {
+    await beginWrite(async (tx) => {
       // ── Lock service_rt first to establish consistent lock ordering ────────
       await tx`
         SELECT rid FROM service_rt WHERE rid = ${rid}

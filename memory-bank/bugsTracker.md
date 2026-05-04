@@ -10,6 +10,19 @@
 - **Fix:** Changed to `location /api/v1/stations` (no trailing slash) so both search and board paths match.
 - **Files:** `packages/frontend/nginx.conf`
 
+### BUG-046: Consumer TS handler + seed fail with statement timeout (5s global too tight)
+- **Severity:** High · **Type:** Database / Infrastructure · **Status:** ✅ Fixed
+- **Discovered:** 2026-05-04
+- **Impact:** TS handler failed with `canceling statement due to statement timeout` for RID 202605048940118. Seed also crashed mid-batch with the same error. Both caused by global `statement_timeout=5000` (5s) being too tight for write transactions that contend with each other or with bulk operations.
+- **Root cause:** Two related problems:
+  1. **Seed**: Bulk `INSERT ... ON CONFLICT` on `calling_points` (1.15GB, 8 indexes) with 500-row batches exceeded 5s timeout. Transaction held locks for entire 5000-journey batch (~86K calling points), blocking consumer.
+  2. **Consumer TS handler**: `SELECT ... FOR UPDATE` on `service_rt` waited for locks under 5s timeout — two TS messages for same RID arriving ~256ms apart caused the second to timeout waiting for the first's lock.
+- **Fix:**
+  - Consumer: Added `beginWrite()` helper in `db.ts` that sets `SET LOCAL statement_timeout = '15s'` per transaction. All 5 write transaction sites (`ts/handler`, `schedule`, `stationMessage`, `serviceLoading`, `index` event buffer) now use `beginWrite()` instead of `sql.begin`.
+  - Seed: Added `SET LOCAL statement_timeout = '120s'` at start of each batch transaction. Reduced `JOURNEY_BATCH_SIZE` from 5000 to 500 (smaller lock footprint, shorter transactions).
+  - `SET LOCAL` resets automatically on commit/rollback — no leaking.
+- **Files:** `packages/consumer/src/db.ts`, `packages/consumer/src/handlers/ts/handler.ts`, `packages/consumer/src/handlers/schedule.ts`, `packages/consumer/src/handlers/stationMessage.ts`, `packages/consumer/src/handlers/serviceLoading.ts`, `packages/consumer/src/handlers/index.ts`, `packages/api/src/db/seed-timetable.ts`
+
 ### BUG-043: Train 202605038706867 shows incorrect next upcoming stop
 - **Severity:** Medium · **Type:** UX / Data · **Status:** 🔲 Needs investigation
 - **Discovered:** 2026-05-03
@@ -101,6 +114,7 @@ User note - we should check deactivate messages if we are processing those corre
 | Bug A36 | "Departed" for future stops — added "En route to" for `future` status | 2026-05-02 |
 | BUG-017b | Origin stops not showing "departed" when train has left | 2026-04-30 |
 | BUG-045 | Nginx 301 redirect on station search — trailing slash in location block | 2026-05-04 |
+| BUG-046 | Consumer TS + seed statement timeout — `beginWrite()` with 15s, seed 120s, batch size 500 | 2026-05-04 |
 
 ---
 
