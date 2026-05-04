@@ -60,6 +60,10 @@ export interface HybridCallingPoint {
   platSource: string | null;
   /** Is this stop cancelled? */
   isCancelled: boolean;
+  /** Darwin arrival delay flag — if true, show "Delayed" when no ETA available */
+  etaDelayed: boolean;
+  /** Darwin departure delay flag — if true, show "Delayed" when no ETD available */
+  etdDelayed: boolean;
   /** Delay reason for this calling point */
   delayReason: string | null;
   /** Cancel reason for this calling point */

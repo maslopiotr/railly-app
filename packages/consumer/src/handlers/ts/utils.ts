@@ -40,6 +40,13 @@ export interface CpUpdate {
   delayMinutes: number | null;
   delayReason: string | null;
   cancelReason: string | null;
+  // -- Delay/uncertainty flags from Darwin arr/dep sub-objects --
+  etaDelayed: boolean; // arr.delayed — show "Delayed" instead of ETA
+  etdDelayed: boolean; // dep.delayed — show "Delayed" instead of ETD
+  etaUnknownDelay: boolean; // arr.etUnknown — unknown delay forecast
+  etdUnknownDelay: boolean; // dep.etUnknown — unknown delay forecast
+  etaMin: string | null; // arr.etmin — lower bound on estimated arrival
+  etdMin: string | null; // dep.etmin — lower bound on estimated departure
 }
 
 // ── Domain-specific functions ──────────────────────────────────────────────

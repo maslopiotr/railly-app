@@ -222,6 +222,18 @@ export async function handleTrainStatus(
             atdPushport,
           );
 
+          // Extract delay/uncertainty flags from nested arr/dep sub-objects
+          const arrObj = loc.arr as Record<string, unknown> | undefined;
+          const depObj = loc.dep as Record<string, unknown> | undefined;
+          const newEtaDelayed = arrObj?.delayed === true || arrObj?.etUnknown === true;
+          const newEtdDelayed = depObj?.delayed === true || depObj?.etUnknown === true;
+          const newEtaUnknownDelay = arrObj?.etUnknown === true;
+          const newEtdUnknownDelay = depObj?.etUnknown === true;
+          const newEtaMinRaw = arrObj?.etmin as string | undefined;
+          const newEtdMinRaw = depObj?.etmin as string | undefined;
+          const newEtaMin = newEtaMinRaw?.trim() ? (newEtaMinRaw.length > 5 ? newEtaMinRaw.slice(0, 5) : newEtaMinRaw) : null;
+          const newEtdMin = newEtdMinRaw?.trim() ? (newEtdMinRaw.length > 5 ? newEtdMinRaw.slice(0, 5) : newEtdMinRaw) : null;
+
           await tx`
             INSERT INTO calling_points (
               journey_rid, sort_time, ssd, stop_type, tpl, crs, name,
@@ -232,6 +244,9 @@ export async function handleTrainStatus(
               plat_pushport,
               is_cancelled, plat_is_suppressed,
               delay_minutes, delay_reason,
+              eta_delayed, etd_delayed,
+              eta_unknown_delay, etd_unknown_delay,
+              eta_min, etd_min,
               source_timetable, source_darwin,
               updated_at, ts_generated_at
             ) VALUES (
@@ -244,6 +259,9 @@ export async function handleTrainStatus(
               ${loc.cancelled === true}, ${loc.platIsSuppressed === true},
               ${delayMinutes},
               ${((loc as unknown as Record<string, unknown>).delayReason as string | null) ?? null},
+              ${newEtaDelayed}, ${newEtdDelayed},
+              ${newEtaUnknownDelay}, ${newEtdUnknownDelay},
+              ${newEtaMin}, ${newEtdMin},
               false, true,
               ${generatedAt}::timestamp with time zone, ${generatedAt}::timestamp with time zone
             )
@@ -259,6 +277,12 @@ export async function handleTrainStatus(
               plat_is_suppressed = EXCLUDED.plat_is_suppressed,
               delay_minutes = EXCLUDED.delay_minutes,
               delay_reason = EXCLUDED.delay_reason,
+              eta_delayed = EXCLUDED.eta_delayed,
+              etd_delayed = EXCLUDED.etd_delayed,
+              eta_unknown_delay = EXCLUDED.eta_unknown_delay,
+              etd_unknown_delay = EXCLUDED.etd_unknown_delay,
+              eta_min = EXCLUDED.eta_min,
+              etd_min = EXCLUDED.etd_min,
               sort_time = EXCLUDED.sort_time,
               source_darwin = true,
               updated_at = EXCLUDED.updated_at,
@@ -352,6 +376,19 @@ export async function handleTrainStatus(
         const delayDep = computeDelay(schedDep, etdPushport, atdPushport);
         const delayMinutes = delayDep !== null ? delayDep : (delayArr !== null ? delayArr : null);
 
+        // Extract delay/uncertainty flags from nested arr/dep sub-objects
+        const arrObj = loc.arr as Record<string, unknown> | undefined;
+        const depObj = loc.dep as Record<string, unknown> | undefined;
+        const etaDelayed = arrObj?.delayed === true || arrObj?.etUnknown === true;
+        const etdDelayed = depObj?.delayed === true || depObj?.etUnknown === true;
+        const etaUnknownDelay = arrObj?.etUnknown === true;
+        const etdUnknownDelay = depObj?.etUnknown === true;
+        const etaMinRaw = arrObj?.etmin as string | undefined;
+        const etdMinRaw = depObj?.etmin as string | undefined;
+        // Normalise etmin to HH:MM (Darwin sends HH:MM:SS sometimes)
+        const etaMin = etaMinRaw?.trim() ? (etaMinRaw.length > 5 ? etaMinRaw.slice(0, 5) : etaMinRaw) : null;
+        const etdMin = etdMinRaw?.trim() ? (etdMinRaw.length > 5 ? etdMinRaw.slice(0, 5) : etdMinRaw) : null;
+
         cpUpdates.push({
           id: cpId,
           rid,
@@ -375,6 +412,12 @@ export async function handleTrainStatus(
           delayMinutes,
           delayReason: ((loc as unknown as Record<string, unknown>).delayReason as string | null) ?? null,
           cancelReason: locCancelReason,
+          etaDelayed,
+          etdDelayed,
+          etaUnknownDelay,
+          etdUnknownDelay,
+          etaMin,
+          etdMin,
         });
       }
 
@@ -446,6 +489,12 @@ export async function handleTrainStatus(
             delay_minutes = ${cp.delayMinutes},
             delay_reason = ${cp.delayReason},
             cancel_reason = COALESCE(${cp.cancelReason}, calling_points.cancel_reason),
+            eta_delayed = ${cp.etaDelayed},
+            etd_delayed = ${cp.etdDelayed},
+            eta_unknown_delay = ${cp.etaUnknownDelay},
+            etd_unknown_delay = ${cp.etdUnknownDelay},
+            eta_min = ${cp.etaMin},
+            etd_min = ${cp.etdMin},
             source_darwin = true,
             updated_at = ${cp.updatedAt}::timestamp with time zone,
             ts_generated_at = ${generatedAt}::timestamp with time zone

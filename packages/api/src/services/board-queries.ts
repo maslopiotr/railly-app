@@ -69,6 +69,8 @@ export interface BoardServiceRow {
   delayReason: string | null;
   platIsSuppressed: boolean | null;
   loadingPercentage: number | null;
+  etaDelayed: boolean | null;
+  etdDelayed: boolean | null;
   updatedAt: Date | null;
   uid: string | null;
   trainId: string | null;
@@ -124,6 +126,8 @@ export interface CallingPatternRow {
   platIsSuppressed: boolean | null;
   loadingPercentage: number | null;
   lengthPushport: string | null;
+  etaDelayed: boolean | null;
+  etdDelayed: boolean | null;
 }
 
 /** Parsed endpoint info (origin + destination) */
@@ -395,6 +399,8 @@ export async function fetchBoardServices(params: {
       delayReason: callingPoints.delayReason,
       platIsSuppressed: callingPoints.platIsSuppressed,
       loadingPercentage: callingPoints.loadingPercentage,
+      etaDelayed: callingPoints.etaDelayed,
+      etdDelayed: callingPoints.etdDelayed,
       updatedAt: callingPoints.updatedAt,
       uid: journeys.uid,
       trainId: journeys.trainId,
@@ -505,6 +511,8 @@ export async function fetchCallingPatterns(
       platIsSuppressed: callingPoints.platIsSuppressed,
       loadingPercentage: callingPoints.loadingPercentage,
       lengthPushport: callingPoints.lengthPushport,
+      etaDelayed: callingPoints.etaDelayed,
+      etdDelayed: callingPoints.etdDelayed,
     })
     .from(callingPoints)
     .leftJoin(locationRef, eq(callingPoints.tpl, locationRef.tpl))

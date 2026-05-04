@@ -1,6 +1,6 @@
 # Active Context
 
-## Current Focus: DRY Deduplication — HIGH Confidence Fixes Complete
+## Current Focus: eta_delayed/etd_delayed — Darwin "Delayed" Flag Implementation
 
 ### What Was Done (Session 10)
 - ✅ Comprehensive DRY audit across all 4 packages (shared, api, consumer, frontend)
@@ -39,10 +39,35 @@
 | `packages/api/src/routes/boards.ts` | Import `getUkNow` from shared |
 | `packages/api/src/db/seed-timetable.ts` | Removed local `parseTimeToMinutes` + `computeSortTime` |
 
+### What Was Done (Session 12-13)
+- ✅ Built TS coverage audit script (`scripts/audit-ts-coverage.ts`)
+- ✅ Ran audit against live data — 100% message coverage, no HIGH priority fields missing
+- ✅ Added 6 new columns to `calling_points` schema:
+  - `eta_delayed`, `etd_delayed`, `eta_unknown_delay`, `etd_unknown_delay`, `eta_min`, `etd_min`
+- ✅ Updated consumer handler (handler.ts, stub.ts, utils.ts) to extract from Darwin `arr.delayed`/`dep.delayed`/`arr.etUnknown`/`dep.etUnknown`/`arr.etmin`/`dep.etmin`
+- ✅ Applied DB migration (ALTER TABLE ADD COLUMN)
+- ✅ Wired `eta_delayed`/`etd_delayed` through full stack:
+  - `packages/shared/src/types/board.ts` — added to `HybridCallingPoint`
+  - `packages/api/src/services/board-queries.ts` — added to `BoardServiceRow`, `CallingPatternRow`, SQL SELECTs
+  - `packages/api/src/services/board-builder.ts` — `mapCallingPoints()` passes through; `buildSingleService()` overrides `eta="Delayed"` when flag is set with no estimate; forces `trainStatus="delayed"` when flag is set
+  - `packages/frontend/src/components/service-detail/CallingPoints.tsx` — shows "Delayed" text when `etaDelayed`/`etdDelayed` is true and no estimate exists
+- ✅ All TypeScript checks pass
+- ✅ API returns `etaDelayed`/`etdDelayed` fields correctly (verified with live data)
+- ✅ Consumer rebuilt and running with 0 errors
+
+### Display Logic
+| `eta_pushport` | `eta_delayed` | Board Display |
+|---|---|---|
+| `"09:35"` | `false` | Exp 09:35 (normal) |
+| `null` | `true` | **Delayed** (no estimate available) |
+| `"09:45"` | `true` | **Delayed +5m**, Exp 09:45 (both shown — Darwin confirms delay, estimate still useful) |
+
 ### Next Steps
-- Implement SCALE-1 (Cloudflare CDN) — biggest bang for buck
+- Frontend: verify "Delayed" text renders correctly on live boards
+- Implement SCALE-1 (Cloudflare CDN)
 - Implement SCALE-2 (rate limiting) — protects against scrapers
 - Implement F-06 Phase 2 (Associations — joins/splits)
 - BUG-015: Calling points filter by current station
 - BUG-016: Add tests to codebase
-- MEDIUM confidence DRY fixes (frontend `timeToMinutes` in `CallingPoints.tsx` + `service.ts`)
+- BUG-043: Incorrect next upcoming stop
+- BUG-044: Partial cancellations not displayed

@@ -118,6 +118,13 @@ export const callingPoints = pgTable(
     suppr: boolean("suppr").default(false).notNull(), // Stop suppressed from public display entirely
     lengthPushport: varchar("length_pushport", { length: 10 }), // Train length in coaches
     detachFront: boolean("detach_front").default(false).notNull(), // Front coaches detach at this stop
+    // -- Delay/uncertainty flags from Darwin arr/dep sub-objects --
+    etaDelayed: boolean("eta_delayed").default(false).notNull(), // arr.delayed — show "Delayed" instead of ETA
+    etdDelayed: boolean("etd_delayed").default(false).notNull(), // dep.delayed — show "Delayed" instead of ETD
+    etaUnknownDelay: boolean("eta_unknown_delay").default(false).notNull(), // arr.etUnknown — unknown delay forecast
+    etdUnknownDelay: boolean("etd_unknown_delay").default(false).notNull(), // dep.etUnknown — unknown delay forecast
+    etaMin: char("eta_min", { length: 5 }), // arr.etmin — lower bound on estimated arrival HH:MM
+    etdMin: char("etd_min", { length: 5 }), // dep.etmin — lower bound on estimated departure HH:MM
     isDeleted: boolean("is_deleted").default(false).notNull(), // Belongs to a deleted service
     // -- Loading columns (Darwin serviceLoading messages) --
     loadingPercentage: integer("loading_percentage"), // 0-100 from serviceLoading

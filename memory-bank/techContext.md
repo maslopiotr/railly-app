@@ -69,7 +69,7 @@ SELECT severity, message_type, error_code, count(*) FROM darwin_audit GROUP BY s
 ### Key File Paths
 - **Board query**: `packages/api/src/routes/boards.ts` — unified single-query board API
 - **Consumer entry**: `packages/consumer/src/index.ts` — Kafka listener, batch processing
-- **Timetable seed**: `packages/api/src/db/seed-timetable.ts` — daily at 03:00, hash-based dedup
+- **Timetable seed**: `packages/api/src/db/seed-timetable.ts` — daily at 03:00, hash-based dedup, CP dedup by conflict key before INSERT (BUG-047)
 - **Frontend board page**: `packages/frontend/src/pages/BoardPage.tsx` — thin presenter composing `useBoard` + sub-components
 - **Frontend board hook**: `packages/frontend/src/hooks/useBoard.ts` — all board state, fetch, polling, pull-to-refresh
 - **Frontend board components**: `packages/frontend/src/components/board/` — 8 components + 1 grid utility (BoardHeader, BoardTabs, StationFilterBar, TimeNavigationBar, NrccMessages, BoardTableHeader, BoardServiceList, ServiceRow, boardGrid.ts)

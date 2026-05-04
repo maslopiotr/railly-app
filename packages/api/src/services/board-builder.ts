@@ -72,6 +72,8 @@ export function mapCallingPoints(
       platPushport: cp.platPushport ?? null,
       platSource: cp.platSource ?? null,
       isCancelled: cp.isCancelled ?? false,
+      etaDelayed: cp.etaDelayed ?? false,
+      etdDelayed: cp.etdDelayed ?? false,
       delayReason: cp.delayReason ?? null,
       cancelReason: cp.cancelReason ?? null,
       delayMinutes: cp.delayMinutes ?? null,
@@ -127,6 +129,11 @@ export function buildSingleService(
     // When no pushport data, eta/etd are null (frontend shows scheduled-only).
     eta = entry.etaPushport ?? null;
     etd = entry.etdPushport ?? null;
+
+    // When Darwin flags arrival/departure as delayed with no estimate,
+    // show "Delayed" text instead of a time
+    if (entry.etaDelayed && !eta) eta = "Delayed";
+    if (entry.etdDelayed && !etd) etd = "Delayed";
   }
 
   // Use platSource from DB if available, otherwise compute from platform values
@@ -156,6 +163,12 @@ export function buildSingleService(
     boardType,
     entry.stopType,
   );
+
+  // If Darwin explicitly flags arrival/departure as delayed, override computed status.
+  // Darwin's "delayed" flag means the delay is confirmed regardless of estimate.
+  if ((entry.etaDelayed || entry.etdDelayed) && !isCancelled) {
+    trainStatus = "delayed";
+  }
 
   // Map calling points for the service
   const cpList: HybridCallingPoint[] = mapCallingPoints(callingPattern);

@@ -201,6 +201,8 @@ function CallingPointRow({
   platPushport,
   platSource,
   isCancelled,
+  etaDelayed,
+  etdDelayed,
   cancelReason,
   delayReason,
   stopType,
@@ -219,6 +221,8 @@ function CallingPointRow({
   platPushport: string | null;
   platSource: string | null;
   isCancelled: boolean;
+  etaDelayed: boolean;
+  etdDelayed: boolean;
   cancelReason: string | null;
   delayReason: string | null;
   stopType: string;
@@ -235,7 +239,11 @@ function CallingPointRow({
   const hasDeparture =
     ptdTimetable !== null || etdPushport !== null || atdPushport !== null;
   const scheduled = formatDisplayTime(hasDeparture ? ptdTimetable : ptaTimetable);
-  const estimated = formatDisplayTime(hasDeparture ? etdPushport : etaPushport);
+  const rawEstimate = hasDeparture ? etdPushport : etaPushport;
+  const isDelayed = hasDeparture ? etdDelayed : etaDelayed;
+  // When Darwin flags delayed with no estimate, show "Delayed" text
+  const estimated = formatDisplayTime(rawEstimate)
+    ?? (isDelayed ? "Delayed" : null);
   const actual = formatDisplayTime(hasDeparture ? atdPushport : ataPushport);
 
   const delay = computeDelay(
@@ -266,7 +274,11 @@ function CallingPointRow({
     timeClass = `font-mono text-sm font-semibold ${getDelayTimeClass(delay, isCurrent)}`;
     timeContent = actual;
   } else if (estimated) {
-    if (estimated === "On time") {
+    if (estimated === "Delayed") {
+      // Darwin confirmed delay but gave no time estimate — show "Delayed" in status colour
+      timeClass = `text-sm font-semibold text-status-delayed`;
+      timeContent = "Delayed";
+    } else if (estimated === "On time") {
       if (isCurrent) {
         timeClass = "text-sm font-semibold text-status-on-time";
         timeContent = "On time";
@@ -470,6 +482,8 @@ export function CallingPoints({ points, currentCrs }: CallingPointsProps) {
               platPushport={cp.platPushport}
               platSource={cp.platSource}
               isCancelled={cp.isCancelled}
+              etaDelayed={cp.etaDelayed ?? false}
+              etdDelayed={cp.etdDelayed ?? false}
               cancelReason={cp.cancelReason ?? null}
               delayReason={cp.delayReason ?? null}
               stopType={cp.stopType}

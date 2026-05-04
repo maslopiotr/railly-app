@@ -23,6 +23,14 @@
   - `SET LOCAL` resets automatically on commit/rollback — no leaking.
 - **Files:** `packages/consumer/src/db.ts`, `packages/consumer/src/handlers/ts/handler.ts`, `packages/consumer/src/handlers/schedule.ts`, `packages/consumer/src/handlers/stationMessage.ts`, `packages/consumer/src/handlers/serviceLoading.ts`, `packages/consumer/src/handlers/index.ts`, `packages/api/src/db/seed-timetable.ts`
 
+### BUG-047: Seed "ON CONFLICT DO UPDATE command cannot affect row a second time"
+- **Severity:** High · **Type:** Database / Data · **Status:** ✅ Fixed
+- **Discovered:** 2026-05-04
+- **Impact:** Seed crashed when a single batch contained two calling points with the same `(journey_rid, tpl, day_offset, sort_time, stop_type)` key. PostgreSQL prohibits `ON CONFLICT DO UPDATE` from affecting the same row twice in one statement.
+- **Root cause:** Extremely rare edge case in timetable data — a journey visiting the same TIPLOC with the same sort_time and stop type (e.g. different stop types resolving to identical `computeSortTime` value). Only 1 duplicate across ~65,800 journeys.
+- **Fix:** Added deduplication of `pointRows` by conflict key before batch INSERT. Uses a `Map<string, NewCallingPoint>` keyed on `journey_rid|tpl|day_offset|sort_time|stop_type`. Last row wins for duplicates.
+- **Files:** `packages/api/src/db/seed-timetable.ts`
+
 ### BUG-043: Train 202605038706867 shows incorrect next upcoming stop
 - **Severity:** Medium · **Type:** UX / Data · **Status:** 🔲 Needs investigation
 - **Discovered:** 2026-05-03
@@ -115,6 +123,7 @@ User note - we should check deactivate messages if we are processing those corre
 | BUG-017b | Origin stops not showing "departed" when train has left | 2026-04-30 |
 | BUG-045 | Nginx 301 redirect on station search — trailing slash in location block | 2026-05-04 |
 | BUG-046 | Consumer TS + seed statement timeout — `beginWrite()` with 15s, seed 120s, batch size 500 | 2026-05-04 |
+| BUG-047 | Seed ON CONFLICT duplicate row — deduplicate pointRows by conflict key before INSERT | 2026-05-04 |
 
 ---
 
